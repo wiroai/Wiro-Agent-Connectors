@@ -1,0 +1,30 @@
+{
+  "id": 412,
+  "date": "2026-11-18T09:00:00",
+  "date_gmt": "2026-11-18T06:00:00",
+  "modified": "2026-11-18T09:12:44",
+  "modified_gmt": "2026-11-18T06:12:44",
+  "slug": "pour-over-ratios",
+  "status": "publish",
+  "type": "post",
+  "link": "https://example.com/blog/pour-over-ratios/",
+  "title": { "raw": "Pour-over ratios that actually work", "rendered": "Pour&#x2d;over ratios that actually work" },
+  "content": {
+    "raw": "<h2>Start with 1:16</h2>\n<p>Weigh the coffee, then the water.</p>",
+    "rendered": "<h2>Start with 1:16</h2>\n<p>Weigh the coffee, then the water.</p>\n",
+    "protected": false,
+    "block_version": 0
+  },
+  "excerpt": { "raw": "", "rendered": "<p>Start with 1:16 Weigh the coffee, then the water.</p>\n", "protected": false },
+  "author": 7,
+  "featured_media": 388,
+  "comment_status": "open",
+  "ping_status": "open",
+  "sticky": false,
+  "template": "",
+  "format": "standard",
+  "meta": { "footnotes": "" },
+  "categories": [3],
+  "tags": [11, 12],
+  "password": ""
+}

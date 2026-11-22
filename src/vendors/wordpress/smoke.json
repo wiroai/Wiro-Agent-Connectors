@@ -1,0 +1,11 @@
+{
+  "read": { "tool": "get_site", "args": {} },
+  "write": {
+    "tool": "create_post",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "content": "<p>An unpublished draft from the connector smoke test.</p>"
+    },
+    "note": "Leaves a draft post on the site; nothing becomes public. Delete it under WordPress → Posts → Drafts, or with api_request DELETE /wp/v2/posts/<id>."
+  }
+}
