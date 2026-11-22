@@ -6,7 +6,8 @@
 //
 // The parts go to the upload addresses App Store Connect returns
 // (pre-signed, time-limited, on Apple's upload servers under
-// blobstore.apple.com, which change per upload), not to the API's own origin.
+// blobstore.apple.com or at northamerica-1.object-storage.apple.com, which
+// change per upload), not to the API's own origin.
 // They are sent through ctx.fetch with PUT, Apple's request headers and no
 // credentials. The module declares those servers in uploadHosts, so hosts let
 // the upload through; a host that still refuses it does so before anything is
@@ -25,9 +26,13 @@ const POLL_FOR_MS = 45_000;
 /**
  * The hosts of the upload addresses App Store Connect returns: Apple's upload
  * servers, such as store-030.blobstore.apple.com (Apple's "Uploading assets to
- * App Store Connect"). The connector's uploadHosts.
+ * App Store Connect"), and its object storage at
+ * northamerica-1.object-storage.apple.com, the two kinds of HTTP upload host
+ * Apple's Transporter lists. The connector's uploadHosts.
  */
-export const UPLOAD_HOSTS = ['.blobstore.apple.com'];
+export const UPLOAD_HOSTS = ['.blobstore.apple.com', 'northamerica-1.object-storage.apple.com'];
+/** The upload hosts in words: *.blobstore.apple.com or northamerica-1.object-storage.apple.com. */
+const UPLOAD_SERVERS = UPLOAD_HOSTS.map((host) => (host.startsWith('.') ? `*${host}` : host)).join(' or ');
 const HEADER_NAME = /^[A-Za-z0-9-]{1,100}$/;
 
 interface Spec {
@@ -154,7 +159,7 @@ async function uploadParts(h: ToolHelpers, operations: unknown, bytes: Uint8Arra
       // refused below
     }
     if (!url || url.protocol !== 'https:' || !isUploadHost(url.hostname, UPLOAD_HOSTS) || url.username || url.password) {
-      throw new UploadProblem(`App Store Connect returned an upload address for ${which} that is not an https address on its upload servers (*.blobstore.apple.com).`);
+      throw new UploadProblem(`App Store Connect returned an upload address for ${which} that is not an https address on its upload servers (${UPLOAD_SERVERS}).`);
     }
     const headers: Record<string, string> = {};
     for (const header of Array.isArray(operation?.requestHeaders) ? operation.requestHeaders : []) {

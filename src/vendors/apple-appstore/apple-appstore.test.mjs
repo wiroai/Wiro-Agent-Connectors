@@ -757,7 +757,13 @@ test('upload_app_event_image removes the reservation when the host refuses the u
   assert.match(failed.payload.error, /^App Store Connect's upload server answered HTTP 403 for part 2 of 2\. The reserved image .* could not be removed: delete it with delete_app_event_image before trying again\. Or add the image in App Store Connect \(Apps > the app > In-App Events > the event, in its locale\)\.$/);
 
   // An upload address off Apple's upload servers, even elsewhere on apple.com, is never sent to.
-  for (const address of ['https://uploads.example.com/part1', 'https://www.apple.com/part1', 'https://blobstore.apple.com/part1']) {
+  for (const address of [
+    'https://uploads.example.com/part1',
+    'https://www.apple.com/part1',
+    'https://blobstore.apple.com/part1',
+    'https://object-storage.apple.com/part1',
+    'https://northamerica-1.object-storage.apple.com.evil.test/part1',
+  ]) {
     const offsite = setup(imageRoutes({
       'POST /v1/appEventScreenshots': () => {
         const reserved = fixture(import.meta.url, 'event-image-reserved.json');
@@ -766,11 +772,18 @@ test('upload_app_event_image removes the reservation when the host refuses the u
       },
     }));
     const elsewhere = await callTool(offsite.module, 'upload_app_event_image', UPLOAD_ARGS, offsite.ctx);
-    assert.match(elsewhere.payload.error, /^App Store Connect returned an upload address for part 1 of 2 that is not an https address on its upload servers \(\*\.blobstore\.apple\.com\)\./, address);
+    assert.match(elsewhere.payload.error, /^App Store Connect returned an upload address for part 1 of 2 that is not an https address on its upload servers \(\*\.blobstore\.apple\.com or northamerica-1\.object-storage\.apple\.com\)\./, address);
     assert.ok(!offsite.fetch.calls.some((call) => call.method === 'PUT'), 'nothing is uploaded anywhere else');
     assert.equal(offsite.fetch.calls.at(-1).method, 'DELETE');
   }
 });
+
+/** The reservation, with its upload addresses on another of Apple's upload servers. */
+function reservedOn(server) {
+  const reserved = fixture(import.meta.url, 'event-image-reserved.json');
+  for (const operation of reserved.data.attributes.uploadOperations) operation.url = operation.url.replace(UPLOAD_HOST, server);
+  return reserved;
+}
 
 test('on this package\'s own CLI host the image goes to Apple\'s upload server, each part with Apple\'s headers and no credentials, and is committed', async () => {
   // The CLI's guarded fetch, as the CLI builds it for this connector, with its
@@ -778,44 +791,47 @@ test('on this package\'s own CLI host the image goes to Apple\'s upload server, 
   // touches the network.
   const { createGuardedFetch } = createRequire(import.meta.url)('../../../dist/host/index.js');
   const { module } = loadModuleFor(import.meta.url);
-  assert.deepEqual([...module.uploadHosts], ['.blobstore.apple.com']);
-  const api = fakeFetch(imageRoutes());
-  const image = png(1080, 1920);
-  const outside = [];
-  const fetch = createGuardedFetch({
-    origins: module.origins,
-    uploadHosts: module.uploadHosts,
-    apiFetch: api,
-    resolve: async (hostname) => [{ address: hostname === 'cdn.example.com' ? '93.184.216.34' : '17.253.5.10', family: 4 }],
-    transport: async ({ url, address, method, headers, body }) => {
-      outside.push({ request: `${method} ${url.origin}${url.pathname}`, address: address.address, headers, body: body && [...body] });
-      const reply = method === 'GET' ? image : new Uint8Array(0);
-      return { status: 200, headers: method === 'GET' ? { 'content-type': 'image/png' } : {}, body: (async function* chunks() { yield reply; })(), destroy() {} };
-    },
-  });
-  const { ctx } = makeContext({ credentials, accounts: { apps: [APP] }, fetch });
-  const { payload, isError } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
-  assert.equal(isError, false, payload.error);
-  assert.equal(payload.image.id, IMAGE_ID);
-  assert.equal(payload.image.state, 'COMPLETE');
-  assert.deepEqual(outside.map((item) => item.request), [
-    'GET https://cdn.example.com/images/details.png',
-    'PUT https://store-030.blobstore.apple.com/assets-example-030001/PurpleSource%2Fv4%2Fpart1',
-    'PUT https://store-030.blobstore.apple.com/assets-example-030001/PurpleSource%2Fv4%2Fpart2',
-  ]);
-  const [download, part1, part2] = outside;
-  assert.equal(download.headers.authorization, undefined, 'the image download gets no token');
-  assert.equal(part1.address, '17.253.5.10', 'each part goes to the checked address');
-  assert.deepEqual(part1.headers, { 'Content-Type': 'image/png' }, 'Apple\'s request headers, and no token');
-  assert.deepEqual(part1.body, [...image.subarray(0, 24)]);
-  assert.deepEqual(part2.body, [...image.subarray(24, 40)]);
-  assert.deepEqual(api.calls.map((call) => `${call.method} ${call.path}`), [
-    `GET /v1/appEventLocalizations/${LOCALIZATION_1}`,
-    `GET /v1/apps/${APP}/appEvents`,
-    'POST /v1/appEventScreenshots',
-    `PATCH /v1/appEventScreenshots/${IMAGE_ID}`,
-    `GET /v1/appEventScreenshots/${IMAGE_ID}`,
-  ]);
+  assert.deepEqual([...module.uploadHosts], ['.blobstore.apple.com', 'northamerica-1.object-storage.apple.com']);
+  // App Store Connect hands out addresses on its blobstore servers or on its object storage.
+  for (const server of [UPLOAD_HOST, 'https://northamerica-1.object-storage.apple.com']) {
+    const api = fakeFetch(imageRoutes({ 'POST /v1/appEventScreenshots': () => jsonResponse(201, reservedOn(server)) }));
+    const image = png(1080, 1920);
+    const outside = [];
+    const fetch = createGuardedFetch({
+      origins: module.origins,
+      uploadHosts: module.uploadHosts,
+      apiFetch: api,
+      resolve: async (hostname) => [{ address: hostname === 'cdn.example.com' ? '93.184.216.34' : '17.253.5.10', family: 4 }],
+      transport: async ({ url, address, method, headers, body }) => {
+        outside.push({ request: `${method} ${url.origin}${url.pathname}`, address: address.address, headers, body: body && [...body] });
+        const reply = method === 'GET' ? image : new Uint8Array(0);
+        return { status: 200, headers: method === 'GET' ? { 'content-type': 'image/png' } : {}, body: (async function* chunks() { yield reply; })(), destroy() {} };
+      },
+    });
+    const { ctx } = makeContext({ credentials, accounts: { apps: [APP] }, fetch });
+    const { payload, isError } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
+    assert.equal(isError, false, payload.error);
+    assert.equal(payload.image.id, IMAGE_ID);
+    assert.equal(payload.image.state, 'COMPLETE');
+    assert.deepEqual(outside.map((item) => item.request), [
+      'GET https://cdn.example.com/images/details.png',
+      `PUT ${server}/assets-example-030001/PurpleSource%2Fv4%2Fpart1`,
+      `PUT ${server}/assets-example-030001/PurpleSource%2Fv4%2Fpart2`,
+    ], server);
+    const [download, part1, part2] = outside;
+    assert.equal(download.headers.authorization, undefined, 'the image download gets no token');
+    assert.equal(part1.address, '17.253.5.10', 'each part goes to the checked address');
+    assert.deepEqual(part1.headers, { 'Content-Type': 'image/png' }, 'Apple\'s request headers, and no token');
+    assert.deepEqual(part1.body, [...image.subarray(0, 24)]);
+    assert.deepEqual(part2.body, [...image.subarray(24, 40)]);
+    assert.deepEqual(api.calls.map((call) => `${call.method} ${call.path}`), [
+      `GET /v1/appEventLocalizations/${LOCALIZATION_1}`,
+      `GET /v1/apps/${APP}/appEvents`,
+      'POST /v1/appEventScreenshots',
+      `PATCH /v1/appEventScreenshots/${IMAGE_ID}`,
+      `GET /v1/appEventScreenshots/${IMAGE_ID}`,
+    ]);
+  }
 });
 
 test('the image and review tools say how event images get to the event', () => {
