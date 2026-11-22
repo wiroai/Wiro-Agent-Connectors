@@ -119,12 +119,24 @@ test('enrich_people uses people/match for one person and bulk_match for several,
   assert.equal(fetch.calls.length, 2);
 });
 
-test('get_enrichment_result explains a pending result', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(404, { error: 'result_pending', retry_after_seconds: 30 }));
-  const { payload } = await callTool(module, 'get_enrichment_result', { request_id: '4567' }, ctx);
-  assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/webhook_result/4567');
-  assert.equal(payload.vendorCode, 'result_pending');
-  assert.match(payload.error, /^Apollo has no result for that request_id yet \(still pending\) or does not know it \(HTTP 404\)\. Apollo said: "result_pending"\.$/);
+test('get_enrichment_result reads the polled phones, and explains a pending result', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, json('webhook-result.json')));
+  const { payload } = await callTool(module, 'get_enrichment_result', { request_id: '1039995589705121900' }, ctx);
+  assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/webhook_result/1039995589705121900');
+  assert.deepEqual(payload, {
+    request_type: 'phone',
+    status: 'success',
+    credits_consumed: 1,
+    people: [{ id: '587cf802f65125cad923a266', phone_numbers: [{ number: '+15555550164', type: 'other', status: 'valid_number' }, { number: '+14155550117', type: 'other', status: 'valid_number' }] }],
+  });
+
+  const pending = setup(() => jsonResponse(404, { error_code: 'result_pending', retry_after_seconds: 10 }));
+  const later = await callTool(pending.module, 'get_enrichment_result', { request_id: '4567' }, pending.ctx);
+  assert.equal(later.payload.status, 404);
+  assert.equal(later.payload.error, 'Apollo has no result for that request_id yet (still pending) or does not know it (HTTP 404).');
+  const expired = setup(() => jsonResponse(410, { error_code: 'request_id_expired' }));
+  const gone = await callTool(expired.module, 'get_enrichment_result', { request_id: '4567' }, expired.ctx);
+  assert.match(gone.payload.error, /no longer keeps that result/);
 });
 
 test('enrich_organizations uses a GET for one domain and bulk_enrich for several', async () => {

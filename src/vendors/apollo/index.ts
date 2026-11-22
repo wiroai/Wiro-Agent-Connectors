@@ -347,8 +347,15 @@ const connector = defineConnector({
           path: `${BASE}/webhook_result/${args.request_id}`,
           errors: { 404: 'Apollo has no result for that request_id yet (still pending) or does not know it', 410: 'Apollo no longer keeps that result (it is older than 30 days)' },
         });
-        const people: unknown[] = Array.isArray(data?.people) ? data.people : Array.isArray(data?.matches) ? data.matches : data?.person ? [data.person] : [];
-        return compact({ status: data?.status, people: people.map(trimPerson), raw: people.length ? undefined : data });
+        const result = data?.webhook_result ?? data;
+        const people: unknown[] = Array.isArray(result?.people) ? result.people : Array.isArray(result?.matches) ? result.matches : result?.person ? [result.person] : [];
+        return compact({
+          request_type: data?.request_type,
+          status: result?.status ?? data?.webhook_status,
+          failure_reason: data?.failure_reason,
+          credits_consumed: result?.credits_consumed,
+          people: people.map(trimPerson),
+        });
       },
     },
     {
