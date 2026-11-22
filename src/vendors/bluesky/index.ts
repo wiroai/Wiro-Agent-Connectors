@@ -6,7 +6,7 @@
 // security -> App passwords (never the account password). They open a session
 // through com.atproto.server.createSession; see session.ts.
 
-import { apiTools, defineConnector, formatNumber, ToolFailure, truncate, utf8Length, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, formatNumber, OutcomeUnknown, ToolFailure, truncate, utf8Length, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
 import { imageSize, sniffImage, type ImageType, type Size } from './image.js';
 import { parsePostRef, postUri, readPageCard, type PostRef } from './links.js';
 import { buildFacets, graphemeLength, MAX_GRAPHEMES, MAX_TEXT_BYTES } from './richtext.js';
@@ -19,7 +19,7 @@ const MAX_IMAGES = 4;
 const MAX_GET_POSTS = 25;
 const ACTOR_PATTERN = '^(did:[a-z]+:[A-Za-z0-9._:%-]+|@?[A-Za-z0-9][A-Za-z0-9.-]*\\.[A-Za-z][A-Za-z0-9-]*)$';
 const POST_REF_DESCRIPTION = 'A post\'s bsky.app link (https://bsky.app/profile/<handle>/post/<id>) or its at:// URI.';
-const FILTERS = ['posts_no_replies', 'posts_with_replies', 'posts_and_author_threads', 'posts_with_media'] as const;
+const FILTERS = ['posts_with_replies', 'posts_no_replies', 'posts_and_author_threads', 'posts_with_media'] as const;
 
 function compact(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null));
@@ -70,6 +70,8 @@ function trimPost(post: any, fallbackHandle: string, withAuthor = false): Record
     repostCount: post?.repostCount,
     replyCount: post?.replyCount,
     quoteCount: post?.quoteCount,
+    // Bluesky shows views to the post's author only, and only from 100.
+    viewCount: post?.viewCount,
     isReply: post?.record?.reply ? true : undefined,
     embed: embedKind(post?.embed ?? post?.record?.embed),
   });
@@ -207,9 +209,10 @@ const connector = defineConnector({
       kind: 'read',
       title: 'List my recent Bluesky posts',
       description:
-        "Lists the connected account's own recent posts, newest first (reposts of other people's posts are left out), "
-        + 'with each post\'s URL, text, time, and like, repost, reply and quote counts. filter picks posts without replies (default), '
-        + 'with replies, with the account\'s own threads, or with media only. Pass nextCursor back as cursor for older posts.',
+        "Lists the connected account's own recent posts and replies, newest first (reposts of other people's posts are left out), "
+        + 'with each post\'s URL, text, time, like, repost, reply and quote counts, and views where Bluesky shows them (to the author, '
+        + 'from 100). filter narrows it to posts without replies, posts and the account\'s own threads, or posts with media. Pass '
+        + 'nextCursor back as cursor for older posts.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -217,20 +220,23 @@ const connector = defineConnector({
           filter: {
             type: 'string',
             enum: [...FILTERS],
-            description: 'posts_no_replies (default), posts_with_replies, posts_and_author_threads (posts and the account\'s own threads) or posts_with_media.',
+            description: 'posts_with_replies (default: posts and replies), posts_no_replies, posts_and_author_threads (posts and the account\'s own threads) or posts_with_media.',
           },
-          include_replies: { type: 'boolean', default: false, description: 'The same as filter posts_with_replies (default false).' },
+          include_replies: { type: 'boolean', description: 'false is the same as filter posts_no_replies; true, or leaving it out, keeps the replies.' },
           cursor: { type: 'string', description: 'nextCursor from the previous result.' },
         },
         additionalProperties: false,
       },
-      async run(args: { limit: number; filter?: (typeof FILTERS)[number]; include_replies: boolean; cursor?: string }, h) {
+      async run(args: { limit: number; filter?: (typeof FILTERS)[number]; include_replies?: boolean; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const vendorCursor = typeof state?.['c'] === 'string' ? state['c'] : undefined;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
         const limit = typeof state?.['n'] === 'number' ? state['n'] : args.limit;
-        // An explicit filter (or include_replies: true) wins over the one a cursor carries.
-        const filter = args.filter ?? (args.include_replies ? 'posts_with_replies' : (typeof state?.['f'] === 'string' ? state['f'] : 'posts_no_replies'));
+        // Replies are in by default (Bluesky's own default), so a reply just made shows here too.
+        // An explicit filter, or include_replies, wins over the one a cursor carries.
+        const chosen = args.filter ?? (args.include_replies === undefined ? undefined : args.include_replies ? 'posts_with_replies' : 'posts_no_replies');
+        const carried = typeof state?.['f'] === 'string' && (FILTERS as readonly string[]).includes(state['f']) ? state['f'] : undefined;
+        const filter = chosen ?? carried ?? 'posts_with_replies';
         return withSession(h, true, async (session) => {
           const { data } = await xrpc(h, session, {
             path: '/xrpc/app.bsky.feed.getAuthorFeed',
@@ -258,7 +264,8 @@ const connector = defineConnector({
       title: 'Get Bluesky posts by link',
       description:
         'Returns up to 25 posts, the account\'s own or anyone\'s, by their bsky.app links or at:// URIs: author, text, time, and like, '
-        + 'repost, reply and quote counts. Use it to check how known posts are doing, or whether a post went out.',
+        + 'repost, reply and quote counts, with views on the account\'s own posts from 100. Use it to check how known posts are doing, '
+        + 'or whether a post went out or is gone (notFound).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -488,7 +495,7 @@ const connector = defineConnector({
     {
       name: 'delete_post',
       kind: 'delete',
-      check: 'list_my_posts',
+      check: 'get_posts',
       title: 'Delete a Bluesky post',
       description:
         "Deletes one of the connected account's own posts, by its bsky.app link or at:// URI. It cannot be undone, and the post's "
@@ -508,12 +515,17 @@ const connector = defineConnector({
           if (did !== session.did) {
             throw new ToolFailure(`Only the connected account's own posts can be deleted, and this post belongs to ${ref.actor}. Nothing was sent.`);
           }
-          await xrpc(h, session, {
-            method: 'POST',
-            path: '/xrpc/com.atproto.repo.deleteRecord',
-            json: { repo: session.did, collection: 'app.bsky.feed.post', rkey: ref.rkey },
-            write: true,
-          });
+          try {
+            await xrpc(h, session, {
+              method: 'POST',
+              path: '/xrpc/com.atproto.repo.deleteRecord',
+              json: { repo: session.did, collection: 'app.bsky.feed.post', rkey: ref.rkey },
+              write: true,
+            });
+          } catch (error) {
+            if (error instanceof OutcomeUnknown) throw new OutcomeUnknown(`${error.message} Once it is deleted, get_posts with the same link lists it under notFound.`);
+            throw error;
+          }
           return { deleted: true, uri: postUri(session.did, ref.rkey) };
         });
       },

@@ -153,14 +153,14 @@ test('Bluesky sign-in refusals get their own messages', async () => {
   }
 });
 
-test('list_my_posts reads the author feed and keeps only the account\'s own posts', async () => {
+test('list_my_posts reads the author feed with replies, keeps only the account\'s own posts, and shows views', async () => {
   const { module, fetch, ctx } = setup();
   const { payload } = await callTool(module, 'list_my_posts', {}, ctx);
   const [read] = callsTo(fetch, 'app.bsky.feed.getAuthorFeed');
-  assert.deepEqual(read.query, { actor: DID, limit: '25', filter: 'posts_no_replies' });
+  assert.deepEqual(read.query, { actor: DID, limit: '25', filter: 'posts_with_replies' }, 'replies are in by default, as in Bluesky');
   assert.equal(read.headers.authorization, BEARER);
   assert.equal(payload.handle, 'alice.bsky.social');
-  assert.equal(payload.posts.length, 2, 'the repost of another account is left out');
+  assert.equal(payload.posts.length, 3, 'the repost of another account is left out');
   assert.deepEqual(payload.posts[0], {
     uri: `at://${DID}/app.bsky.feed.post/3lbk2nuxa7c2x`,
     cid: 'bafyreiaaa',
@@ -171,14 +171,19 @@ test('list_my_posts reads the author feed and keeps only the account\'s own post
     repostCount: 5,
     replyCount: 2,
     quoteCount: 1,
+    viewCount: 1840,
     embed: 'external',
   });
   assert.equal(payload.posts[1].embed, 'images');
+  assert.equal(payload.posts[1].viewCount, undefined, 'Bluesky leaves out views under 100');
+  assert.equal(payload.posts[2].isReply, true);
 
-  await callTool(module, 'list_my_posts', { include_replies: true, cursor: payload.nextCursor }, ctx);
+  await callTool(module, 'list_my_posts', { include_replies: false, cursor: payload.nextCursor }, ctx);
   const next = callsTo(fetch, 'app.bsky.feed.getAuthorFeed')[1];
-  assert.equal(next.query.cursor, '2026-11-18T18:30:00.000Z');
-  assert.equal(next.query.filter, 'posts_with_replies');
+  assert.equal(next.query.cursor, '2026-11-18T10:00:00.000Z');
+  assert.equal(next.query.filter, 'posts_no_replies', 'include_replies: false leaves replies out');
+  await callTool(module, 'list_my_posts', { include_replies: true }, ctx);
+  assert.equal(callsTo(fetch, 'app.bsky.feed.getAuthorFeed')[2].query.filter, 'posts_with_replies');
 });
 
 test('an expired session is renewed once for a read', async () => {
@@ -311,6 +316,22 @@ test('a post without a clear answer is unknown, sent once, with list_my_posts to
     assert.equal(payload.check, 'list_my_posts');
     assert.equal(callsTo(fetch, 'com.atproto.repo.createRecord').length, 1);
   }
+});
+
+test('an unclear reply is checked with list_my_posts as told, which shows replies', async () => {
+  const { module, fetch, ctx } = setup({
+    'app.bsky.feed.getPosts': () => jsonResponse(200, fixture(import.meta.url, 'get-posts.json')),
+    'com.atproto.repo.createRecord': () => { throw new TypeError('fetch failed'); },
+  });
+  const { payload } = await callTool(module, 'create_post', { text: 'Part 2 of the thread', reply_to: 'https://bsky.app/profile/bob.bsky.social/post/3lbreply1' }, ctx);
+  assert.equal(payload.outcome, 'unknown');
+  assert.equal(payload.check, 'list_my_posts');
+  assert.equal(callsTo(fetch, 'com.atproto.repo.createRecord').length, 1);
+  // The check, called the way the result says, asks Bluesky for replies too.
+  const check = await callTool(module, payload.check, {}, ctx);
+  assert.equal(check.isError, false, check.payload.error);
+  assert.equal(callsTo(fetch, 'app.bsky.feed.getAuthorFeed')[0].query.filter, 'posts_with_replies');
+  assert.ok(check.payload.posts.some((post) => post.isReply), 'replies are listed');
 });
 
 test('an expired session on a post is never retried, and says nothing was posted', async () => {
@@ -559,6 +580,7 @@ test('delete_post deletes the account\'s own post once, and refuses another acco
   const broken = setup({ 'com.atproto.repo.deleteRecord': () => jsonResponse(502, { error: 'BadGateway' }) });
   const unknown = await callTool(broken.module, 'delete_post', { post: `at://${DID}/app.bsky.feed.post/3lbk2nuxa7c2x` }, broken.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
-  assert.equal(unknown.payload.check, 'list_my_posts');
+  assert.equal(unknown.payload.check, 'get_posts', 'the deleted post itself is looked up, a reply as well as a post');
+  assert.match(unknown.payload.error, /Once it is deleted, get_posts with the same link lists it under notFound\. Call get_posts to see whether it was, before trying again\./);
   assert.equal(callsTo(broken.fetch, 'com.atproto.repo.deleteRecord').length, 1);
 });

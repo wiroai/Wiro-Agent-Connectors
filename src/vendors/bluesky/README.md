@@ -27,15 +27,15 @@ Only accounts hosted by Bluesky can connect: every account made on bsky.app with
 
 An app password can post, delete posts and read for the account, but it cannot delete the account or create other app passwords. It works when email sign-in codes are on.
 
-**Revoke it:** open **App passwords** again and delete it. The connector stops at once.
+**Revoke it:** open **App passwords** again and delete it. New sign-ins with it fail at once. A session the connector already opened stays in its memory for at most 10 minutes, and Bluesky may accept it until then, so calls stop within about 10 minutes.
 
 ## Tools
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
 | `get_profile` | read | A profile with its counts; the connected account by default. |
-| `list_my_posts` | read | Your recent posts with likes, reposts, replies and quotes; with or without replies, your own threads, or media only. |
-| `get_posts` | read | Up to 25 posts, yours or anyone's, by their bsky.app links or at:// URIs, with their numbers. |
+| `list_my_posts` | read | Your recent posts and replies with likes, reposts, replies, quotes and views; or posts without replies, with your own threads, or with media only. |
+| `get_posts` | read | Up to 25 posts, yours or anyone's, by their bsky.app links or at:// URIs, with their numbers; posts that are gone are listed as not found. |
 | `create_post` | create | Posts right away: up to 300 characters with links, mentions and hashtags made clickable, up to 4 JPEG, PNG or WebP images from public https URLs with alt text, or a link card whose title, text and picture come from the page. `reply_to` makes it a reply or the next post of a thread. |
 | `delete_post` | delete | Deletes one of your own posts by link or at:// URI; other accounts' posts are refused before anything is sent. |
 | `api_get` | read | Any XRPC query (GET) with your session, such as `app.bsky.feed.getTimeline`, `app.bsky.feed.getPostThread` or `app.bsky.notification.listNotifications`. |
@@ -46,6 +46,7 @@ An app password can post, delete posts and read for the account, but it cannot d
 - Text: 300 characters (Bluesky counts graphemes: an emoji is one) and 3,000 bytes. A link counts with its full length.
 - Images: up to 4 per post, each up to 2,000,000 bytes; JPEG, PNG or WebP, told by their bytes. Every image needs alt text. A link card goes only on a post without images; its picture is up to 1,000,000 bytes.
 - Up to 3 language codes per post. Bluesky has no scheduling and no edits.
+- Views: Bluesky shows a post's views only to its author, and only from 100.
 - Sign-ins: Bluesky allows 30 per 5 minutes and 300 per day for one account. The connector keeps a session in memory for up to 10 minutes and counts its own sign-ins, so it stops before Bluesky's limit.
 - Writes: 5,000 points per hour and 35,000 per day; a post costs 3 and a delete 1.
 
