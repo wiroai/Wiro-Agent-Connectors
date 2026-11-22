@@ -1,0 +1,19 @@
+{
+  "data": [
+    { "date": "2026-01-01", "value": 21.4 },
+    { "date": "2026-02-01", "value": 19.8 }
+  ],
+  "value": 20.6,
+  "value_from": 1840,
+  "value_to": 379,
+  "compare_value_from": null,
+  "compare_value_to": null,
+  "title": "Conversion rate from Paid to more than 6 months",
+  "type": "multi",
+  "default_aggregation": "sum",
+  "description": "If X is the number of 1st payments and Y the renewals after 6 months, Conversion = (Y / X) * 100%.",
+  "metric_name": "from_paid_to_6_months_conversion",
+  "is_json": true,
+  "unit": "percent",
+  "recommended_period": { "date_from": "2018-04-29", "date_to": "2026-10-31", "period_unit": "month" }
+}

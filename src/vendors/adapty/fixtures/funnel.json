@@ -1,0 +1,14 @@
+{
+  "data": [
+    {
+      "title": "Total",
+      "type": "total",
+      "values": [
+        { "period": -2, "title": "Install", "value": 120000, "value_relative": 100.0, "relative_changes": 0, "following_changes": { "title": "Did not see a paywall", "value": 48000, "value_relative": 40.0 } },
+        { "period": -1, "title": "Paywall displayed", "value": 72000, "value_relative": 60.0, "following_changes": { "title": "Did not start a trial", "value": 61200, "value_relative": 85.0 } },
+        { "period": 0, "title": "Trial", "value": 10800, "value_relative": 9.0, "following_changes": { "title": "Did not convert", "value": 6480, "value_relative": 60.0 }, "churn_reasons": [] },
+        { "period": 1, "title": "Paid", "value": 4320, "value_relative": 3.6 }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "segment_start_date": "2026-08-01",
+      "type": "total",
+      "title": "Total",
+      "total_installs": 40210,
+      "total_subscriptions": 2210,
+      "total_paid_subscribers": 1980,
+      "total_revenue_usd": 61200.5,
+      "total_proceeds_usd": 52020.43,
+      "total_net_revenue_usd": 47100.0,
+      "total_arpu_usd": 1.52,
+      "total_arppu_usd": 30.91,
+      "predict": { "revenue_usd": 98000.0 },
+      "values": [
+        { "period": 1, "installs": 40210, "subscribers": 1980, "subscriptions": 1980, "revenue_usd": 19780.2, "proceeds_usd": 16813.17, "currently_active_period": false },
+        { "period": 2, "installs": 40210, "subscribers": 1320, "subscriptions": 1320, "revenue_usd": 13186.8, "proceeds_usd": 11208.78, "currently_active_period": true }
+      ]
+    }
+  ]
+}

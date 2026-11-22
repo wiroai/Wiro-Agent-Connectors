@@ -1,0 +1,9 @@
+{
+  "data": [
+    { "title": "Total", "type": "total", "values": [ { "period": 1, "value": 100.0 }, { "period": 2, "value": 61.5 }, { "period": 3, "value": 48.2 } ] }
+  ],
+  "title": "Subscription retention",
+  "metric_name": "Subscription retention",
+  "description": "Share of subscribers who are still active in each period.",
+  "value_type": null
+}
