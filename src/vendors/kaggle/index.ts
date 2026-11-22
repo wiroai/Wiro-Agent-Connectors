@@ -319,7 +319,7 @@ const connector = defineConnector({
           dataset_sources: SOURCES('janedoe/sales-2026', 'Datasets as "owner/slug"'),
           competition_sources: SOURCES('titanic', 'Competitions you joined, by slug'),
           notebook_sources: SOURCES('janedoe/feature-prep', 'Other notebooks\' output, as "owner/slug"'),
-          model_sources: SOURCES('google/gemma/transformers/2b', 'Models as "owner/model/framework/variation", a version number at the end to pin one'),
+          model_sources: SOURCES('janedoe/my-model/pytorch/base', 'Models as "owner/model/framework/variation", a version number at the end to pin one'),
           run: { type: 'boolean', default: true, description: 'true (default) saves and runs; false saves a version without running it.' },
           session_timeout_seconds: { type: 'integer', minimum: 60, maximum: 43200, description: 'Stop the run after this many seconds (Kaggle\'s own limit is 12 hours, 9 on TPU).' },
         },
@@ -479,9 +479,9 @@ const connector = defineConnector({
       inputSchema: {
         type: 'object',
         properties: {
-          scope: { type: 'string', enum: ['mine', 'public'], default: 'mine', description: 'mine (default) or public.' },
-          search: { type: 'string', maxLength: 200, description: 'Words to search for (with scope public).' },
-          user: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$', description: 'Only this user\'s public datasets.' },
+          scope: { type: 'string', enum: ['mine', 'public'], default: 'mine', description: 'mine (default) or public; ignored with user.' },
+          search: { type: 'string', maxLength: 200, description: 'Words to search for (with scope public, or within one user\'s datasets).' },
+          user: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$', description: 'Only this user\'s or organization\'s public datasets.' },
           sort_by: { type: 'string', enum: ['updated', 'hottest', 'votes', 'active', 'published'], default: 'updated', description: 'The order (default updated).' },
           page_size: { type: 'integer', minimum: 1, maximum: 100, default: 20, description: 'Datasets per page, 1 to 100 (default 20).' },
           cursor: CURSOR_SCHEMA,
@@ -493,7 +493,8 @@ const connector = defineConnector({
         const { data } = await h.api({
           path: `${API}/datasets/list`,
           query: {
-            group: args.user ? undefined : args.scope === 'mine' ? 'my' : 'public',
+            // Kaggle's own client sends group user with user: without it the user filter does not pick the list.
+            group: args.user ? 'user' : args.scope === 'mine' ? 'my' : 'public',
             user: args.user,
             search: args.search,
             sortBy: args.sort_by,
@@ -575,7 +576,7 @@ const connector = defineConnector({
       inputSchema: {
         type: 'object',
         properties: {
-          slug: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{4,49}$', description: 'The dataset slug, 5 to 50 lowercase letters, digits and dashes; one in use is refused.' },
+          slug: { type: 'string', pattern: '^[a-z0-9][a-z0-9-]{5,49}$', description: 'The dataset slug, 6 to 50 lowercase letters, digits and dashes; one in use is refused.' },
           title: { type: 'string', minLength: 6, maxLength: 50, description: 'The title, 6 to 50 characters.' },
           subtitle: { type: 'string', minLength: 20, maxLength: 80, description: 'A subtitle, 20 to 80 characters.' },
           description: { type: 'string', maxLength: 20000, description: 'Where the data comes from and what each column means (Markdown).' },
@@ -625,13 +626,15 @@ const connector = defineConnector({
       },
     },
     {
+      // A write: with delete_old_versions it also deletes every earlier version for good, so it is annotated destructive.
       name: 'create_dataset_version',
-      kind: 'create',
+      kind: 'write',
       check: 'get_dataset_status',
       title: 'Upload a new Kaggle dataset version',
       description:
         'Uploads a new version of a dataset. Kaggle builds the version from the files sent with it, so send every file the dataset should keep. '
-        + 'delete_old_versions removes every earlier version for good: only when asked. Check processing with get_dataset_status.',
+        + 'delete_old_versions removes every earlier version for good: only when the owner asked for exactly that. Check processing with '
+        + 'get_dataset_status.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -677,12 +680,17 @@ const connector = defineConnector({
       title: 'List Kaggle competitions',
       description:
         'Competitions matching some words, latest deadline first by default, with category, reward, deadline, teams, whether you entered and '
-        + 'whether it takes notebook submissions only. group entered lists the ones you joined. Pass nextCursor back as cursor for more.',
+        + 'whether it takes notebook submissions only. group entered lists the ones you joined, community the ones Kaggle users host, and '
+        + 'hosted your own. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           search: { type: 'string', maxLength: 200, description: 'Words to search for.' },
-          group: { type: 'string', enum: ['general', 'entered', 'inClass'], description: 'entered: only the ones you joined.' },
+          group: {
+            type: 'string',
+            enum: ['general', 'entered', 'community', 'hosted'],
+            description: 'general (the main list), entered (the ones you joined), community (community competitions, which Kaggle users host) or hosted (the ones you host).',
+          },
           category: { type: 'string', enum: ['featured', 'research', 'recruitment', 'gettingStarted', 'masters', 'playground'], description: 'Only this category.' },
           sort_by: {
             type: 'string',
@@ -857,7 +865,8 @@ const connector = defineConnector({
         + 'or models is not offered here. Reference: https://www.kaggle.com/docs/api.',
       basePath: '/api/v1/',
       guard(request) {
-        if (request.method !== 'GET' && request.segments.some((segment) => segment === 'delete')) {
+        // Kaggle's router ignores case (/DELETE routes like /delete); a segment such as DeleteDataset counts too.
+        if (request.method !== 'GET' && request.segments.some((segment) => segment.toLowerCase().includes('delete'))) {
           throw new ToolFailure('Deleting on Kaggle is not offered here: delete it on kaggle.com itself. Nothing was sent.');
         }
       },

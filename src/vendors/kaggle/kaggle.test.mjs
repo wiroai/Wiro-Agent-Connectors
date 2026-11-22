@@ -211,6 +211,13 @@ test('list_datasets, list_dataset_files and get_dataset_status read your dataset
   assert.equal(files.fetch.calls[0].url, 'https://www.kaggle.com/api/v1/datasets/list/janedoe/sales-2026?pageSize=100');
   assert.deepEqual(listed.payload.files, [{ name: 'sales.csv', size_bytes: 1200000, created: '2026-11-19T08:00:00Z' }]);
 
+  // One user's datasets go with group user, as Kaggle's own client sends them.
+  const theirs = setup(() => json('datasets.json'));
+  await callTool(theirs.module, 'list_datasets', { user: 'bob' }, theirs.ctx);
+  assert.equal(theirs.fetch.calls[0].url, 'https://www.kaggle.com/api/v1/datasets/list?group=user&user=bob&sortBy=updated&pageSize=20&page=1');
+  await callTool(theirs.module, 'list_datasets', { scope: 'public', search: 'sales' }, theirs.ctx);
+  assert.deepEqual(theirs.fetch.calls[1].query, { group: 'public', search: 'sales', sortBy: 'updated', pageSize: '20', page: '1' });
+
   const status = setup(() => jsonResponse(200, 'ready'));
   const ready = await callTool(status.module, 'get_dataset_status', { dataset: 'janedoe/sales-2026' }, status.ctx);
   assert.equal(status.fetch.calls[0].url, 'https://www.kaggle.com/api/v1/datasets/status/janedoe/sales-2026');
@@ -275,6 +282,9 @@ test('create_dataset refuses before uploading: no license for a public dataset, 
   assert.match(twice.payload.error, /given twice/);
   const neither = await callTool(module, 'create_dataset', { ...base, files: [{ name: 'a.csv' }] }, ctx);
   assert.match(neither.payload.error, /give url or content/);
+  // Kaggle takes slugs of 6 to 50 characters: a shorter one is refused before any file is downloaded or uploaded.
+  const short = await callTool(module, 'create_dataset', { ...base, slug: 'sales', files: [{ name: 'a.csv', url: 'https://files.example.com/a.csv' }] }, ctx);
+  assert.match(short.payload.error, /Invalid arguments for create_dataset/);
   assert.equal(fetch.calls.length, 0);
 });
 
@@ -314,12 +324,25 @@ test('create_dataset_version uploads the files and posts the version body', asyn
   assert.equal(last.url, 'https://www.kaggle.com/api/v1/datasets/create/version/janedoe/sales-2026');
   assert.deepEqual(last.json, { versionNotes: 'November data added', deleteOldVersions: false, files: [{ token: 'dXBsb2FkLXRva2VuLTE' }] });
   assert.equal(payload.created, true);
+
+  // delete_old_versions deletes every earlier version for good, so the tool is annotated destructive and not idempotent.
+  const tool = module.tools.find((candidate) => candidate.name === 'create_dataset_version');
+  assert.deepEqual({ ...tool.annotations }, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
+  const replacing = setup(uploadFlow('dataset-created.json'));
+  await callTool(replacing.module, 'create_dataset_version', { dataset: 'sales-2026', version_notes: 'Replaced', files: [{ name: 'sales.csv', content: 'x' }], delete_old_versions: true }, replacing.ctx);
+  assert.equal(replacing.fetch.calls[replacing.fetch.calls.length - 1].json.deleteOldVersions, true);
 });
 
 test('competitions: the list by slug, a leaderboard, and your submissions', async () => {
   const list = setup(() => json('competitions.json'));
   const competitions = await callTool(list.module, 'list_competitions', { search: 'tabular', group: 'entered' }, list.ctx);
   assert.equal(list.fetch.calls[0].url, 'https://www.kaggle.com/api/v1/competitions/list?search=tabular&group=entered&sortBy=latestDeadline&page=1');
+  // The groups are Kaggle's current list tabs; the retired inClass is refused before anything is sent.
+  await callTool(list.module, 'list_competitions', { group: 'community' }, list.ctx);
+  assert.equal(list.fetch.calls[1].query.group, 'community');
+  const retired = await callTool(list.module, 'list_competitions', { group: 'inClass' }, list.ctx);
+  assert.match(retired.payload.error, /Invalid arguments for list_competitions/);
+  assert.equal(list.fetch.calls.length, 2);
   assert.deepEqual(competitions.payload.competitions[0], {
     slug: 'titanic',
     title: 'Titanic - Machine Learning from Disaster',
@@ -383,9 +406,17 @@ test('api_get and api_request keep to /api/v1/ and never delete', async () => {
   const read = await callTool(module, 'api_get', { path: '/api/v1/datasets/metadata/janedoe/sales-2026' }, ctx);
   assert.deepEqual(read.payload, { status: 200, data: { info: { title: 'Sales 2026' } } });
   assert.equal(fetch.calls[0].headers.authorization, `Bearer ${TOKEN}`);
-  for (const path of ['/api/v1/kernels/delete/janedoe/sales-forecast', '/api/v1/dataset/janedoe/sales-2026/delete']) {
+  // Kaggle's router ignores case, so every spelling of a delete is refused.
+  for (const path of [
+    '/api/v1/kernels/delete/janedoe/sales-forecast',
+    '/api/v1/dataset/janedoe/sales-2026/delete',
+    '/api/v1/dataset/janedoe/sales-2026/DELETE',
+    '/api/v1/kernels/Delete/janedoe/sales-forecast',
+    '/api/v1/models/janedoe/my-model/%44elete',
+    '/api/v1/datasets/DeleteDataset',
+  ]) {
     const refused = await callTool(module, 'api_request', { method: 'POST', path }, ctx);
-    assert.match(refused.payload.error, /Deleting on Kaggle is not offered here/);
+    assert.match(refused.payload.error, /Deleting on Kaggle is not offered here/, path);
   }
   const outside = await callTool(module, 'api_get', { path: '/settings' }, ctx);
   assert.match(outside.payload.error, /must start with \/api\/v1\//);

@@ -50,15 +50,15 @@ Notebooks and datasets are named `owner/slug`, by their slug alone for your own,
 | `list_datasets` | read | Your datasets (or public ones, or one user's), last updated first, with size, visibility, downloads, votes, version and usability. |
 | `list_dataset_files` | read | A dataset's files with their sizes and dates. |
 | `get_dataset_status` | read | Whether a dataset is still processing or ready. |
-| `create_dataset` | create | Creates a dataset from files given by public https URL or as text, private unless asked; a public one needs a license. |
-| `create_dataset_version` | create | Uploads a new version from files: send every file the dataset should keep. |
-| `list_competitions` | read | Competitions by words, category or the ones you entered, with reward, deadline, teams and whether they take notebook submissions only. |
+| `create_dataset` | create | Creates a dataset from files given by public https URL or as text, private unless asked; a public one needs a license. The slug takes 6 to 50 lowercase letters, digits and dashes. |
+| `create_dataset_version` | write | Uploads a new version from files: send every file the dataset should keep. With `delete_old_versions` it also deletes every earlier version for good, so it is marked destructive. |
+| `list_competitions` | read | Competitions by words, category or group (the main list, the ones you entered, community competitions or the ones you host), with reward, deadline, teams and whether they take notebook submissions only. |
 | `get_leaderboard` | read | The top of a competition's public leaderboard. |
 | `list_submissions` | read | Your submissions to a competition with their status and scores. |
 | `submit_to_competition` | create | Submits a file (by public https URL or as text) to a competition you joined; it uses one of the day's submissions. |
 | `submit_notebook_to_competition` | create | Submits a notebook version and its output file to a code competition. |
 | `api_get` | read | Any other GET of the Kaggle API under `/api/v1/`, such as dataset metadata, competition data files or models. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE to the Kaggle API under `/api/v1/`. Sent once, never retried. Deleting notebooks, datasets or models is not offered. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE to the Kaggle API under `/api/v1/`. Sent once, never retried. Deleting notebooks, datasets or models is not offered: a path with a delete segment, in any case, is refused. |
 
 ### How files are uploaded
 
