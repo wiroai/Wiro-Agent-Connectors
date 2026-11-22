@@ -2,18 +2,25 @@
 // https://googleads.googleapis.com: GAQL reports, grouped mutates for
 // campaigns, budgets, ad groups, ads, keywords, criteria, assets, audiences and
 // conversion settings, image assets from a URL, Keyword Planner ideas, Customer
-// Match uploads, and the rest of the API through api_get and api_request.
+// Match uploads, and the rest of the API through api_get and api_request. Customer
+// Match members and offline conversions also go through Google's Data Manager
+// API on https://datamanager.googleapis.com (data-manager.ts), which Google
+// opens to every Google Cloud project, while the Google Ads API keeps those
+// uploads for the projects it allowlisted.
 //
 // Credentials:
 // - `access_token`: a Google OAuth access token with the scope
-//   https://www.googleapis.com/auth/adwords, from an OAuth client in the user's
-//   own Google Cloud project, whose Google Ads API access level applies. The
-//   host signs in, refreshes it and passes the current one on every call.
+//   https://www.googleapis.com/auth/adwords (and
+//   https://www.googleapis.com/auth/datamanager for the Data Manager tools),
+//   from an OAuth client in the user's own Google Cloud project, whose Google
+//   Ads API access level applies. The host signs in, refreshes it and passes the
+//   current one on every call.
 // - `developertoken` (optional): Google sunset developer tokens on 2026-09-09,
 //   ignores them since and will refuse them in a later major API version. It
 //   stays declared so an older setup's value still loads, but it is not sent.
 // - `managercustomerid` (optional): a manager account (MCC) sent as
-//   login-customer-id on every request, for accounts reached through it.
+//   login-customer-id on every request. Without it, the connector finds the
+//   manager account of a client account itself (login.ts).
 //
 // Account picker `customers` (the Google Ads accounts the agent may use): every
 // tool that names an account checks it against ctx.accounts.customers.
@@ -34,59 +41,66 @@ import {
   type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
+import { DATA_MANAGER, dataManagerTools } from './data-manager.js';
+import {
+  CONSENT,
+  HASHED_LISTS,
+  hashIdentifiers,
+  IDENTIFIER_LISTS,
+  identifierCount,
+  MAX_MATCH_IDENTIFIERS,
+  normalizeEmail,
+  normalizePhone,
+  skippedSummary,
+} from './identifiers.js';
+import { loginFor, rememberHierarchy } from './login.js';
+import {
+  accessibleIds,
+  ACCOUNT,
+  ADS_ORIGIN,
+  compact,
+  CURSOR,
+  CUSTOMER_ID,
+  chosenCustomer,
+  digits,
+  ERRORS,
+  LABEL,
+  LOGIN_CUSTOMER_ID,
+  loginHeaders,
+  searchPage,
+  snake,
+  snakeDeep,
+  VERSION,
+} from './shared.js';
 
-const VERSION = 'v26';
-const LABEL = 'Google Ads';
-const ACCOUNT = 'Google Ads account';
 const MAX_IMAGE_BYTES = 5_120 * 1024;
-/** Google Ads search pages hold 10,000 rows, with no smaller page size: read up to the hosts' usual 8 MB reply cap. */
-const MAX_SEARCH_BYTES = 8 * 1024 * 1024;
 const PICKER_BATCH = 10;
-const MAX_MATCH_IDENTIFIERS = 10_000;
 
-const CUSTOMER_ID = {
-  type: 'string' as const,
-  pattern: '^[0-9]{3}-?[0-9]{3}-?[0-9]{4}$',
-  description: 'The 10-digit Google Ads account ID, with or without dashes, e.g. "1234567890" (list_customers lists them).',
-};
-const LOGIN_CUSTOMER_ID = {
-  type: 'string' as const,
-  pattern: '^[0-9]{3}-?[0-9]{3}-?[0-9]{4}$',
-  description: 'The manager account (MCC) the account is reached through, sent as login-customer-id: list_customers gives it as login_customer_id. Default: the connection\'s manager account ID, if set.',
-};
-const CURSOR = { type: 'string' as const, description: 'nextCursor from the previous result, with the same other arguments.' };
-
-const ERRORS = {
-  403: 'Google Ads refused the request: the Google account has no access to this account, the account is reached through a manager account (give login_customer_id), or the Google Cloud project of the OAuth client has no Google Ads API access to production accounts yet',
-};
-const SEARCH_ERRORS = {
-  ...ERRORS,
-  400: `Google Ads did not accept the query: check the GAQL syntax, the field names (snake_case, e.g. metrics.cost_micros) and that the fields can be selected together FROM that resource (api_get /${VERSION}/googleAdsFields/<field> tells whether a field exists and what it can be selected with)`,
-};
 const MUTATE_ERRORS = {
   ...ERRORS,
   400: 'Google Ads rejected the operations: check the field names (camelCase), resource names, enum values and text limits (headlines 30 characters, descriptions 90, paths 15); validate_only: true checks operations without changing anything',
 };
+
+/** Customer Match and click conversion uploads that Google Ads refuses to projects it has not allowlisted, and where they go instead. */
+const MATCH_REFUSED =
+  'since April 2026 Google Ads takes Customer Match data only from Google Cloud projects that sent some between October 2025 and '
+  + 'March 2026 (others get CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE), and add_audience_members and remove_audience_members send the '
+  + 'same people through Google\'s Data Manager API, open to every project';
+const MATCH_ERRORS = {
+  ...MUTATE_ERRORS,
+  400: `Google Ads did not accept the Customer Match job: the user list must be a CRM-based list of this account, and ${MATCH_REFUSED}`,
+  403: `Google Ads refused the Customer Match job: ${MATCH_REFUSED}; or the Google account has no access to this account, or reaches it through a manager account (give login_customer_id)`,
+};
+const CLICKS_REFUSED =
+  'since June 15, 2026 Google Ads takes click conversions only from Google Cloud projects that sent some between December 2025 and '
+  + 'June 2026 (others get CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE), and upload_conversions sends them through Google\'s Data Manager '
+  + 'API, open to every project';
 
 const CUSTOMER_QUERY =
   'SELECT customer.id, customer.descriptive_name, customer.manager, customer.status, customer.currency_code, customer.time_zone, customer.test_account FROM customer LIMIT 1';
 const CLIENTS_QUERY =
   'SELECT customer_client.id, customer_client.descriptive_name, customer_client.manager, customer_client.level, customer_client.status, '
   + 'customer_client.currency_code, customer_client.time_zone, customer_client.test_account FROM customer_client WHERE customer_client.level <= 2';
-
-function compact(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
-}
-
-function digits(value: string): string {
-  return value.replace(/[^0-9]/g, '');
-}
-
-function chosenCustomer(h: ToolHelpers, value: string): string {
-  const id = digits(value);
-  requireAccounts(h.ctx.accounts, 'customers', id, ACCOUNT);
-  return id;
-}
 
 /**
  * "customers/<id>" as a resource name: at the start of a value, or after a
@@ -103,21 +117,22 @@ function customersIn(value: unknown): string[] {
   return [...new Set([...text.matchAll(CUSTOMER_NAME)].map((match) => match[1] as string))];
 }
 
-/** The login-customer-id header for a request: the argument, else the connection's manager account (sent by authHeaders). */
-function loginHeaders(login: string | undefined): Record<string, string> {
-  return login ? { 'login-customer-id': digits(login) } : {};
+/** The account a generic request's path acts on: /v26/customers/<id>/... or /v26/customers/<id>:method. */
+function customerOfPath(path: string): string | undefined {
+  return /^\/v[0-9]+\/customers\/([0-9]+)(?:[/:]|$)/.exec(path)?.[1];
 }
 
-function snake(key: string): string {
-  return key.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-}
-
-function snakeDeep(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(snakeDeep);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [snake(key), snakeDeep(item)]));
+/** A better sentence for the uploads Google Ads keeps for allowlisted projects. */
+function allowlistErrors(path: string): Partial<Record<number, string>> | undefined {
+  if (/:uploadClickConversions$/.test(path)) {
+    const sentence = `Google Ads refused the click conversions: ${CLICKS_REFUSED}`;
+    return { 400: sentence, 403: sentence };
   }
-  return typeof value === 'string' ? truncate(value, 2000) : value;
+  if (/\/offlineUserDataJobs(?:[/:]|$)|:uploadUserData$/.test(path)) {
+    const sentence = `Google Ads refused the Customer Match upload: ${MATCH_REFUSED}`;
+    return { 400: sentence, 403: sentence };
+  }
+  return undefined;
 }
 
 /** A GAQL result row as flat fields named like the query's: {"campaign.id": "1", "metrics.cost_micros": "2500000"}. */
@@ -128,19 +143,6 @@ function flattenRow(value: unknown, prefix = '', out: Record<string, unknown> = 
     out[prefix] = Array.isArray(value) ? snakeDeep(value) : typeof value === 'string' ? truncate(value, 2000) : value;
   }
   return out;
-}
-
-async function searchPage(h: ToolHelpers, customer: string, query: string, login: string | undefined, pageToken?: string): Promise<any> {
-  const { data } = await h.api({
-    method: 'POST',
-    path: `/${VERSION}/customers/${customer}/googleAds:search`,
-    headers: loginHeaders(login),
-    json: compact({ query, pageToken }),
-    safe: true,
-    maxBytes: MAX_SEARCH_BYTES,
-    errors: SEARCH_ERRORS,
-  });
-  return data;
 }
 
 /** A name for an image asset left unnamed: Google Ads wants unique names for image assets (it adds a suffix to a repeated one). */
@@ -185,11 +187,6 @@ function fitWriteResult(result: Record<string, unknown>, listKey: string): Recor
   return { ...result, [listKey]: list.slice(0, count), [`${listKey}_total`]: list.length, [`${listKey}_note`]: `Only the first ${count} of ${list.length} are listed here; search lists the rest.` };
 }
 
-/** At most 100 indices of skipped inputs, with their count. */
-function skippedSummary(indices: number[]): Record<string, unknown> | undefined {
-  return indices.length ? { count: indices.length, first_indices: indices.slice(0, 100) } : undefined;
-}
-
 function hasPartialFailure(data: any): boolean {
   return Boolean(data?.partialFailureError && (data.partialFailureError.code || data.partialFailureError.message));
 }
@@ -208,55 +205,6 @@ function base64(bytes: Uint8Array): string {
   for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
   return btoa(binary);
 }
-
-/** Google's normalization before hashing: trimmed, lower case, no dots in a Gmail address's name. */
-function normalizeEmail(raw: string): string | undefined {
-  const email = raw.trim().toLowerCase();
-  const at = email.lastIndexOf('@');
-  if (at <= 0 || at === email.length - 1) return undefined;
-  let name = email.slice(0, at);
-  const domain = email.slice(at + 1);
-  if (!/^[^\s@]+$/.test(name) || !/^[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(domain)) return undefined;
-  if (domain === 'gmail.com' || domain === 'googlemail.com') name = name.replace(/\./g, '');
-  return name ? `${name}@${domain}` : undefined;
-}
-
-/** E.164: a plus sign, the country code and the number, digits only. */
-function normalizePhone(raw: string): string | undefined {
-  const text = raw.trim();
-  if (!text.startsWith('+')) return undefined;
-  const number = text.slice(1).replace(/[\s().-]/g, '');
-  return /^[1-9][0-9]{7,14}$/.test(number) ? `+${number}` : undefined;
-}
-
-interface Hashed {
-  emails: string[];
-  phones: string[];
-  skippedEmails: number[];
-  skippedPhones: number[];
-}
-
-async function hashIdentifiers(args: { emails?: string[]; phones?: string[]; hashed_emails?: string[]; hashed_phones?: string[] }): Promise<Hashed> {
-  const result: Hashed = { emails: [], phones: [], skippedEmails: [], skippedPhones: [] };
-  for (const [index, email] of (args.emails ?? []).entries()) {
-    const normalized = normalizeEmail(email);
-    if (normalized) result.emails.push(await sha256Hex(normalized));
-    else result.skippedEmails.push(index);
-  }
-  for (const [index, phone] of (args.phones ?? []).entries()) {
-    const normalized = normalizePhone(phone);
-    if (normalized) result.phones.push(await sha256Hex(normalized));
-    else result.skippedPhones.push(index);
-  }
-  result.emails.push(...(args.hashed_emails ?? []).map((hash) => hash.toLowerCase()));
-  result.phones.push(...(args.hashed_phones ?? []).map((hash) => hash.toLowerCase()));
-  return result;
-}
-
-const IDENTIFIER_LISTS = {
-  emails: { type: 'array' as const, maxItems: MAX_MATCH_IDENTIFIERS, items: { type: 'string' as const, maxLength: 320 }, description: 'Email addresses in plain text; they are normalized and hashed with SHA-256 before anything is sent.' },
-  phones: { type: 'array' as const, maxItems: MAX_MATCH_IDENTIFIERS, items: { type: 'string' as const, maxLength: 40 }, description: 'Phone numbers in E.164 form with the country code, e.g. "+15551234567"; hashed with SHA-256 before sending.' },
-};
 
 /** Endpoints the generic tools keep out of reach, and their account lock. */
 function guardRequest(request: ApiToolRequest, h: ToolHelpers): void {
@@ -287,15 +235,17 @@ function guardRequest(request: ApiToolRequest, h: ToolHelpers): void {
  * The generic tools, with a login_customer_id argument and search as the way
  * to check a change. api_request sends a JSON body only: Google Ads takes
  * nothing else, and a body sent as text would go out without the account
- * check reading it.
+ * check reading it. The login-customer-id is settled when the request is
+ * sent, after the account lock passed it.
  */
 function genericTools(): ToolDefinition[] {
   return apiTools({
     label: LABEL,
     description:
-      `The Google Ads API ${VERSION} REST interface at https://googleads.googleapis.com with the connected account: paths start with `
+      `The Google Ads API ${VERSION} REST interface at ${ADS_ORIGIN} with the connected account: paths start with `
       + `/${VERSION}/customers/{customer_id}, such as /${VERSION}/customers/{customer_id}/campaigns:mutate, recommendations:apply or `
-      + 'recommendations:dismiss, offlineUserDataJobs:create, {customer_id}:uploadClickConversions or :uploadConversionAdjustments. '
+      + 'recommendations:dismiss, {customer_id}:uploadConversionAdjustments or :uploadCallConversions. Click conversions and Customer '
+      + 'Match data go through upload_conversions and add_audience_members unless Google allowlisted the project. '
       + 'Money is in micros (1 unit = 1000000). Reference: https://developers.google.com/google-ads/api/rest/overview.',
     basePath: `/${VERSION}/`,
     methods: ['POST'],
@@ -316,8 +266,11 @@ function genericTools(): ToolDefinition[] {
       inputSchema: { ...tool.inputSchema, properties },
       run: (args: Record<string, unknown>, h: ToolHelpers) => {
         const { login_customer_id: login, ...rest } = args;
-        if (typeof login !== 'string') return tool.run(rest, h);
-        const api = (request: ApiRequest) => h.api({ ...request, headers: { ...request.headers, ...loginHeaders(login) } });
+        const api = async (request: ApiRequest) => {
+          const resolved = await loginFor(h, customerOfPath(request.path), typeof login === 'string' ? login : undefined);
+          const errors = allowlistErrors(request.path);
+          return h.api({ ...request, headers: { ...request.headers, ...loginHeaders(resolved) }, ...(errors ? { errors: { ...request.errors, ...errors } } : {}) });
+        };
         return tool.run(rest, { ...h, api });
       },
     };
@@ -362,7 +315,7 @@ interface MatchArgs {
 const connector = defineConnector({
   vendor: 'google-ads',
   label: LABEL,
-  origins: ['https://googleads.googleapis.com'],
+  origins: [ADS_ORIGIN, DATA_MANAGER],
   credentials: ['access_token', 'developertoken', 'managercustomerid'],
   requiredCredentials: [['access_token']],
   credentialLabels: {
@@ -389,10 +342,8 @@ const connector = defineConnector({
     return credentials;
   },
   // No developer-token header: Google ignores it since 2026-09-09 and will refuse it in a later major version.
-  authHeaders: (credentials) => ({
-    authorization: `Bearer ${credentials['access_token']}`,
-    ...(credentials['managercustomerid'] ? { 'login-customer-id': credentials['managercustomerid'] } : {}),
-  }),
+  // The login-customer-id goes on each Google Ads request (loginFor), never to the Data Manager API.
+  authHeaders: (credentials) => ({ authorization: `Bearer ${credentials['access_token']}` }),
   tools: [
     {
       name: 'list_customers',
@@ -411,11 +362,11 @@ const connector = defineConnector({
         const chosen = allowedAccounts(h.ctx.accounts, 'customers');
         const selected = (id: string) => (chosen?.includes(id) ? true : undefined);
         const { data } = await h.api({ path: `/${VERSION}/customers:listAccessibleCustomers`, errors: ERRORS });
-        const accessible = [...new Set((Array.isArray(data?.resourceNames) ? data.resourceNames : [])
-          .map((name: unknown) => /^customers\/([0-9]+)$/.exec(String(name))?.[1])
-          .filter((id: string | undefined): id is string => Boolean(id)))].sort() as string[];
+        const accessible = accessibleIds(data);
         const seen = new Set<string>(accessible);
         const customers: Record<string, unknown>[] = [];
+        const managers: Array<[string, boolean]> = [];
+        const clients: Array<[string, string]> = [];
         // A closed or suspended account answers with an error: it is listed as not accessible.
         const tryRead = async (customer: string, query: string, login: string): Promise<any[] | string> => {
           try {
@@ -434,6 +385,7 @@ const connector = defineConnector({
             continue;
           }
           const customer = rows[0]?.customer ?? {};
+          managers.push([id, customer.manager === true]);
           customers.push(compact({
             id,
             name: typeof customer.descriptiveName === 'string' && customer.descriptiveName ? truncate(customer.descriptiveName, 200) : id,
@@ -445,13 +397,14 @@ const connector = defineConnector({
             selected: selected(id),
           }));
           if (customer.manager !== true) continue;
-          const clients = await tryRead(id, CLIENTS_QUERY, id);
-          if (typeof clients === 'string') continue;
-          for (const row of clients) {
+          const found = await tryRead(id, CLIENTS_QUERY, id);
+          if (typeof found === 'string') continue;
+          for (const row of found) {
             const client = row?.customerClient ?? {};
             const clientId = client.id !== undefined ? String(client.id) : '';
             if (!/^[0-9]{10}$/.test(clientId) || seen.has(clientId)) continue;
             seen.add(clientId);
+            clients.push([clientId, id]);
             customers.push(compact({
               id: clientId,
               name: typeof client.descriptiveName === 'string' && client.descriptiveName ? truncate(client.descriptiveName, 200) : clientId,
@@ -466,6 +419,8 @@ const connector = defineConnector({
             }));
           }
         }
+        // What was read tells later calls which manager account each client account is reached through.
+        await rememberHierarchy(h, accessible, managers, clients);
         return h.page({
           key: 'customers',
           items: customers.slice(skip),
@@ -502,7 +457,8 @@ const connector = defineConnector({
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const data = await searchPage(h, id, args.query, args.login_customer_id, pageToken);
+        const login = await loginFor(h, id, args.login_customer_id);
+        const data = await searchPage(h, id, args.query, login, pageToken);
         const rows = (Array.isArray(data?.results) ? data.results : []).map((row: unknown) => flattenRow(row));
         return h.page({
           key: 'rows',
@@ -552,10 +508,11 @@ const connector = defineConnector({
           requireAccounts(h.ctx.accounts, 'customers', named, ACCOUNT);
           throw new ToolFailure(`The operations name another account (${named.join(', ')}) than ${id}: every resource name must be under customers/${id}. Nothing was changed.`);
         }
+        const login = await loginFor(h, id, args.login_customer_id);
         const { data } = await h.api({
           method: 'POST',
           path: `/${VERSION}/customers/${id}/googleAds:mutate`,
-          headers: loginHeaders(args.login_customer_id),
+          headers: loginHeaders(login),
           json: compact({ mutateOperations: args.operations, partialFailure: args.partial_failure, validateOnly: args.validate_only }),
           write: !args.validate_only,
           errors: MUTATE_ERRORS,
@@ -600,10 +557,11 @@ const connector = defineConnector({
         const media = await h.media(args.image_url, { what: 'image', maxBytes: MAX_IMAGE_BYTES, accept: 'image/jpeg,image/png,image/gif' });
         const type = imageType(media.bytes);
         if (!type) throw new ToolFailure('The image is not a JPEG, PNG or GIF file, the formats Google Ads takes. Nothing was changed.');
+        const login = await loginFor(h, id, args.login_customer_id);
         const { data } = await h.api({
           method: 'POST',
           path: `/${VERSION}/customers/${id}/assets:mutate`,
-          headers: loginHeaders(args.login_customer_id),
+          headers: loginHeaders(login),
           json: { operations: [{ create: { name: args.name ?? defaultAssetName(args.image_url), type: 'IMAGE', imageAsset: { data: base64(media.bytes) } } }] },
           write: true,
           errors: MUTATE_ERRORS,
@@ -660,10 +618,11 @@ const connector = defineConnector({
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const login = await loginFor(h, id, args.login_customer_id);
         const { data } = await h.api({
           method: 'POST',
           path: `/${VERSION}/customers/${id}:generateKeywordIdeas`,
-          headers: loginHeaders(args.login_customer_id),
+          headers: loginHeaders(login),
           json: compact({
             language: `languageConstants/${args.language.replace(/^languageConstants\//, '')}`,
             geoTargetConstants: args.geo_target_constants?.length ? args.geo_target_constants.map((geo) => `geoTargetConstants/${geo.replace(/^geoTargetConstants\//, '')}`) : undefined,
@@ -701,9 +660,10 @@ const connector = defineConnector({
       title: 'Add or remove Google Ads Customer Match members',
       description:
         'Adds people to, or removes them from, a Customer Match user list (a CRM-based list with upload key type CONTACT_INFO) by email or '
-        + 'phone: normalizes and hashes them with SHA-256 here, then creates an offline user data job, adds them and runs it. Up to 10,000 '
-        + 'identifiers per call; matching takes up to 48 hours. Google only grants Customer Match uploads to Cloud projects that used them '
-        + 'before April 2026. Returns the job to check with search.',
+        + 'phone through the Google Ads API: normalizes and hashes them with SHA-256 here, then creates an offline user data job, adds them '
+        + 'and runs it. Up to 10,000 identifiers per call; matching takes up to 48 hours. Google Ads takes these only from Cloud projects it '
+        + 'allowlisted (those that uploaded Customer Match data between October 2025 and March 2026): add_audience_members and '
+        + 'remove_audience_members do the same for any project. Returns the job to check with search.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -712,10 +672,8 @@ const connector = defineConnector({
           user_list: { type: 'string', pattern: '^(customers/[0-9]{10}/userLists/)?[0-9]{1,20}$', description: 'The user list ID or its resource name customers/{customer_id}/userLists/{id}.' },
           operation: { type: 'string', enum: ['add', 'remove'], default: 'add', description: 'add (default) or remove these people.' },
           ...IDENTIFIER_LISTS,
-          hashed_emails: { type: 'array', maxItems: MAX_MATCH_IDENTIFIERS, items: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' }, description: 'Emails already normalized and hashed with SHA-256 (hex).' },
-          hashed_phones: { type: 'array', maxItems: MAX_MATCH_IDENTIFIERS, items: { type: 'string', pattern: '^[A-Fa-f0-9]{64}$' }, description: 'E.164 phone numbers already hashed with SHA-256 (hex).' },
-          ad_user_data_consent: { type: 'string', enum: ['GRANTED', 'DENIED'], description: 'The people\'s consent to sending their data to Google for ads, required for people in the EEA.' },
-          ad_personalization_consent: { type: 'string', enum: ['GRANTED', 'DENIED'], description: 'Their consent to personalized advertising, required for people in the EEA.' },
+          ...HASHED_LISTS,
+          ...CONSENT,
         },
         required: ['customer_id', 'user_list'],
         additionalProperties: false,
@@ -725,13 +683,13 @@ const connector = defineConnector({
         const listMatch = /^customers\/([0-9]{10})\/userLists\/([0-9]+)$/.exec(args.user_list);
         if (listMatch && listMatch[1] !== id) throw new ToolFailure(`The user list belongs to another account than ${id}. Nothing was changed.`);
         const userList = `customers/${id}/userLists/${listMatch ? listMatch[2] : args.user_list}`;
-        const total = ['emails', 'phones', 'hashed_emails', 'hashed_phones'].reduce((sum, key) => sum + ((args as unknown as Record<string, unknown[] | undefined>)[key]?.length ?? 0), 0);
+        const total = identifierCount(args);
         if (!total) throw new ToolFailure('Give at least one email or phone number. Nothing was changed.');
         if (total > MAX_MATCH_IDENTIFIERS) throw new ToolFailure(`Give at most ${MAX_MATCH_IDENTIFIERS} identifiers per call (got ${total}). Nothing was changed.`);
         const hashed = await hashIdentifiers(args);
         const identifiers = [...hashed.emails.map((hash) => ({ hashedEmail: hash })), ...hashed.phones.map((hash) => ({ hashedPhoneNumber: hash }))];
         if (!identifiers.length) throw new ToolFailure('None of the emails or phone numbers is valid (phones need E.164 form, e.g. "+15551234567"). Nothing was changed.');
-        const headers = loginHeaders(args.login_customer_id);
+        const headers = loginHeaders(await loginFor(h, id, args.login_customer_id));
         const consent = compact({ adUserData: args.ad_user_data_consent, adPersonalization: args.ad_personalization_consent });
 
         const created = await h.api({
@@ -740,7 +698,7 @@ const connector = defineConnector({
           headers,
           json: { job: { type: 'CUSTOMER_MATCH_USER_LIST', customerMatchUserListMetadata: compact({ userList, consent: Object.keys(consent).length ? consent : undefined }) } },
           write: true,
-          errors: { ...MUTATE_ERRORS, 400: 'Google Ads did not accept the Customer Match job: check that the user list exists in this account and is a CRM-based list' },
+          errors: MATCH_ERRORS,
         });
         const job = created.data?.resourceName;
         if (typeof job !== 'string' || !new RegExp(`^customers/${id}/offlineUserDataJobs/[0-9]+$`).test(job)) {
@@ -779,14 +737,16 @@ const connector = defineConnector({
         });
       },
     },
+    // Customer Match members and offline conversions through the Data Manager API, and the status of those uploads.
+    ...dataManagerTools(),
     {
       name: 'hash_user_identifiers',
       kind: 'read',
       title: 'Hash emails and phones for Google Ads',
       description:
-        'Normalizes emails (trimmed, lower case, no dots in a Gmail name) and E.164 phone numbers the way Google Ads requires and hashes '
-        + 'them with SHA-256, for the hashedEmail and hashedPhoneNumber user identifiers of enhanced conversions or Customer Match sent with '
-        + 'api_request. Sends nothing anywhere.',
+        'Normalizes emails (trimmed, lower case, and for gmail.com and googlemail.com no dots and no +suffix in the name) and E.164 phone '
+        + 'numbers the way Google requires and hashes them with SHA-256 (hex), for user identifiers sent with api_request, such as '
+        + 'enhanced conversion adjustments. The upload tools hash on their own. Sends nothing anywhere.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -817,7 +777,7 @@ const connector = defineConnector({
         });
       },
     },
-    // The rest of the API: recommendations, conversion uploads, keyword plans, batch jobs, field metadata.
+    // The rest of the API: recommendations, conversion adjustments, keyword plans, batch jobs, field metadata.
     ...genericTools(),
   ],
 });

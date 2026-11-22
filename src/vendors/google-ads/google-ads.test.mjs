@@ -6,8 +6,13 @@ import { bytesResponse, callTool, fakeFetch, fixture, jsonResponse, loadModuleFo
 const TOKEN = 'ya29.example-ads-token';
 const DEV = 'EXAMPLE-DEV-TOKEN';
 const ORIGIN = 'https://googleads.googleapis.com';
+const DM = 'https://datamanager.googleapis.com';
 const CUSTOMER = '1112223333';
 const MANAGER = '4445556666';
+/** A client account below MANAGER (customer-clients.json), which the Google account does not open directly. */
+const CLIENT = '1231231234';
+const LOOKUP = '/v26/customers:listAccessibleCustomers';
+const QUERY = 'SELECT campaign.id, campaign.name FROM campaign';
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
 function setup(handler, { accounts = { customers: [CUSTOMER] }, credentials = { access_token: TOKEN } } = {}) {
@@ -17,15 +22,44 @@ function setup(handler, { accounts = { customers: [CUSTOMER] }, credentials = { 
   return { module, fetch, ctx, logs };
 }
 
+/** Google Ads where the Google account opens CUSTOMER directly: the account lookup is answered, every other request goes to `handler`. */
+const direct = (handler) => (request) => (request.path === LOOKUP ? jsonResponse(200, { resourceNames: [`customers/${CUSTOMER}`] }) : handler(request));
+
+/** The requests a call sent besides the account lookup. */
+const sent = (fetch) => fetch.calls.filter((call) => call.path !== LOOKUP);
+
 const field = (item, path) => path.split('.').reduce((value, name) => value?.[name], item);
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 // A 1 x 1 PNG's first bytes: the module tells the type from them.
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52]);
 
+/**
+ * Google Ads with three accounts opened directly (accessible-customers.json), MANAGER managing the accounts in
+ * `below`, and 7778889999 not enabled; any other request gets `answer`.
+ */
+function hierarchy({ answer = () => jsonResponse(200, fixture(import.meta.url, 'search-campaigns.json')), below = [CLIENT] } = {}) {
+  return (request) => {
+    if (request.path === LOOKUP) return jsonResponse(200, fixture(import.meta.url, 'accessible-customers.json'));
+    const customer = request.path.split('/')[3];
+    const query = request.json?.query ?? '';
+    if (customer === '7778889999') return jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json'));
+    if (query.startsWith('SELECT customer_client.id FROM customer_client WHERE')) {
+      const asked = query.split('= ')[1];
+      if (customer !== MANAGER || !below.includes(asked)) return jsonResponse(200, { fieldMask: 'customerClient.id' });
+      return jsonResponse(200, asked === CLIENT
+        ? fixture(import.meta.url, 'customer-client-match.json')
+        : { results: [{ customerClient: { resourceName: `customers/${MANAGER}/customerClients/${asked}`, id: asked } }], fieldMask: 'customerClient.id' });
+    }
+    if (customer === MANAGER) return jsonResponse(200, fixture(import.meta.url, query.includes('FROM customer_client') ? 'customer-clients.json' : 'customer-manager.json'));
+    if (customer === CUSTOMER && query.includes('FROM customer LIMIT 1')) return jsonResponse(200, fixture(import.meta.url, 'customer-direct.json'));
+    return answer(request);
+  };
+}
+
 test('the module declares the access token as required and the developer token and manager ID as optional, with the customers picker', () => {
   const { module } = loadModuleFor(import.meta.url);
-  assert.deepEqual(plain(module.origins), [ORIGIN]);
+  assert.deepEqual(plain(module.origins), [ORIGIN, DM]);
   assert.deepEqual(plain(module.credentials), ['access_token', 'developertoken', 'managercustomerid']);
   assert.deepEqual(plain(module.requiredCredentials), [['access_token']]);
   assert.deepEqual(plain(module.accountPickers), [{
@@ -39,30 +73,28 @@ test('the module declares the access token as required and the developer token a
     legacyField: 'customerid',
   }]);
   const kinds = Object.fromEntries(module.tools.map((tool) => [tool.name, tool.annotations]));
-  for (const name of ['list_customers', 'search', 'generate_keyword_ideas', 'hash_user_identifiers', 'api_get']) assert.equal(kinds[name].readOnlyHint, true, name);
+  for (const name of ['list_customers', 'search', 'generate_keyword_ideas', 'hash_user_identifiers', 'get_upload_status', 'api_get']) assert.equal(kinds[name].readOnlyHint, true, name);
   assert.deepEqual([kinds.mutate.destructiveHint, kinds.mutate.idempotentHint], [true, false]);
   assert.deepEqual([kinds.upload_customer_match.destructiveHint, kinds.upload_customer_match.idempotentHint], [true, false]);
   assert.deepEqual([kinds.upload_image_asset.readOnlyHint, kinds.upload_image_asset.destructiveHint], [false, false]);
+  assert.deepEqual([kinds.add_audience_members.readOnlyHint, kinds.add_audience_members.destructiveHint], [false, false], 'adding people takes nothing away');
+  assert.deepEqual([kinds.remove_audience_members.destructiveHint, kinds.remove_audience_members.idempotentHint], [true, true]);
+  assert.deepEqual([kinds.upload_conversions.destructiveHint, kinds.upload_conversions.idempotentHint], [true, false], 'a repeated transaction ID updates a conversion');
   const request = module.tools.find((tool) => tool.name === 'api_request');
   assert.deepEqual(plain(request.inputSchema.properties.method.enum), ['POST']);
   assert.ok(request.inputSchema.properties.login_customer_id);
   assert.match(request.description, /check with search \(GAQL\)/);
+  assert.match(request.description, /go through upload_conversions and add_audience_members unless Google allowlisted the project/);
   // JSON bodies only: a body sent as text would pass the account lock unread.
   assert.deepEqual(Object.keys(request.inputSchema.properties).sort(), ['json', 'login_customer_id', 'method', 'path', 'query']);
   assert.doesNotMatch(request.description, /content_type/);
   for (const tool of module.tools) assert.ok(tool.description.length <= 1024, tool.name);
+  const match = module.tools.find((tool) => tool.name === 'upload_customer_match');
+  assert.match(match.description, /add_audience_members and remove_audience_members do the same for any project/);
 });
 
 test('the customers picker lists direct accounts, the clients of manager accounts with their login ID, and inaccessible ones', async () => {
-  const { module, fetch, ctx } = setup((request) => {
-    if (request.path === '/v26/customers:listAccessibleCustomers') return jsonResponse(200, fixture(import.meta.url, 'accessible-customers.json'));
-    const customer = request.path.split('/')[3];
-    if (customer === '7778889999') return jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json'));
-    if (customer === MANAGER) {
-      return jsonResponse(200, fixture(import.meta.url, request.json.query.includes('FROM customer_client') ? 'customer-clients.json' : 'customer-manager.json'));
-    }
-    return jsonResponse(200, fixture(import.meta.url, 'customer-direct.json'));
-  }, { accounts: null, credentials: { access_token: TOKEN, developertoken: DEV } });
+  const { module, fetch, ctx } = setup(hierarchy(), { accounts: null, credentials: { access_token: TOKEN, developertoken: DEV } });
   const [picker] = module.accountPickers;
   const { payload, isError } = await callTool(module, picker.tool, {}, ctx);
   assert.equal(isError, false);
@@ -86,15 +118,7 @@ test('the customers picker lists direct accounts, the clients of manager account
 });
 
 test('list_customers marks the accounts chosen for the connection as selected, client accounts included', async () => {
-  const { module, ctx } = setup((request) => {
-    if (request.path === '/v26/customers:listAccessibleCustomers') return jsonResponse(200, fixture(import.meta.url, 'accessible-customers.json'));
-    const customer = request.path.split('/')[3];
-    if (customer === '7778889999') return jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json'));
-    if (customer === MANAGER) {
-      return jsonResponse(200, fixture(import.meta.url, request.json.query.includes('FROM customer_client') ? 'customer-clients.json' : 'customer-manager.json'));
-    }
-    return jsonResponse(200, fixture(import.meta.url, 'customer-direct.json'));
-  }, { accounts: { customers: [CUSTOMER, '9876543210', '7778889999'] } });
+  const { module, ctx } = setup(hierarchy(), { accounts: { customers: [CUSTOMER, '9876543210', '7778889999'] } });
   const { payload } = await callTool(module, 'list_customers', {}, ctx);
   assert.deepEqual(payload.customers.map((item) => [item.id, item.selected]), [
     ['1112223333', true],
@@ -154,7 +178,7 @@ test('search posts GAQL for a chosen account and returns flat rows named like th
 
   const refused = await callTool(module, 'search', { customer_id: '9998887777', query }, ctx);
   assert.match(refused.payload.error, /The Google Ads account 9998887777 is not among the Google Ads accounts chosen for this connection\. Use one of: 1112223333\. Nothing was sent\./);
-  assert.equal(fetch.calls.length, 2);
+  assert.equal(fetch.calls.length, 2, 'no account lookup either: the connection names its manager account');
 });
 
 test('search reads a full 10,000-row page over 4 MB and returns its first rows with a cursor', async () => {
@@ -167,7 +191,7 @@ test('search reads a full 10,000-row page over 4 MB and returns its first rows w
   // Google's replies are indented, about 1 KB a row for a keyword report.
   const body = JSON.stringify({ results: Array.from({ length: 10000 }, (_, index) => row(index)), nextPageToken: 'page-2', fieldMask: 'keywordView.resourceName' }, null, 2);
   assert.ok(Buffer.byteLength(body) > 4 * 1024 * 1024 && Buffer.byteLength(body) < 8 * 1024 * 1024, `${Buffer.byteLength(body)} bytes`);
-  const { module, ctx } = setup(() => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }));
+  const { module, ctx } = setup(direct(() => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })));
   const { result, payload, isError } = await callTool(module, 'search', { customer_id: CUSTOMER, query: 'SELECT keyword_view.resource_name FROM keyword_view WHERE segments.date DURING LAST_30_DAYS' }, ctx);
   assert.equal(isError, false, payload.error);
   assert.ok(Buffer.byteLength(result.content[0].text) <= 32 * 1024);
@@ -178,15 +202,123 @@ test('search reads a full 10,000-row page over 4 MB and returns its first rows w
 });
 
 test('search keeps lists such as responsive search ad headlines whole, with snake_case keys', async () => {
-  const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'search-ads.json')));
+  const { module, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'search-ads.json'))));
   const { payload } = await callTool(module, 'search', { customer_id: CUSTOMER, query: 'SELECT ad_group_ad.ad.responsive_search_ad.headlines FROM ad_group_ad' }, ctx);
   assert.deepEqual(payload.rows[0]['ad_group_ad.ad.responsive_search_ad.headlines'], [{ text: 'Example Store Shoes', pinned_field: 'HEADLINE_1' }, { text: 'Free Returns' }]);
   assert.deepEqual(payload.rows[0]['ad_group_ad.ad.final_urls'], ['https://shop.example.com/shoes']);
   assert.equal(payload.rows[0]['ad_group_ad.ad_strength'], 'GOOD');
 });
 
+test('login: an account the Google account opens directly goes without login-customer-id, after one lookup per access token', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'search-campaigns.json'))));
+  await callTool(module, 'search', { customer_id: CUSTOMER, query: QUERY }, ctx);
+  await callTool(module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: {} }], validate_only: true }, ctx);
+  assert.deepEqual(fetch.calls.map((call) => `${call.method} ${call.path}`), [
+    `GET ${LOOKUP}`,
+    `POST /v26/customers/${CUSTOMER}/googleAds:search`,
+    `POST /v26/customers/${CUSTOMER}/googleAds:mutate`,
+  ]);
+  assert.ok(fetch.calls.every((call) => call.headers['login-customer-id'] === undefined));
+  assert.equal(fetch.calls[0].headers.authorization, `Bearer ${TOKEN}`);
+
+  // A new access token (the next sign-in, or another Google account) is looked up again.
+  await callTool(module, 'search', { customer_id: CUSTOMER, query: QUERY }, { ...ctx, credentials: { access_token: 'ya29.another-token' } });
+  assert.equal(fetch.calls.filter((call) => call.path === LOOKUP).length, 2);
+});
+
+test('login: a client account goes through the manager account found above it, and that is kept', async () => {
+  const { module, fetch, ctx } = setup(hierarchy(), { accounts: { customers: [CLIENT] } });
+  const { payload, isError } = await callTool(module, 'search', { customer_id: CLIENT, query: QUERY }, ctx);
+  assert.equal(isError, false, payload.error);
+  const asked = `SELECT customer_client.id FROM customer_client WHERE customer_client.id = ${CLIENT}`;
+  assert.deepEqual(fetch.calls.map((call) => [call.path, call.json?.query, call.headers['login-customer-id']]), [
+    [LOOKUP, undefined, undefined],
+    [`/v26/customers/${CUSTOMER}/googleAds:search`, asked, CUSTOMER],
+    [`/v26/customers/${MANAGER}/googleAds:search`, asked, MANAGER],
+    [`/v26/customers/${CLIENT}/googleAds:search`, QUERY, MANAGER],
+  ]);
+  await callTool(module, 'generate_keyword_ideas', { customer_id: CLIENT, keywords: ['shoes'] }, ctx);
+  assert.equal(fetch.calls.length, 5, 'the manager account is kept: no second lookup');
+  assert.equal(fetch.calls[4].headers['login-customer-id'], MANAGER);
+});
+
+test('login: list_customers keeps each client account\'s manager, and managers are asked first', async () => {
+  // 5556667777 is a level-3 client below MANAGER, which list_customers does not list.
+  const { module, fetch, ctx } = setup(hierarchy({ below: [CLIENT, '5556667777'] }), { accounts: null });
+  await callTool(module, 'list_customers', {}, ctx);
+  const listed = fetch.calls.length;
+  await callTool(module, 'search', { customer_id: CLIENT, query: QUERY }, ctx);
+  assert.equal(fetch.calls.length, listed + 1, 'no lookup');
+  assert.equal(fetch.calls.at(-1).headers['login-customer-id'], MANAGER);
+  await callTool(module, 'search', { customer_id: CUSTOMER, query: QUERY }, ctx);
+  assert.equal(fetch.calls.at(-1).headers['login-customer-id'], undefined, 'an account opened directly needs none');
+
+  await callTool(module, 'search', { customer_id: '5556667777', query: QUERY }, ctx);
+  const asked = fetch.calls.slice(listed + 2);
+  assert.deepEqual(asked.map((call) => [call.path.split('/')[3], call.headers['login-customer-id']]), [
+    [MANAGER, MANAGER],
+    ['5556667777', MANAGER],
+  ], 'the known manager is asked first; the account seen not to be a manager is not asked');
+});
+
+test('login: an account no manager account leads to goes without it, Google Ads asks for login_customer_id, and the search is not repeated', async () => {
+  const { module, fetch, ctx } = setup(hierarchy({ answer: () => jsonResponse(403, fixture(import.meta.url, 'error-user-permission-denied.json')) }), { accounts: null });
+  const first = await callTool(module, 'mutate', { customer_id: '9998887777', operations: [{ campaignOperation: {} }] }, ctx);
+  assert.match(first.payload.error, /reached through a manager account \(give login_customer_id\)/);
+  assert.match(first.payload.error, /Nothing was changed/);
+  assert.equal(first.payload.outcome, undefined);
+  const write = fetch.calls.at(-1);
+  assert.equal(write.path, '/v26/customers/9998887777/googleAds:mutate');
+  assert.equal(write.headers['login-customer-id'], undefined);
+  // The three accounts were asked (one could not be: HTTP 403); none manages the account.
+  assert.equal(fetch.calls.filter((call) => call.json?.query?.startsWith('SELECT customer_client.id')).length, 3);
+  const before = fetch.calls.length;
+  await callTool(module, 'search', { customer_id: '9998887777', query: QUERY }, ctx);
+  assert.equal(fetch.calls.length, before + 1, 'what was not found is kept too');
+});
+
+test('login: the call\'s argument and the connection\'s manager account ID go first, with no lookup', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, { results: [] }));
+  await callTool(module, 'search', { customer_id: CUSTOMER, query: QUERY, login_customer_id: '444-555-6666' }, ctx);
+  assert.deepEqual(fetch.calls.map((call) => [call.path, call.headers['login-customer-id']]), [[`/v26/customers/${CUSTOMER}/googleAds:search`, MANAGER]]);
+  const withManager = setup(() => jsonResponse(200, { results: [] }), { credentials: { access_token: TOKEN, managercustomerid: MANAGER } });
+  await callTool(withManager.module, 'api_get', { path: `/v26/customers/${CUSTOMER}/operations/1` }, withManager.ctx);
+  assert.deepEqual(withManager.fetch.calls.map((call) => [call.path, call.headers['login-customer-id']]), [[`/v26/customers/${CUSTOMER}/operations/1`, MANAGER]]);
+});
+
+test('login: a lookup that fails stops the call before its own request, so a write changed nothing', async () => {
+  const unauthorized = setup((request) => (request.path === LOOKUP
+    ? jsonResponse(401, { error: { code: 401, message: 'Request had invalid authentication credentials.', status: 'UNAUTHENTICATED' } })
+    : jsonResponse(200, {})));
+  const refused = await callTool(unauthorized.module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: {} }] }, unauthorized.ctx);
+  assert.match(refused.payload.error, /Google Ads rejected the credentials \(HTTP 401\)/);
+  assert.match(refused.payload.error, /Nothing was changed/);
+  assert.equal(refused.payload.outcome, undefined);
+  assert.equal(unauthorized.fetch.calls.length, 1, 'only the lookup');
+
+  const down = setup((request) => (request.path === LOOKUP ? jsonResponse(503, { error: { code: 503, message: 'The service is currently unavailable.', status: 'UNAVAILABLE' } }) : jsonResponse(200, {})));
+  const unavailable = await callTool(down.module, 'upload_customer_match', { customer_id: CUSTOMER, user_list: '1', emails: ['a@example.com'] }, down.ctx);
+  assert.match(unavailable.payload.error, /server error \(HTTP 503\).*Nothing was changed/);
+  assert.equal(unavailable.payload.outcome, undefined);
+  assert.equal(down.fetch.calls.length, 1);
+});
+
+test('login: the generic tools find it once the account lock passed the path, and refuse other accounts before any lookup', async () => {
+  const { module, fetch, ctx } = setup(hierarchy({ answer: () => jsonResponse(200, { results: [] }) }), { accounts: { customers: [CLIENT] } });
+  const applied = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CLIENT}/campaigns:mutate`, json: { operations: [] } }, ctx);
+  assert.equal(applied.isError, false, applied.payload.error);
+  assert.equal(fetch.calls.at(-1).path, `/v26/customers/${CLIENT}/campaigns:mutate`);
+  assert.equal(fetch.calls.at(-1).headers['login-customer-id'], MANAGER);
+  const before = fetch.calls.length;
+  const other = await callTool(module, 'api_get', { path: '/v26/customers/9998887777/campaigns/1' }, ctx);
+  assert.match(other.payload.error, /The Google Ads account 9998887777 is not among/);
+  assert.equal(fetch.calls.length, before, 'nothing sent, the lookup included');
+  await callTool(module, 'api_get', { path: '/v26/googleAdsFields/campaign.name' }, ctx);
+  assert.equal(fetch.calls.at(-1).headers['login-customer-id'], undefined, 'a path that names no account needs no login');
+});
+
 test('mutate sends the operations once and names each created resource; another account in the operations is refused', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'mutate-created.json')));
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'mutate-created.json'))));
   const operations = [
     { campaignBudgetOperation: { create: { resourceName: `customers/${CUSTOMER}/campaignBudgets/-1`, name: 'Budget', amountMicros: 20000000, deliveryMethod: 'STANDARD' } } },
     { campaignOperation: { create: { resourceName: `customers/${CUSTOMER}/campaigns/-2`, name: 'Shoes - Search', status: 'PAUSED', advertisingChannelType: 'SEARCH', campaignBudget: `customers/${CUSTOMER}/campaignBudgets/-1`, targetSpend: {} } } },
@@ -195,8 +327,8 @@ test('mutate sends the operations once and names each created resource; another 
   ];
   const { payload, isError } = await callTool(module, 'mutate', { customer_id: CUSTOMER, operations }, ctx);
   assert.equal(isError, false);
-  assert.equal(fetch.calls[0].url, `${ORIGIN}/v26/customers/${CUSTOMER}/googleAds:mutate`);
-  assert.deepEqual(fetch.calls[0].json, { mutateOperations: operations });
+  assert.equal(sent(fetch)[0].url, `${ORIGIN}/v26/customers/${CUSTOMER}/googleAds:mutate`);
+  assert.deepEqual(sent(fetch)[0].json, { mutateOperations: operations });
   assert.deepEqual(payload.results, [
     { type: 'campaign_budget', resource_name: 'customers/1112223333/campaignBudgets/30003' },
     { type: 'campaign', resource_name: 'customers/1112223333/campaigns/20003' },
@@ -208,22 +340,22 @@ test('mutate sends the operations once and names each created resource; another 
   assert.match(cross.payload.error, /The Google Ads account 9998887777 is not among the Google Ads accounts chosen/);
   const padded = await callTool(module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: { update: { resourceName: `customers/0${CUSTOMER}/campaigns/1`, status: 'PAUSED' }, updateMask: 'status' } }] }, ctx);
   assert.match(padded.payload.error, /The Google Ads account 01112223333 is not among the Google Ads accounts chosen/);
-  const open = setup(() => jsonResponse(200, {}), { accounts: null });
+  const open = setup(direct(() => jsonResponse(200, {})), { accounts: null });
   const crossOpen = await callTool(open.module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: { update: { resourceName: 'customers/9998887777/campaigns/1', status: 'PAUSED' }, updateMask: 'status' } }] }, open.ctx);
   assert.match(crossOpen.payload.error, /name another account \(9998887777\) than 1112223333/);
-  assert.equal(fetch.calls.length + open.fetch.calls.length, 1);
+  assert.equal(sent(fetch).length + open.fetch.calls.length, 1);
 
   // A final URL whose path holds "/customers/<digits>" names no account.
-  const shop = setup(() => jsonResponse(200, { mutateOperationResponses: [{ adGroupAdResult: { resourceName: `customers/${CUSTOMER}/adGroupAds/40003~50004` } }] }));
+  const shop = setup(direct(() => jsonResponse(200, { mutateOperationResponses: [{ adGroupAdResult: { resourceName: `customers/${CUSTOMER}/adGroupAds/40003~50004` } }] })));
   const ad = { adGroupAdOperation: { create: { adGroup: `customers/${CUSTOMER}/adGroups/40003`, ad: { finalUrls: ['https://shop.example.com/customers/9998887777/welcome'] } } } };
-  const sent = await callTool(shop.module, 'mutate', { customer_id: CUSTOMER, operations: [ad] }, shop.ctx);
-  assert.equal(sent.isError, false, sent.payload.error);
-  assert.equal(shop.fetch.calls.length, 1);
+  const shopped = await callTool(shop.module, 'mutate', { customer_id: CUSTOMER, operations: [ad] }, shop.ctx);
+  assert.equal(shopped.isError, false, shopped.payload.error);
+  assert.equal(sent(shop.fetch).length, 1);
 });
 
 test('a mutate with many operations still returns a result that fits, listing the first resources and the total', async () => {
   const responses = Array.from({ length: 1000 }, (_, index) => ({ adGroupCriterionResult: { resourceName: `customers/${CUSTOMER}/adGroupCriteria/40001~${70000000 + index}` } }));
-  const { module, ctx } = setup(() => jsonResponse(200, { mutateOperationResponses: responses }));
+  const { module, ctx } = setup(direct(() => jsonResponse(200, { mutateOperationResponses: responses })));
   const operations = Array.from({ length: 1000 }, () => ({ adGroupCriterionOperation: { create: {} } }));
   const { result, payload, isError } = await callTool(module, 'mutate', { customer_id: CUSTOMER, operations }, ctx);
   assert.equal(isError, false);
@@ -234,9 +366,9 @@ test('a mutate with many operations still returns a result that fits, listing th
 });
 
 test('mutate reports partial failures with the operation and field, and validate_only changes nothing', async () => {
-  const partial = setup(() => jsonResponse(200, fixture(import.meta.url, 'mutate-partial.json')));
+  const partial = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'mutate-partial.json'))));
   const result = await callTool(partial.module, 'mutate', { customer_id: CUSTOMER, partial_failure: true, operations: [{ adGroupCriterionOperation: { create: {} } }, { adGroupCriterionOperation: { create: {} } }] }, partial.ctx);
-  assert.equal(partial.fetch.calls[0].json.partialFailure, true);
+  assert.equal(sent(partial.fetch)[0].json.partialFailure, true);
   assert.deepEqual(result.payload.failures, [{
     operation: 1,
     message: 'Too long.',
@@ -245,38 +377,39 @@ test('mutate reports partial failures with the operation and field, and validate
   }]);
   assert.equal(result.payload.results[0].resource_name, 'customers/1112223333/adGroupCriteria/40001~60001');
 
-  const validate = setup(() => jsonResponse(200, { mutateOperationResponses: [{}] }));
+  const validate = setup(direct(() => jsonResponse(200, { mutateOperationResponses: [{}] })));
   const checked = await callTool(validate.module, 'mutate', { customer_id: CUSTOMER, validate_only: true, operations: [{ campaignOperation: { update: { resourceName: `customers/${CUSTOMER}/campaigns/20001`, status: 'PAUSED' }, updateMask: 'status' } }] }, validate.ctx);
-  assert.equal(validate.fetch.calls[0].json.validateOnly, true);
+  assert.equal(sent(validate.fetch)[0].json.validateOnly, true);
   assert.deepEqual(checked.payload, { customer_id: CUSTOMER, validate_only: true, valid: true });
 
   // A validation that fails on the server is a plain failure: nothing could have changed.
-  const flaky = setup(() => jsonResponse(503, { error: { code: 503, message: 'The service is currently unavailable.', status: 'UNAVAILABLE' } }));
+  const flaky = setup(direct(() => jsonResponse(503, { error: { code: 503, message: 'The service is currently unavailable.', status: 'UNAVAILABLE' } })));
   const failed = await callTool(flaky.module, 'mutate', { customer_id: CUSTOMER, validate_only: true, operations: [{ campaignOperation: {} }] }, flaky.ctx);
   assert.equal(failed.payload.outcome, undefined);
   assert.match(failed.payload.error, /server error/);
 });
 
 test('mutate and the other writes report an unclear outcome once, with search as the check', async () => {
-  const broken = setup(() => jsonResponse(500, { error: { code: 500, message: 'Internal error encountered.', status: 'INTERNAL' } }));
+  const broken = setup(direct(() => jsonResponse(500, { error: { code: 500, message: 'Internal error encountered.', status: 'INTERNAL' } })));
   const unknown = await callTool(broken.module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: {} }] }, broken.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'search');
-  assert.equal(broken.fetch.calls.length, 1);
+  assert.equal(sent(broken.fetch).length, 1);
 
-  const timeout = setup(() => {
+  const timeout = setup(direct(() => {
     throw Object.assign(new Error('timed out'), { code: 'TIMEOUT' });
-  });
+  }));
   const generic = await callTool(timeout.module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/recommendations:apply`, json: { operations: [{ resourceName: `customers/${CUSTOMER}/recommendations/abc` }] } }, timeout.ctx);
   assert.equal(generic.payload.outcome, 'unknown');
   assert.equal(generic.payload.check, 'search');
-  assert.equal(timeout.fetch.calls.length, 1);
+  assert.equal(sent(timeout.fetch).length, 1);
 });
 
 test('upload_image_asset downloads the image, checks its type and creates the asset with its bytes in base64', async () => {
-  const { module, fetch, ctx } = setup((request) => (request.origin === ORIGIN
+  const { module, fetch, ctx } = setup(direct((request) => (request.origin === ORIGIN
     ? jsonResponse(200, { results: [{ resourceName: `customers/${CUSTOMER}/assets/70001` }] })
-    : bytesResponse(200, PNG, { 'content-type': 'application/octet-stream' })));
+    : bytesResponse(200, PNG, { 'content-type': 'application/octet-stream' }))));
+  const assets = () => fetch.calls.filter((call) => call.path.endsWith('/assets:mutate'));
   const { payload } = await callTool(module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/banner.png', name: 'Spring sale - square', login_customer_id: MANAGER }, ctx);
   assert.equal(fetch.calls[0].url, 'https://cdn.example.com/banner.png');
   assert.equal(fetch.calls[0].headers.authorization, undefined, 'no credential goes to the media URL');
@@ -287,21 +420,22 @@ test('upload_image_asset downloads the image, checks its type and creates the as
 
   // Google Ads wants a unique name for an image asset: one left out becomes the file name and the time.
   await callTool(module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/img/spring%20banner.png?v=2' }, ctx);
-  assert.match(fetch.calls[3].json.operations[0].create.name, /^spring banner\.png [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/);
+  assert.match(assets()[1].json.operations[0].create.name, /^spring banner\.png [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/);
+  assert.equal(assets()[1].headers['login-customer-id'], undefined, 'an account opened directly');
   await callTool(module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/' }, ctx);
-  assert.match(fetch.calls[5].json.operations[0].create.name, /^Image [0-9]{4}-/);
+  assert.match(assets()[2].json.operations[0].create.name, /^Image [0-9]{4}-/);
 
-  const text = setup(() => textResponse(200, 'not an image'));
+  const text = setup(direct(() => textResponse(200, 'not an image')));
   const refused = await callTool(text.module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/x.png' }, text.ctx);
   assert.match(refused.payload.error, /not a JPEG, PNG or GIF/);
   assert.equal(text.fetch.calls.length, 1, 'only the download');
 });
 
 test('generate_keyword_ideas sends the seeds, language and locations, and returns ideas with numbers', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'keyword-ideas.json')));
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'keyword-ideas.json'))));
   const { payload } = await callTool(module, 'generate_keyword_ideas', { customer_id: CUSTOMER, keywords: ['trail running shoes'], url: 'https://shop.example.com/trail', geo_target_constants: ['2840'] }, ctx);
-  assert.equal(fetch.calls[0].url, `${ORIGIN}/v26/customers/${CUSTOMER}:generateKeywordIdeas`);
-  assert.deepEqual(fetch.calls[0].json, {
+  assert.equal(sent(fetch)[0].url, `${ORIGIN}/v26/customers/${CUSTOMER}:generateKeywordIdeas`);
+  assert.deepEqual(sent(fetch)[0].json, {
     language: 'languageConstants/1000',
     geoTargetConstants: ['geoTargetConstants/2840'],
     keywordPlanNetwork: 'GOOGLE_SEARCH',
@@ -311,21 +445,21 @@ test('generate_keyword_ideas sends the seeds, language and locations, and return
   assert.deepEqual(payload.ideas[0], { text: 'trail running shoes', avg_monthly_searches: 27100, competition: 'HIGH', competition_index: 86, low_top_of_page_bid_micros: '650000', high_top_of_page_bid_micros: '2410000' });
   assert.equal(payload.total, 812);
   await callTool(module, 'generate_keyword_ideas', { customer_id: CUSTOMER, site: 'example.com', cursor: payload.nextCursor }, ctx);
-  assert.deepEqual(fetch.calls[1].json.siteSeed, { site: 'example.com' });
-  assert.equal(fetch.calls[1].json.pageToken, 'keyword-ideas-page-2');
+  assert.deepEqual(sent(fetch)[1].json.siteSeed, { site: 'example.com' });
+  assert.equal(sent(fetch)[1].json.pageToken, 'keyword-ideas-page-2');
 
   const none = await callTool(module, 'generate_keyword_ideas', { customer_id: CUSTOMER }, ctx);
   assert.match(none.payload.error, /Give seed keywords, a url, both, or a site/);
-  assert.equal(fetch.calls.length, 2);
+  assert.equal(sent(fetch).length, 2);
 });
 
 test('upload_customer_match hashes normalized identifiers, then creates, fills and runs one job', async () => {
   const job = `customers/${CUSTOMER}/offlineUserDataJobs/80001`;
-  const { module, fetch, ctx } = setup((request) => {
+  const { module, fetch, ctx } = setup(direct((request) => {
     if (request.path.endsWith('offlineUserDataJobs:create')) return jsonResponse(200, { resourceName: job });
     if (request.path.endsWith(':addOperations')) return jsonResponse(200, {});
     return jsonResponse(200, { name: `customers/${CUSTOMER}/operations/90001` });
-  });
+  }));
   const { payload, isError } = await callTool(module, 'upload_customer_match', {
     customer_id: CUSTOMER,
     user_list: '12345',
@@ -335,13 +469,13 @@ test('upload_customer_match hashes normalized identifiers, then creates, fills a
     ad_personalization_consent: 'GRANTED',
   }, ctx);
   assert.equal(isError, false);
-  assert.deepEqual(fetch.calls.map((call) => call.path), [
+  assert.deepEqual(sent(fetch).map((call) => call.path), [
     `/v26/customers/${CUSTOMER}/offlineUserDataJobs:create`,
     `/v26/${job}:addOperations`,
     `/v26/${job}:run`,
   ]);
-  assert.deepEqual(fetch.calls[0].json, { job: { type: 'CUSTOMER_MATCH_USER_LIST', customerMatchUserListMetadata: { userList: `customers/${CUSTOMER}/userLists/12345`, consent: { adUserData: 'GRANTED', adPersonalization: 'GRANTED' } } } });
-  assert.deepEqual(fetch.calls[1].json, {
+  assert.deepEqual(sent(fetch)[0].json, { job: { type: 'CUSTOMER_MATCH_USER_LIST', customerMatchUserListMetadata: { userList: `customers/${CUSTOMER}/userLists/12345`, consent: { adUserData: 'GRANTED', adPersonalization: 'GRANTED' } } } });
+  assert.deepEqual(sent(fetch)[1].json, {
     enablePartialFailure: true,
     operations: [
       { create: { userIdentifiers: [{ hashedEmail: sha256('janedoe@gmail.com') }] } },
@@ -357,13 +491,13 @@ test('upload_customer_match hashes normalized identifiers, then creates, fills a
   assert.match(payload.status_query, /FROM offline_user_data_job WHERE offline_user_data_job\.resource_name = 'customers\/1112223333\/offlineUserDataJobs\/80001'/);
   assert.doesNotMatch(JSON.stringify(payload), /Jane|ops@/i, 'the result echoes no identifier');
 
-  const remove = setup((request) => (request.path.endsWith(':create') ? jsonResponse(200, { resourceName: job }) : jsonResponse(200, {})));
+  const remove = setup(direct((request) => (request.path.endsWith(':create') ? jsonResponse(200, { resourceName: job }) : jsonResponse(200, {}))));
   await callTool(remove.module, 'upload_customer_match', { customer_id: CUSTOMER, user_list: `customers/${CUSTOMER}/userLists/12345`, operation: 'remove', hashed_emails: ['A'.repeat(64)] }, remove.ctx);
-  assert.deepEqual(remove.fetch.calls[1].json.operations, [{ remove: { userIdentifiers: [{ hashedEmail: 'a'.repeat(64) }] } }]);
+  assert.deepEqual(sent(remove.fetch)[1].json.operations, [{ remove: { userIdentifiers: [{ hashedEmail: 'a'.repeat(64) }] } }]);
 });
 
 test('upload_customer_match refuses another account\'s list and invalid input, and names the job when the run is unclear', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, {}));
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, {})));
   const other = await callTool(module, 'upload_customer_match', { customer_id: CUSTOMER, user_list: 'customers/9998887777/userLists/1', emails: ['a@example.com'] }, ctx);
   assert.match(other.payload.error, /belongs to another account/);
   const empty = await callTool(module, 'upload_customer_match', { customer_id: CUSTOMER, user_list: '1' }, ctx);
@@ -373,23 +507,325 @@ test('upload_customer_match refuses another account\'s list and invalid input, a
   assert.equal(fetch.calls.length, 0);
 
   const job = `customers/${CUSTOMER}/offlineUserDataJobs/80002`;
-  const flaky = setup((request) => {
+  const flaky = setup(direct((request) => {
     if (request.path.endsWith(':create')) return jsonResponse(200, { resourceName: job });
     if (request.path.endsWith(':addOperations')) return jsonResponse(200, {});
     return jsonResponse(503, { error: { code: 503, message: 'The service is currently unavailable.', status: 'UNAVAILABLE' } });
-  });
+  }));
   const unknown = await callTool(flaky.module, 'upload_customer_match', { customer_id: CUSTOMER, user_list: '1', emails: ['a@example.com'] }, flaky.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'search');
   assert.match(unknown.payload.error, /offlineUserDataJobs\/80002/);
-  assert.equal(flaky.fetch.calls.length, 3, 'nothing sent twice');
+  assert.equal(sent(flaky.fetch).length, 3, 'nothing sent twice');
+});
+
+test('a Customer Match job Google Ads refuses points to the Data Manager tools', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(403, fixture(import.meta.url, 'error-not-allowlisted.json'))));
+  const { payload } = await callTool(module, 'upload_customer_match', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'] }, ctx);
+  assert.match(payload.error, /Google Ads refused the Customer Match job: since April 2026 .*CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE/);
+  assert.match(payload.error, /add_audience_members and remove_audience_members send the same people through Google's Data Manager API/);
+  assert.match(payload.error, /\(HTTP 403\)\. Google Ads said: "The caller does not have permission"\. Nothing was changed\./);
+  assert.equal(payload.outcome, undefined);
+  assert.equal(sent(fetch).length, 1, 'no job, so nothing was added');
+});
+
+test('add_audience_members sends hashed people to the list through the Data Manager API, with consent and the terms', async () => {
+  const { module, fetch, ctx, logs } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json'))));
+  const { payload, isError } = await callTool(module, 'add_audience_members', {
+    customer_id: CUSTOMER,
+    user_list: `customers/${CUSTOMER}/userLists/12345`,
+    emails: [' Jane.Doe+news@Gmail.com ', 'not-an-email', 'ops@Example.com'],
+    phones: ['+1 (555) 123-4567', '5551234567'],
+    hashed_emails: ['A'.repeat(64)],
+    ad_user_data_consent: 'GRANTED',
+    ad_personalization_consent: 'DENIED',
+    accept_customer_match_terms: true,
+  }, ctx);
+  assert.equal(isError, false, payload.error);
+  const [call] = sent(fetch);
+  assert.equal(sent(fetch).length, 1);
+  assert.equal(call.method, 'POST');
+  assert.equal(call.url, `${DM}/v1/audienceMembers:ingest`);
+  assert.equal(call.headers.authorization, `Bearer ${TOKEN}`);
+  assert.equal(call.headers['login-customer-id'], undefined, 'the Data Manager API takes the login account in the destination');
+  assert.deepEqual(call.json, {
+    destinations: [{ operatingAccount: { accountType: 'GOOGLE_ADS', accountId: CUSTOMER }, productDestinationId: '12345' }],
+    audienceMembers: [
+      { compositeData: { userData: { userIdentifiers: [{ emailAddress: sha256('janedoe@gmail.com') }] } } },
+      { compositeData: { userData: { userIdentifiers: [{ emailAddress: sha256('ops@example.com') }] } } },
+      { compositeData: { userData: { userIdentifiers: [{ emailAddress: 'a'.repeat(64) }] } } },
+      { compositeData: { userData: { userIdentifiers: [{ phoneNumber: sha256('+15551234567') }] } } },
+    ],
+    consent: { adUserData: 'CONSENT_GRANTED', adPersonalization: 'CONSENT_DENIED' },
+    encoding: 'HEX',
+    termsOfService: { customerMatchTermsOfServiceStatus: 'ACCEPTED' },
+  });
+  assert.doesNotMatch(JSON.stringify(call.json), /Jane|Doe|news|example\.com|5551234567"/i, 'no plain identifier is sent');
+  assert.deepEqual(payload, {
+    customer_id: CUSTOMER,
+    user_list: `customers/${CUSTOMER}/userLists/12345`,
+    request_id: '126365e1-16d0-4c81-9de9-f362711e250a',
+    members_sent: 4,
+    sent: { emails: 2, hashed_emails: 1, phones: 1 },
+    skipped_emails: { count: 1, first_indices: [1] },
+    skipped_phones: { count: 1, first_indices: [1] },
+    note: 'Google matches the people in the background, within 48 hours: get_upload_status with request_id tells how many it took and why any were not.',
+  });
+  assert.ok(logs.length > 0);
+  assert.doesNotMatch(logs.join('\n'), /ya29|1112223333|12345|Jane/);
+});
+
+test('add_audience_members names the manager account a client account is reached through as the login account', async () => {
+  const explicit = setup(() => jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json')), { accounts: { customers: [CLIENT] } });
+  await callTool(explicit.module, 'add_audience_members', { customer_id: CLIENT, login_customer_id: '444-555-6666', user_list: '777', emails: ['a@example.com'], accept_customer_match_terms: true }, explicit.ctx);
+  assert.deepEqual(explicit.fetch.calls.map((call) => call.url), [`${DM}/v1/audienceMembers:ingest`], 'no lookup with the argument');
+  assert.deepEqual(explicit.fetch.calls[0].json.destinations, [{
+    operatingAccount: { accountType: 'GOOGLE_ADS', accountId: CLIENT },
+    loginAccount: { accountType: 'GOOGLE_ADS', accountId: MANAGER },
+    productDestinationId: '777',
+  }]);
+
+  const found = setup(hierarchy({ answer: (request) => (request.origin === DM ? jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json')) : jsonResponse(200, {})) }), { accounts: { customers: [CLIENT] } });
+  await callTool(found.module, 'remove_audience_members', { customer_id: CLIENT, user_list: '777', hashed_phones: ['b'.repeat(64)] }, found.ctx);
+  const removal = found.fetch.calls.at(-1);
+  assert.equal(removal.url, `${DM}/v1/audienceMembers:remove`);
+  assert.deepEqual(removal.json.destinations[0].loginAccount, { accountType: 'GOOGLE_ADS', accountId: MANAGER });
+});
+
+test('a Data Manager upload goes on without a login account when the Google Ads API refuses the lookup, and stops when it cannot be reached', async () => {
+  const refused = setup((request) => (request.path === LOOKUP
+    ? jsonResponse(403, { error: { code: 403, message: 'Google Ads API has not been used in project 123456789 before or it is disabled.', status: 'PERMISSION_DENIED' } })
+    : jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json'))));
+  const { payload, isError } = await callTool(refused.module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'], accept_customer_match_terms: true }, refused.ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(refused.fetch.calls.map((call) => call.url), [`${ORIGIN}${LOOKUP}`, `${DM}/v1/audienceMembers:ingest`]);
+  assert.equal(refused.fetch.calls[1].json.destinations[0].loginAccount, undefined);
+
+  const offline = setup((request) => {
+    if (request.path === LOOKUP) throw new TypeError('fetch failed');
+    return jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json'));
+  });
+  const stopped = await callTool(offline.module, 'upload_conversions', { customer_id: CUSTOMER, conversion_action: '1', conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1' }] }, offline.ctx);
+  assert.match(stopped.payload.error, /Google Ads could not be reached \(fetch failed\)\. Try again later\. Nothing was changed\./);
+  assert.equal(stopped.payload.outcome, undefined);
+  assert.equal(offline.fetch.calls.length, 1, 'nothing went to the Data Manager API');
+});
+
+test('add_audience_members needs the terms confirmed, and refuses other accounts and empty or invalid input before sending', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json'))));
+  const base = { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'] };
+  const unconfirmed = await callTool(module, 'add_audience_members', base, ctx);
+  assert.match(unconfirmed.payload.error, /`accept_customer_match_terms` is required/);
+  const declined = await callTool(module, 'add_audience_members', { ...base, accept_customer_match_terms: false }, ctx);
+  assert.match(declined.payload.error, /`accept_customer_match_terms` must be one of true/);
+  const terms = { accept_customer_match_terms: true };
+  const otherList = await callTool(module, 'add_audience_members', { ...base, ...terms, user_list: 'customers/9998887777/userLists/1' }, ctx);
+  assert.match(otherList.payload.error, /The user list belongs to another account than 1112223333\. Nothing was sent\./);
+  const otherAccount = await callTool(module, 'add_audience_members', { ...base, ...terms, customer_id: '9998887777' }, ctx);
+  assert.match(otherAccount.payload.error, /The Google Ads account 9998887777 is not among/);
+  const empty = await callTool(module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', ...terms }, ctx);
+  assert.match(empty.payload.error, /Give at least one email or phone number\. Nothing was sent\./);
+  const invalid = await callTool(module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', phones: ['5551234567'], ...terms }, ctx);
+  assert.match(invalid.payload.error, /None of the emails or phone numbers is valid/);
+  const many = await callTool(module, 'add_audience_members', {
+    customer_id: CUSTOMER, user_list: '12345', emails: Array.from({ length: 6000 }, (_, i) => `p${i}@example.com`), phones: Array.from({ length: 4001 }, () => '+15551234567'), ...terms,
+  }, ctx);
+  assert.match(many.payload.error, /Give at most 10000 emails and phone numbers per call \(got 10001\)/);
+  const removeOther = await callTool(module, 'remove_audience_members', { customer_id: CUSTOMER, user_list: 'customers/9998887777/userLists/1', emails: ['a@example.com'] }, ctx);
+  assert.match(removeOther.payload.error, /belongs to another account/);
+  assert.equal(fetch.calls.length, 0, 'nothing sent, not even a lookup');
+});
+
+test('add_audience_members: validate_only has the request checked, a server error then is plain, and an unclear upload is reported once', async () => {
+  const check = setup(direct(() => jsonResponse(200, {})));
+  const checked = await callTool(check.module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'], accept_customer_match_terms: true, validate_only: true }, check.ctx);
+  assert.equal(sent(check.fetch)[0].json.validateOnly, true);
+  assert.equal(checked.payload.valid, true);
+  assert.equal(checked.payload.validate_only, true);
+  assert.equal(checked.payload.note, 'Google checked the request and took no one.');
+
+  const down = setup(direct(() => jsonResponse(503, { error: { code: 503, message: 'The service is currently unavailable.', status: 'UNAVAILABLE' } })));
+  const plainFailure = await callTool(down.module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'], accept_customer_match_terms: true, validate_only: true }, down.ctx);
+  assert.equal(plainFailure.payload.outcome, undefined);
+  assert.match(plainFailure.payload.error, /server error \(HTTP 503\)/);
+
+  const unclear = await callTool(down.module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'], accept_customer_match_terms: true }, down.ctx);
+  assert.equal(unclear.payload.outcome, 'unknown');
+  assert.equal(unclear.payload.check, 'search');
+  assert.match(unclear.payload.error, /Customer Match keeps each person once, so sending the same people again adds no one twice\. Call search/);
+  const removal = await callTool(down.module, 'remove_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'] }, down.ctx);
+  assert.equal(removal.payload.outcome, 'unknown');
+  assert.match(removal.payload.error, /Removing the same people again changes nothing more/);
+  assert.equal(sent(down.fetch).length, 3, 'each request sent once');
+});
+
+test('remove_audience_members sends the people to remove, with no consent and no terms', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'dm-ingest.json'))));
+  const { payload } = await callTool(module, 'remove_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['Ops@Example.com'], hashed_phones: ['C'.repeat(64)] }, ctx);
+  assert.equal(sent(fetch)[0].url, `${DM}/v1/audienceMembers:remove`);
+  assert.deepEqual(sent(fetch)[0].json, {
+    destinations: [{ operatingAccount: { accountType: 'GOOGLE_ADS', accountId: CUSTOMER }, productDestinationId: '12345' }],
+    audienceMembers: [
+      { compositeData: { userData: { userIdentifiers: [{ emailAddress: sha256('ops@example.com') }] } } },
+      { compositeData: { userData: { userIdentifiers: [{ phoneNumber: 'c'.repeat(64) }] } } },
+    ],
+    encoding: 'HEX',
+  });
+  assert.equal(payload.request_id, '126365e1-16d0-4c81-9de9-f362711e250a');
+  assert.deepEqual(payload.sent, { emails: 1, hashed_phones: 1 });
+  assert.match(payload.note, /^Google removes them in the background: get_upload_status/);
+});
+
+test('upload_conversions sends click and lead conversions to the action through the Data Manager API', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, fixture(import.meta.url, 'dm-ingest-warnings.json'))));
+  const { payload, isError } = await callTool(module, 'upload_conversions', {
+    customer_id: CUSTOMER,
+    conversion_action: `customers/${CUSTOMER}/conversionActions/987654321`,
+    conversions: [
+      { conversion_time: '2026-11-20T14:05:00-05:00', gclid: 'EAIaIQobChMI-example-gclid', value: 30.03, currency: 'usd', transaction_id: 'ORDER-1001' },
+      { conversion_time: '2026-11-20T19:42:33Z', emails: ['Zoe@Example.com', 'broken'], phones: ['+1 800 555 0100'], value: 0, event_source: 'PHONE' },
+      { conversion_time: '2026-11-21T09:00:00.250+03:00', session_attributes: 'c2Vzc2lvbi1hdHRyaWJ1dGVzLWV4YW1wbGU=', hashed_emails: ['D'.repeat(64)] },
+    ],
+    ad_user_data_consent: 'GRANTED',
+  }, ctx);
+  assert.equal(isError, false, payload.error);
+  const [call] = sent(fetch);
+  assert.equal(call.url, `${DM}/v1/events:ingest`);
+  assert.deepEqual(call.json, {
+    destinations: [{ operatingAccount: { accountType: 'GOOGLE_ADS', accountId: CUSTOMER }, productDestinationId: '987654321' }],
+    events: [
+      { eventTimestamp: '2026-11-20T14:05:00-05:00', transactionId: 'ORDER-1001', eventSource: 'WEB', adIdentifiers: { gclid: 'EAIaIQobChMI-example-gclid' }, conversionValue: 30.03, currency: 'USD' },
+      { eventTimestamp: '2026-11-20T19:42:33Z', eventSource: 'PHONE', userData: { userIdentifiers: [{ emailAddress: sha256('zoe@example.com') }, { phoneNumber: sha256('+18005550100') }] }, conversionValue: 0 },
+      { eventTimestamp: '2026-11-21T09:00:00.250+03:00', eventSource: 'WEB', adIdentifiers: { sessionAttributes: 'c2Vzc2lvbi1hdHRyaWJ1dGVzLWV4YW1wbGU=' }, userData: { userIdentifiers: [{ emailAddress: 'd'.repeat(64) }] } },
+    ],
+    consent: { adUserData: 'CONSENT_GRANTED' },
+    encoding: 'HEX',
+  });
+  assert.doesNotMatch(JSON.stringify(call.json), /Zoe|example\.com|800 555/i);
+  assert.deepEqual(payload, {
+    customer_id: CUSTOMER,
+    conversion_action: `customers/${CUSTOMER}/conversionActions/987654321`,
+    request_id: '4d2f7c1a-8b3e-4f0a-9c6d-2e1b5a7f9c30',
+    conversions_sent: 3,
+    skipped_identifiers: [{ conversion: 1, emails: [1] }],
+    warnings: [{ field: 'events.events[1].currency', reason: 'WARNING_REASON_GENERIC', description: 'The currency code is not set; the conversion action\'s default currency is used.' }],
+    note: 'Google processes the conversions in the background: get_upload_status with request_id tells how many it took and why any were not.',
+  });
+});
+
+test('upload_conversions refuses a conversion Google could not match, too many identifiers and another account\'s action, before sending', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, {})));
+  const base = { customer_id: CUSTOMER, conversion_action: '987654321' };
+  const unmatched = await callTool(module, 'upload_conversions', { ...base, conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1' }, { conversion_time: '2026-11-20T14:05:00Z', emails: ['broken'], value: 10 }] }, ctx);
+  assert.match(unmatched.payload.error, /Conversion 1 has no gclid, gbraid, wbraid, session_attributes, or valid email or phone number, so Google could not match it\. Nothing was sent\./);
+  const crowded = await callTool(module, 'upload_conversions', {
+    ...base, conversions: [{ conversion_time: '2026-11-20T14:05:00Z', emails: Array.from({ length: 6 }, (_, i) => `p${i}@example.com`), phones: Array.from({ length: 5 }, () => '+15551234567') }],
+  }, ctx);
+  assert.match(crowded.payload.error, /Conversion 0 has 11 emails and phone numbers; Google takes at most 10 per conversion/);
+  const otherAction = await callTool(module, 'upload_conversions', { ...base, conversion_action: 'customers/9998887777/conversionActions/1', conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1' }] }, ctx);
+  assert.match(otherAction.payload.error, /The conversion action belongs to another account than 1112223333/);
+  const noZone = await callTool(module, 'upload_conversions', { ...base, conversions: [{ conversion_time: '2026-11-20 14:05:00', gclid: 'G1' }] }, ctx);
+  assert.match(noZone.payload.error, /`conversions\[0\]\.conversion_time` does not have the expected format/);
+  const unknownField = await callTool(module, 'upload_conversions', { ...base, conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1', order_id: 'X' }] }, ctx);
+  assert.match(unknownField.payload.error, /unknown field in `conversions\[0\]` "order_id"/);
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('upload_conversions reports an unclear upload once and says which conversions are safe to send again', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(500, { error: { code: 500, message: 'Internal error encountered.', status: 'INTERNAL' } })));
+  const { payload } = await callTool(module, 'upload_conversions', { customer_id: CUSTOMER, conversion_action: '987654321', conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1', transaction_id: 'T1' }] }, ctx);
+  assert.equal(payload.outcome, 'unknown');
+  assert.equal(payload.check, 'search');
+  assert.match(payload.error, /the same transaction_id, or the same gclid and time, once, so sending these again counts twice only those with neither/);
+  assert.equal(sent(fetch).length, 1);
+
+  const check = setup(direct(() => jsonResponse(200, {})));
+  const checked = await callTool(check.module, 'upload_conversions', { customer_id: CUSTOMER, conversion_action: '987654321', conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1' }], validate_only: true }, check.ctx);
+  assert.equal(sent(check.fetch)[0].json.validateOnly, true);
+  assert.equal(checked.payload.valid, true);
+  assert.equal(checked.payload.note, 'Google checked the conversions and took none.');
+});
+
+test('get_upload_status reads a request\'s status per destination and shows only the chosen accounts', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'dm-request-status.json')));
+  const { payload, isError } = await callTool(module, 'get_upload_status', { request_id: '126365e1-16d0-4c81-9de9-f362711e250a' }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(fetch.calls[0].method, 'GET');
+  assert.equal(fetch.calls[0].url, `${DM}/v1/requestStatus:retrieve?requestId=126365e1-16d0-4c81-9de9-f362711e250a`);
+  assert.deepEqual(payload, {
+    request_id: '126365e1-16d0-4c81-9de9-f362711e250a',
+    destinations: [{
+      customer_id: CUSTOMER,
+      product_destination_id: '12345',
+      request_status: 'PARTIAL_SUCCESS',
+      operation: 'audience_members_ingestion',
+      figures: {
+        record_count: '4',
+        data_type_counts: [{ type: 'EMAIL', count: '3' }, { type: 'PHONE_NUMBER', count: '1' }],
+        upload_match_rate_range: 'MATCH_RATE_RANGE_41_TO_50',
+      },
+      errors: [{ reason: 'PROCESSING_ERROR_REASON_INVALID_FORMAT', record_count: 1, record_indices: [2] }],
+    }],
+    hidden_destinations: 1,
+  });
+  const open = setup(() => jsonResponse(200, fixture(import.meta.url, 'dm-request-status.json')), { accounts: null });
+  const all = await callTool(open.module, 'get_upload_status', { request_id: 'abc' }, open.ctx);
+  assert.deepEqual(all.payload.destinations.map((item) => [item.customer_id, item.request_status]), [[CUSTOMER, 'PARTIAL_SUCCESS'], ['9998887777', 'SUCCESS']]);
+
+  const events = setup(() => jsonResponse(200, { requestStatusPerDestination: [{ destination: { operatingAccount: { accountType: 'GOOGLE_ADS', accountId: CUSTOMER }, productDestinationId: '987654321' }, requestStatus: 'PROCESSING', eventsIngestionStatus: { recordCount: '2' } }] }));
+  const processing = await callTool(events.module, 'get_upload_status', { request_id: 'abc' }, events.ctx);
+  assert.deepEqual(processing.payload.destinations, [{ customer_id: CUSTOMER, product_destination_id: '987654321', request_status: 'PROCESSING', operation: 'events_ingestion', figures: { record_count: '2' } }]);
+
+  const missing = setup(() => jsonResponse(404, { error: { code: 404, message: 'Requested entity was not found.', status: 'NOT_FOUND' } }));
+  const notFound = await callTool(missing.module, 'get_upload_status', { request_id: 'abc' }, missing.ctx);
+  assert.match(notFound.payload.error, /Google found no upload with this request ID \(HTTP 404\)/);
+  const bad = await callTool(missing.module, 'get_upload_status', { request_id: 'a b' }, missing.ctx);
+  assert.match(bad.payload.error, /Invalid arguments for get_upload_status/);
+  assert.equal(missing.fetch.calls.length, 1);
+});
+
+test('get_upload_status leaves out record indices when a status is too long to return whole', async () => {
+  const counts = Array.from({ length: 20 }, (_, index) => ({ recordCount: '2000', reason: `PROCESSING_ERROR_REASON_NUMBER_${index}`, recordIndices: Array.from({ length: 2000 }, (_, i) => 100000 + i * 3) }));
+  const destinations = Array.from({ length: 10 }, (_, index) => ({ destination: { operatingAccount: { accountType: 'GOOGLE_ADS', accountId: CUSTOMER }, productDestinationId: String(index) }, requestStatus: 'PARTIAL_SUCCESS', errorInfo: { errorCounts: counts }, eventsIngestionStatus: { recordCount: '2000' } }));
+  const { module, ctx } = setup(() => jsonResponse(200, { requestStatusPerDestination: destinations }));
+  const { result, payload, isError } = await callTool(module, 'get_upload_status', { request_id: 'abc' }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.ok(Buffer.byteLength(result.content[0].text) <= 32 * 1024);
+  assert.equal(payload.destinations.length, 10);
+  assert.equal(payload.destinations[0].errors[0].record_indices, undefined);
+  assert.equal(payload.destinations[0].errors[0].record_count, 2000);
+  assert.match(payload.note, /Record indices are left out/);
+});
+
+test('Data Manager errors: the scope and API sentence, the vendor\'s words, 400 and 429', async () => {
+  const scope = setup(direct(() => jsonResponse(403, fixture(import.meta.url, 'dm-error-scope.json'))));
+  const refused = await callTool(scope.module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'], accept_customer_match_terms: true }, scope.ctx);
+  assert.match(refused.payload.error, /the sign-in needs the scope https:\/\/www\.googleapis\.com\/auth\/datamanager, the Data Manager API must be enabled/);
+  assert.match(refused.payload.error, /\(HTTP 403\)\. Google Ads said: "Request had insufficient authentication scopes\."\. Nothing was changed\./);
+  assert.equal(refused.payload.outcome, undefined);
+
+  const invalid = setup(direct(() => jsonResponse(400, fixture(import.meta.url, 'dm-error-invalid.json'))));
+  const rejected = await callTool(invalid.module, 'upload_conversions', { customer_id: CUSTOMER, conversion_action: '987654321', conversions: [{ conversion_time: '2026-11-20T14:05:00Z', gclid: 'G1' }] }, invalid.ctx);
+  assert.match(rejected.payload.error, /Google did not accept the conversions: the conversion action must be one of this account whose source is Website \(Import from clicks\)/);
+  assert.match(rejected.payload.error, /There was a problem with the request/);
+
+  const limited = setup(direct(() => jsonResponse(429, { error: { code: 429, message: 'Quota exceeded for quota metric \'Ingestion mutate requests\'.', status: 'RESOURCE_EXHAUSTED' } }, { 'retry-after': '60' })));
+  const quota = await callTool(limited.module, 'remove_audience_members', { customer_id: CUSTOMER, user_list: '12345', emails: ['a@example.com'] }, limited.ctx);
+  assert.equal(quota.payload.retryAfter, 60);
+  assert.match(quota.payload.error, /rate limit reached \(HTTP 429\)\. Nothing was changed\. Retry after 60 seconds\./);
+
+  const logged = [...scope.logs, ...invalid.logs, ...limited.logs].join('\n');
+  assert.doesNotMatch(logged, /ya29|1112223333|987654321|a@example/);
 });
 
 test('hash_user_identifiers returns one hash per input, in order, and sends nothing', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, {}));
-  const { payload } = await callTool(module, 'hash_user_identifiers', { emails: ['John.Smith@googlemail.com', 'bad'], phones: ['+44 20 7946 0958'] }, ctx);
+  const { payload } = await callTool(module, 'hash_user_identifiers', {
+    emails: ['John.Smith@googlemail.com', 'bad', 'Jane.Doe+Shopping@GMAIL.com', 'user.name+NYC@Example.com'],
+    phones: ['+44 20 7946 0958'],
+  }, ctx);
   assert.deepEqual(payload, {
-    hashed_emails: [sha256('johnsmith@googlemail.com'), null],
+    hashed_emails: [sha256('johnsmith@googlemail.com'), null, sha256('janedoe@gmail.com'), sha256('user.name+nyc@example.com')],
     hashed_phone_numbers: [sha256('+442079460958')],
     invalid_emails: [1],
   });
@@ -397,7 +833,7 @@ test('hash_user_identifiers returns one hash per input, in order, and sends noth
 });
 
 test('api_get and api_request: login_customer_id, the account lock, free metadata paths, and no access management', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, { results: [] }));
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(200, { results: [] })));
   const apply = await callTool(module, 'api_request', {
     method: 'POST',
     path: `/v26/customers/${CUSTOMER}/recommendations:apply`,
@@ -408,8 +844,8 @@ test('api_get and api_request: login_customer_id, the account lock, free metadat
   assert.equal(fetch.calls[0].headers['login-customer-id'], MANAGER);
   assert.equal(fetch.calls[0].url, `${ORIGIN}/v26/customers/${CUSTOMER}/recommendations:apply`);
 
-  const conversions = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}:uploadClickConversions`, json: { conversions: [], partialFailure: true } }, ctx);
-  assert.equal(conversions.isError, false, 'the account segment may carry a method');
+  const adjustments = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}:uploadConversionAdjustments`, json: { conversionAdjustments: [], partialFailure: true } }, ctx);
+  assert.equal(adjustments.isError, false, 'the account segment may carry a method');
 
   const fields = await callTool(module, 'api_get', { path: '/v26/googleAdsFields/campaign.name' }, ctx);
   assert.equal(fields.isError, false);
@@ -434,29 +870,44 @@ test('api_get and api_request: login_customer_id, the account lock, free metadat
   assert.match(access.payload.error, /Changing who can access a Google Ads account/);
   const wrongVersion = await callTool(module, 'api_get', { path: '/v23/customers:listAccessibleCustomers' }, setup(() => jsonResponse(200, {}), { accounts: null }).ctx);
   assert.match(wrongVersion.payload.error, /The path must start with \/v26\//);
-  assert.equal(fetch.calls.length, 3);
+  assert.equal(sent(fetch).length, 3);
+  assert.equal(fetch.calls.length, 4, 'one lookup, for the call that named the account without a login');
+});
+
+test('api_request: click conversions and Customer Match jobs Google Ads refuses point to the Data Manager tools', async () => {
+  const { module, fetch, ctx } = setup(direct(() => jsonResponse(403, fixture(import.meta.url, 'error-not-allowlisted.json'))));
+  const clicks = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}:uploadClickConversions`, json: { conversions: [], partialFailure: true } }, ctx);
+  assert.match(clicks.payload.error, /Google Ads refused the click conversions: since June 15, 2026 .*CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE.*upload_conversions sends them through Google's Data Manager API/);
+  assert.match(clicks.payload.error, /\(HTTP 403\)\. Google Ads said: "The caller does not have permission"\. Nothing was changed\./);
+  const job = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/offlineUserDataJobs:create`, json: { job: {} } }, ctx);
+  assert.match(job.payload.error, /Google Ads refused the Customer Match upload: since April 2026/);
+  const other = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/campaigns:mutate`, json: { operations: [] } }, ctx);
+  assert.doesNotMatch(other.payload.error, /Data Manager/);
+  assert.equal(sent(fetch).length, 3);
 });
 
 test('errors: the module\'s sentences, the vendor\'s words, 429 retryAfter, a missing token, and logs without secrets', async () => {
-  const invalid = setup(() => jsonResponse(400, fixture(import.meta.url, 'error-invalid-argument.json')));
+  const invalid = setup(direct(() => jsonResponse(400, fixture(import.meta.url, 'error-invalid-argument.json'))));
   const bad = await callTool(invalid.module, 'search', { customer_id: CUSTOMER, query: 'SELECT campaign.nme FROM campaign' }, invalid.ctx);
   assert.equal(bad.payload.status, 400);
   assert.match(bad.payload.error, /did not accept the query: check the GAQL syntax/);
   assert.match(bad.payload.error, /api_get \/v26\/googleAdsFields\/<field> tells whether a field exists/);
   assert.match(bad.payload.error, /Request contains an invalid argument/);
 
-  const denied = setup(() => jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json')));
+  const denied = setup(direct(() => jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json'))));
   const forbidden = await callTool(denied.module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: {} }] }, denied.ctx);
   assert.match(forbidden.payload.error, /give login_customer_id/);
   assert.match(forbidden.payload.error, /Nothing was changed/);
 
-  const limited = setup(() => jsonResponse(429, { error: { code: 429, message: 'Resource has been exhausted (e.g. check quota).', status: 'RESOURCE_EXHAUSTED' } }, { 'retry-after': '30' }));
+  const limited = setup(direct(() => jsonResponse(429, { error: { code: 429, message: 'Resource has been exhausted (e.g. check quota).', status: 'RESOURCE_EXHAUSTED' } }, { 'retry-after': '30' })));
   const quota = await callTool(limited.module, 'search', { customer_id: CUSTOMER, query: 'SELECT campaign.id FROM campaign' }, limited.ctx);
   assert.equal(quota.payload.retryAfter, 30);
 
   const missing = setup(() => jsonResponse(200, {}), { credentials: { developertoken: DEV } });
   const notConnected = await callTool(missing.module, 'list_customers', {}, missing.ctx);
   assert.match(notConnected.payload.error, /Google Ads is not connected: the Google Ads access token is missing/);
+  const noToken = await callTool(missing.module, 'add_audience_members', { customer_id: CUSTOMER, user_list: '1', emails: ['a@example.com'], accept_customer_match_terms: true }, missing.ctx);
+  assert.match(noToken.payload.error, /Google Ads is not connected/);
   assert.equal(missing.fetch.calls.length, 0);
 
   const logged = [...invalid.logs, ...denied.logs, ...limited.logs].join('\n');

@@ -1,0 +1,37 @@
+{
+  "requestStatusPerDestination": [
+    {
+      "destination": {
+        "operatingAccount": { "accountType": "GOOGLE_ADS", "accountId": "1112223333" },
+        "productDestinationId": "12345"
+      },
+      "requestStatus": "PARTIAL_SUCCESS",
+      "errorInfo": {
+        "errorCounts": [
+          { "recordCount": "1", "reason": "PROCESSING_ERROR_REASON_INVALID_FORMAT", "recordIndices": [2] }
+        ]
+      },
+      "warningInfo": {},
+      "audienceMembersIngestionStatus": {
+        "compositeDataIngestionStatus": {
+          "recordCount": "4",
+          "dataTypeCounts": [
+            { "type": "EMAIL", "count": "3" },
+            { "type": "PHONE_NUMBER", "count": "1" }
+          ],
+          "uploadMatchRateRange": "MATCH_RATE_RANGE_41_TO_50"
+        }
+      }
+    },
+    {
+      "destination": {
+        "operatingAccount": { "accountType": "GOOGLE_ADS", "accountId": "9998887777" },
+        "productDestinationId": "67890"
+      },
+      "requestStatus": "SUCCESS",
+      "audienceMembersIngestionStatus": {
+        "compositeDataIngestionStatus": { "recordCount": "4" }
+      }
+    }
+  ]
+}

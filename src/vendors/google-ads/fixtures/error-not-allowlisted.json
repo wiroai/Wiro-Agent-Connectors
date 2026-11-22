@@ -1,0 +1,19 @@
+{
+  "error": {
+    "code": 403,
+    "message": "The caller does not have permission",
+    "status": "PERMISSION_DENIED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure",
+        "errors": [
+          {
+            "errorCode": { "notAllowlistedError": "CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE" },
+            "message": "Customer is not allowlisted for accessing this feature."
+          }
+        ],
+        "requestId": "Xy3kExampleRequest5"
+      }
+    ]
+  }
+}
