@@ -1,0 +1,24 @@
+{
+  "posts": [
+    {
+      "uri": "at://did:plc:bobbobbobbobbobbobbobbob/app.bsky.feed.post/3lbreply1",
+      "cid": "bafyreireplyparent",
+      "author": { "did": "did:plc:bobbobbobbobbobbobbobbob", "handle": "bob.bsky.social", "displayName": "Bob" },
+      "record": {
+        "$type": "app.bsky.feed.post",
+        "text": "Replying to the launch thread",
+        "createdAt": "2026-11-21T08:00:00.000Z",
+        "reply": {
+          "root": { "uri": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3lbk2nuxa7c2x", "cid": "bafyreiaaa" },
+          "parent": { "uri": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3lbk2nuxa7c2x", "cid": "bafyreiaaa" }
+        }
+      },
+      "replyCount": 0,
+      "repostCount": 0,
+      "likeCount": 4,
+      "quoteCount": 0,
+      "indexedAt": "2026-11-21T08:00:01.000Z",
+      "labels": []
+    }
+  ]
+}

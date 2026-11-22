@@ -13,7 +13,7 @@ import {
 } from '../../../tests/helpers.mjs';
 
 const PASSWORD = 'abcd-efgh-ijkl-mnop';
-const credentials = { identifier: '@Alice.bsky.social ', app_password: PASSWORD };
+const credentials = { handle: '@Alice.bsky.social ', apppassword: PASSWORD };
 const session = fixture(import.meta.url, 'session.json');
 const DID = session.did;
 const BEARER = `Bearer ${session.accessJwt}`;
@@ -115,7 +115,7 @@ test('a session is reused within its short TTL, shared by parallel calls, and re
 test('different credentials get different sessions', async () => {
   const { module, fetch } = setup();
   const one = makeContext({ credentials, fetch });
-  const two = makeContext({ credentials: { identifier: 'carol.bsky.social', app_password: 'wxyz-wxyz-wxyz-wxyz' }, fetch });
+  const two = makeContext({ credentials: { handle: 'carol.bsky.social', apppassword: 'wxyz-wxyz-wxyz-wxyz' }, fetch });
   await callTool(module, 'get_profile', {}, one.ctx);
   await callTool(module, 'get_profile', {}, two.ctx);
   await callTool(module, 'get_profile', {}, one.ctx);
@@ -264,7 +264,7 @@ test('create_post with an image downloads it without credentials, uploads it, an
       aspectRatio: { width: 2, height: 3 },
     }],
   });
-  assert.deepEqual(payload.image, { type: 'image/png', bytes: PNG.length, width: 2, height: 3 });
+  assert.deepEqual(payload.images, [{ type: 'image/png', bytes: PNG.length, width: 2, height: 3 }]);
 });
 
 test('a bad image is refused before signing in', async () => {
@@ -383,4 +383,182 @@ test('account, session and identity methods stay out of the generic tools, befor
   const put = await callTool(module, 'api_request', { method: 'PUT', path: '/xrpc/com.atproto.repo.putRecord', json: {} }, ctx);
   assert.match(put.payload.error, /`method` must be one of "POST"/);
   assert.equal(fetch.calls.length, 0, 'not even a sign-in was sent');
+});
+
+const plain = (value) => JSON.parse(JSON.stringify(value));
+// A 4 x 2 JPEG header: SOI, then a start-of-frame segment carrying the size.
+const JPEG = new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x02, 0x00, 0x04, 0x03, 0x01, 0x22, 0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01]);
+
+test('the connection takes the handle and the app password under their own names', () => {
+  const { module } = loadModuleFor(import.meta.url);
+  assert.deepEqual(plain(module.credentials), ['handle', 'apppassword']);
+  assert.deepEqual(plain(module.requiredCredentials), [['handle', 'apppassword']]);
+  assert.deepEqual(plain(module.accountPickers), []);
+  assert.deepEqual(plain(module.tools.map((tool) => tool.name)), ['get_profile', 'list_my_posts', 'get_posts', 'create_post', 'delete_post', 'api_get', 'api_request']);
+});
+
+test('list_my_posts takes Bluesky\'s feed filters and keeps the filter in its cursor', async () => {
+  const { module, fetch, ctx } = setup();
+  const first = await callTool(module, 'list_my_posts', { filter: 'posts_with_media', limit: 10 }, ctx);
+  const [read] = callsTo(fetch, 'app.bsky.feed.getAuthorFeed');
+  assert.deepEqual(read.query, { actor: DID, limit: '10', filter: 'posts_with_media' });
+  await callTool(module, 'list_my_posts', { cursor: first.payload.nextCursor }, ctx);
+  assert.equal(callsTo(fetch, 'app.bsky.feed.getAuthorFeed')[1].query.filter, 'posts_with_media');
+  const bad = await callTool(module, 'list_my_posts', { filter: 'everything' }, ctx);
+  assert.match(bad.payload.error, /`filter` must be one of/);
+});
+
+test('create_post uploads up to four images in order, each with its alt text and aspect ratio', async () => {
+  let blob = 0;
+  const { module, fetch, ctx } = setup({
+    media: (request) => bytesResponse(200, request.url.endsWith('.png') ? PNG : JPEG),
+    'com.atproto.repo.uploadBlob': () => jsonResponse(200, { blob: { $type: 'blob', ref: { $link: `bafkrei${++blob}` }, mimeType: 'image/x', size: 10 } }),
+  });
+  const images = [
+    { url: 'https://images.example.com/one.png', alt: 'First' },
+    { url: 'https://images.example.com/two.jpg', alt: 'Second' },
+    { url: 'https://images.example.com/three.png', alt: 'Third' },
+  ];
+  const { payload, isError } = await callTool(module, 'create_post', { text: 'Three pictures', images }, ctx);
+  assert.equal(isError, false, payload.error);
+  const uploads = callsTo(fetch, 'com.atproto.repo.uploadBlob');
+  assert.deepEqual(uploads.map((call) => call.headers['content-type']), ['image/png', 'image/jpeg', 'image/png']);
+  const record = callsTo(fetch, 'com.atproto.repo.createRecord')[0].json.record;
+  assert.deepEqual(record.embed.images.map((image) => [image.alt, image.image.ref.$link, image.aspectRatio]), [
+    ['First', 'bafkrei1', { width: 2, height: 3 }],
+    ['Second', 'bafkrei2', { width: 4, height: 2 }],
+    ['Third', 'bafkrei3', { width: 2, height: 3 }],
+  ]);
+  assert.equal(payload.images.length, 3);
+
+  const five = await callTool(module, 'create_post', { text: 'x', images: [...images, ...images].slice(0, 5) }, ctx);
+  assert.match(five.payload.error, /`images` must have at most 4 items/);
+  const both = await callTool(module, 'create_post', { text: 'x', images, link_card: { url: 'https://example.com' } }, ctx);
+  assert.match(both.payload.error, /images or a link card, not both/);
+  const nothing = await callTool(module, 'create_post', { text: '  ' }, ctx);
+  assert.match(nothing.payload.error, /needs text, images or a link card/);
+});
+
+test('a link card takes its title, description and picture from the page, and uploads the picture', async () => {
+  const page = '<html><head><meta charset="utf-8"><title>Fallback title</title>'
+    + '<meta property="og:title" content="Release 2.0 &amp; more">'
+    + '<meta name="description" content="Plain description">'
+    + '<meta property="og:description" content="What is new in 2.0">'
+    + '<meta property="og:image" content="/img/card.png"></head><body>Hello</body></html>';
+  const { module, fetch, ctx } = setup({
+    media: (request) => (request.url === 'https://example.com/release'
+      ? bytesResponse(200, new TextEncoder().encode(page), { 'content-type': 'text/html' })
+      : bytesResponse(200, PNG)),
+  });
+  const { payload, isError } = await callTool(module, 'create_post', { text: 'Out now https://example.com/release', link_card: { url: 'https://example.com/release' } }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(fetch.calls.slice(0, 2).map((call) => call.url), ['https://example.com/release', 'https://example.com/img/card.png'], 'the page and its picture are read before signing in');
+  assert.equal(fetch.calls[0].headers.authorization, undefined);
+  const record = callsTo(fetch, 'com.atproto.repo.createRecord')[0].json.record;
+  assert.equal(record.embed.$type, 'app.bsky.embed.external');
+  assert.deepEqual({ ...record.embed.external, thumb: undefined }, { uri: 'https://example.com/release', title: 'Release 2.0 & more', description: 'What is new in 2.0', thumb: undefined });
+  assert.deepEqual(record.embed.external.thumb, fixture(import.meta.url, 'upload-blob.json').blob);
+  assert.deepEqual(payload.linkCard, { url: 'https://example.com/release', title: 'Release 2.0 & more', picture: true });
+});
+
+test('a link card with its own title reads no page; a page that cannot be read stops the post', async () => {
+  const given = setup();
+  const { payload, isError } = await callTool(given.module, 'create_post', { text: 'See this', link_card: { url: 'http://example.com/a', title: 'A', description: 'B' } }, given.ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(given.fetch.calls.some((call) => call.origin === 'http://example.com'), false);
+  assert.deepEqual(callsTo(given.fetch, 'com.atproto.repo.createRecord')[0].json.record.embed.external, { uri: 'http://example.com/a', title: 'A', description: 'B' });
+
+  const broken = setup({ media: () => bytesResponse(404, new Uint8Array(0)) });
+  const failed = await callTool(broken.module, 'create_post', { text: 'See this', link_card: { url: 'https://example.com/gone' } }, broken.ctx);
+  assert.equal(failed.isError, true);
+  assert.match(failed.payload.error, /The link card page URL answered HTTP 404\. Give link_card\.title and link_card\.description, or leave link_card out/);
+  assert.equal(sessionCalls(broken.fetch).length, 0, 'nothing was sent to Bluesky');
+
+  const noPicture = setup({
+    media: (request) => (request.url.endsWith('/page')
+      ? bytesResponse(200, new TextEncoder().encode('<head><meta property="og:title" content="T"><meta property="og:image" content="https://cdn.example.com/huge.png"></head>'))
+      : bytesResponse(200, new Uint8Array(10), { 'content-length': '1000001' })),
+  });
+  const without = await callTool(noPicture.module, 'create_post', { text: 'x', link_card: { url: 'https://example.com/page' } }, noPicture.ctx);
+  assert.equal(without.isError, false, without.payload.error);
+  assert.match(without.payload.linkCard.note, /picture could not be used/);
+  assert.equal(callsTo(noPicture.fetch, 'com.atproto.repo.createRecord')[0].json.record.embed.external.thumb, undefined);
+});
+
+test('reply_to makes a reply: the parent is read, and the thread root comes from it', async () => {
+  const { module, fetch, ctx } = setup({ 'app.bsky.feed.getPosts': () => jsonResponse(200, fixture(import.meta.url, 'get-posts.json')) });
+  const { payload, isError } = await callTool(module, 'create_post', { text: 'Thanks!', reply_to: 'https://bsky.app/profile/bob.bsky.social/post/3lbreply1' }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(callsTo(fetch, 'com.atproto.identity.resolveHandle').map((call) => call.query.handle), ['bob.bsky.social']);
+  const [read] = callsTo(fetch, 'app.bsky.feed.getPosts');
+  assert.equal(read.query.uris, 'at://did:plc:bobbobbobbobbobbobbobbob/app.bsky.feed.post/3lbreply1');
+  assert.equal(read.headers.authorization, BEARER);
+  const record = callsTo(fetch, 'com.atproto.repo.createRecord')[0].json.record;
+  assert.deepEqual(record.reply, {
+    root: { uri: `at://${DID}/app.bsky.feed.post/3lbk2nuxa7c2x`, cid: 'bafyreiaaa' },
+    parent: { uri: 'at://did:plc:bobbobbobbobbobbobbobbob/app.bsky.feed.post/3lbreply1', cid: 'bafyreireplyparent' },
+  });
+  assert.equal(payload.replyTo, 'at://did:plc:bobbobbobbobbobbobbobbob/app.bsky.feed.post/3lbreply1');
+
+  const own = setup({ 'app.bsky.feed.getPosts': () => jsonResponse(200, { posts: [{ uri: `at://${DID}/app.bsky.feed.post/3lbroot`, cid: 'bafyreiroot', record: { text: 'root' } }] }) });
+  await callTool(own.module, 'create_post', { text: 'Part 2', reply_to: `at://${DID}/app.bsky.feed.post/3lbroot` }, own.ctx);
+  assert.equal(callsTo(own.fetch, 'com.atproto.identity.resolveHandle').length, 0, 'a DID needs no lookup');
+  assert.deepEqual(callsTo(own.fetch, 'com.atproto.repo.createRecord')[0].json.record.reply, {
+    root: { uri: `at://${DID}/app.bsky.feed.post/3lbroot`, cid: 'bafyreiroot' },
+    parent: { uri: `at://${DID}/app.bsky.feed.post/3lbroot`, cid: 'bafyreiroot' },
+  });
+
+  const gone = setup({ 'app.bsky.feed.getPosts': () => jsonResponse(200, { posts: [] }) });
+  const missing = await callTool(gone.module, 'create_post', { text: 'x', reply_to: `at://${DID}/app.bsky.feed.post/3lbgone` }, gone.ctx);
+  assert.match(missing.payload.error, /found no post at reply_to/);
+  assert.equal(callsTo(gone.fetch, 'com.atproto.repo.createRecord').length, 0);
+  const notPost = await callTool(gone.module, 'create_post', { text: 'x', reply_to: 'https://example.com/post/1' }, gone.ctx);
+  assert.match(notPost.payload.error, /reply_to is not a Bluesky post/);
+});
+
+test('get_posts reads posts by link or URI with the session, resolving each handle once', async () => {
+  const { module, fetch, ctx } = setup({ 'app.bsky.feed.getPosts': () => jsonResponse(200, fixture(import.meta.url, 'get-posts.json')) });
+  const { payload, isError } = await callTool(module, 'get_posts', {
+    posts: ['https://bsky.app/profile/bob.bsky.social/post/3lbreply1', 'at://bob.bsky.social/app.bsky.feed.post/3lbother', `at://${DID}/app.bsky.feed.post/3lbk2nuxa7c2x`],
+  }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(callsTo(fetch, 'com.atproto.identity.resolveHandle').length, 1);
+  const [read] = callsTo(fetch, 'app.bsky.feed.getPosts');
+  assert.equal(new URL(read.url).searchParams.getAll('uris').length, 3);
+  assert.deepEqual(payload.posts[0], {
+    uri: 'at://did:plc:bobbobbobbobbobbobbobbob/app.bsky.feed.post/3lbreply1',
+    cid: 'bafyreireplyparent',
+    url: 'https://bsky.app/profile/bob.bsky.social/post/3lbreply1',
+    author: 'bob.bsky.social',
+    text: 'Replying to the launch thread',
+    createdAt: '2026-11-21T08:00:00.000Z',
+    likeCount: 4,
+    repostCount: 0,
+    replyCount: 0,
+    quoteCount: 0,
+    isReply: true,
+  });
+  assert.equal(payload.notFound.length, 2);
+});
+
+test('delete_post deletes the account\'s own post once, and refuses another account\'s before sending anything', async () => {
+  const { module, fetch, ctx } = setup({ 'com.atproto.repo.deleteRecord': () => jsonResponse(200, fixture(import.meta.url, 'delete-record.json')) });
+  const { payload, isError } = await callTool(module, 'delete_post', { post: 'https://bsky.app/profile/alice.bsky.social/post/3lbk2nuxa7c2x' }, ctx);
+  assert.equal(isError, false, payload.error);
+  const [sent] = callsTo(fetch, 'com.atproto.repo.deleteRecord');
+  assert.deepEqual(sent.json, { repo: DID, collection: 'app.bsky.feed.post', rkey: '3lbk2nuxa7c2x' });
+  assert.equal(sent.headers.authorization, BEARER);
+  assert.deepEqual(payload, { deleted: true, uri: `at://${DID}/app.bsky.feed.post/3lbk2nuxa7c2x` });
+  assert.equal(callsTo(fetch, 'com.atproto.identity.resolveHandle').length, 0, 'the account\'s own handle needs no lookup');
+
+  const other = await callTool(module, 'delete_post', { post: 'https://bsky.app/profile/bob.bsky.social/post/3lbreply1' }, ctx);
+  assert.equal(other.isError, true);
+  assert.match(other.payload.error, /Only the connected account's own posts can be deleted, and this post belongs to bob\.bsky\.social\. Nothing was sent\./);
+  assert.equal(callsTo(fetch, 'com.atproto.repo.deleteRecord').length, 1);
+
+  const broken = setup({ 'com.atproto.repo.deleteRecord': () => jsonResponse(502, { error: 'BadGateway' }) });
+  const unknown = await callTool(broken.module, 'delete_post', { post: `at://${DID}/app.bsky.feed.post/3lbk2nuxa7c2x` }, broken.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'list_my_posts');
+  assert.equal(callsTo(broken.fetch, 'com.atproto.repo.deleteRecord').length, 1);
 });
