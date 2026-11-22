@@ -8,7 +8,10 @@
 // only. The Report Service API is read-only, and so is the module.
 //
 // The apps picker (key "apps", Adjust's 12-character app tokens) limits every
-// report to the apps chosen for the connection.
+// report to the apps chosen for the connection. While a host applies that
+// choice, a connection with no app chosen reports on nothing: every
+// app-scoped tool refuses until apps are chosen (all of them, for the whole
+// account). list_apps marks the chosen ones.
 
 import { allowedAccounts, apiTools, defineConnector, requireAccounts, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
 
@@ -30,27 +33,35 @@ const APP_TOKENS = {
   minItems: 1,
   maxItems: 100,
   uniqueItems: true,
-  description: 'Adjust app tokens (12 characters, from list_apps). Default: the apps chosen for the connection, or the whole account when none are.',
+  description: 'Adjust app tokens (12 characters, from list_apps). Default: every app chosen for this connection (on a host that applies no app choice, the whole account).',
 };
+
+/** The refusal while the host applies an app choice that holds no app. */
+const NO_APP_CHOSEN =
+  'No app is chosen for this Adjust connection yet, and it reports only on the apps chosen for it. Ask whoever manages the connection '
+  + 'to choose them (list_apps lists the apps of the account; choosing all of them covers the whole account). Nothing was sent to Adjust.';
 
 function compact(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
 }
 
+/** Refuses an app-scoped call while the host applies an app choice with no app in it. */
+function requireSomeApp(h: ToolHelpers): void {
+  if (allowedAccounts(h.ctx.accounts, 'apps')?.length === 0) throw new ToolFailure(NO_APP_CHOSEN);
+}
+
 /**
  * The app tokens a report is scoped to. Under an account lock they must be
- * chosen ones, and no tokens means all the chosen ones; without a lock, no
- * tokens means the whole account.
+ * chosen ones, and no tokens means all the chosen ones (with none chosen, the
+ * call is refused); without a lock, no tokens means the whole account.
  */
 function scopedApps(h: ToolHelpers, given: string[] | undefined): string[] | undefined {
-  const allowed = allowedAccounts(h.ctx.accounts, 'apps');
+  requireSomeApp(h);
   if (given?.length) {
     requireAccounts(h.ctx.accounts, 'apps', given, 'app');
     return given;
   }
-  if (allowed === null) return undefined;
-  if (!allowed.length) throw new ToolFailure('No app is chosen for this connection yet. Nothing was sent.');
-  return allowed;
+  return allowedAccounts(h.ctx.accounts, 'apps') ?? undefined;
 }
 
 /** Extra report filters: "<dimension or metric>__<operator>" with a value or a list. */
@@ -116,7 +127,7 @@ const connector = defineConnector({
     {
       key: 'apps',
       label: 'Adjust apps',
-      description: 'The apps the agent may report on.',
+      description: 'The apps the agent may report on. Reports cover only the apps chosen here: choose all of them to cover the whole account, and choose an app added to Adjust later too.',
       multiple: true,
       tool: 'list_apps',
       idField: 'id',
@@ -129,13 +140,19 @@ const connector = defineConnector({
       name: 'list_apps',
       kind: 'read',
       title: 'List Adjust apps',
-      description: 'Lists the apps of the Adjust account behind the token: the app token (id, 12 characters) and name of each. Pass nextCursor back as cursor for more.',
+      description:
+        'Lists the apps of the Adjust account behind the token: the app token (id, 12 characters) and name of each. When the connection is limited '
+        + 'to chosen apps, those are marked selected: true, and reports cover only them. Pass nextCursor back as cursor for more.',
       inputSchema: { type: 'object', properties: { cursor: CURSOR }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
         const skip = skipOf(h, args.cursor);
+        const chosen = allowedAccounts(h.ctx.accounts, 'apps');
         const { data } = await h.api({ path: '/reports-service/filters_data', query: { required_filters: 'apps' }, errors: ERRORS });
         const apps: any[] = Array.isArray(data?.apps) ? data.apps : [];
-        return offsetPage(h, 'apps', apps.map((app) => compact({ id: app?.id, name: app?.name })), skip, MAX_ROWS, {});
+        const items = apps.map((app) => compact({ id: app?.id, name: app?.name, selected: chosen?.includes(String(app?.id)) ? true : undefined }));
+        return offsetPage(h, 'apps', items, skip, MAX_ROWS, compact({
+          note: chosen?.length === 0 ? 'No app is chosen for this connection yet, so every report is refused until apps from this list are chosen for it.' : undefined,
+        }));
       },
     },
     {
@@ -297,7 +314,8 @@ const connector = defineConnector({
       },
     },
     // Only api_get: the Report Service API is read-only. Under an account
-    // lock, a request must name chosen apps in app_token__in.
+    // lock, a request must name chosen apps in app_token__in, and with no app
+    // chosen it is refused with the sentence the other tools give.
     ...apiTools({
       label: 'Adjust',
       description:
@@ -311,7 +329,15 @@ const connector = defineConnector({
         label: 'app',
         ids: (request) => (request.query['app_token__in'] ?? []).flatMap((value) => value.split(',')).map((token) => token.trim()).filter(Boolean),
       },
-    }).filter((tool) => tool.name === 'api_get'),
+    })
+      .filter((tool) => tool.name === 'api_get')
+      .map((tool) => ({
+        ...tool,
+        async run(args: unknown, h: ToolHelpers) {
+          requireSomeApp(h);
+          return tool.run(args, h);
+        },
+      })),
   ],
 });
 

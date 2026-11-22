@@ -20,13 +20,13 @@ Quick start table:
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `list_apps` | read | The account's apps: app token (12 characters) and name. Lists the candidates of the `apps` account picker. |
+| `list_apps` | read | The account's apps: app token (12 characters) and name, with `selected: true` on the apps chosen for the connection. Lists the candidates of the `apps` account picker. |
 | `get_report` | read | A report by dimensions and metrics over a date period, with app tokens, filters (`<field>__<operator>`), ad spend mode, attribution source and types, cohort maturity, currency, time zone and sort; rows, totals and warnings, in pages. |
 | `get_filter_values` | read | The values a report may use: metric catalogues (overview, cohort, event, cost, SKAdNetwork), dimensions, networks, partners, countries and more, with search. |
 | `list_events` | read | The apps' events by slug, for per-event metrics, and whether each is a SKAdNetwork event. |
 | `api_get` | read | Any other GET of the Report Service API under `/reports-service/`, such as the pivot or CSV report. |
 
-Account picker `apps` (Adjust apps, one or more, listed by `list_apps`): a report covers the chosen apps by default, and app tokens outside them are refused before anything is sent; `api_get` must list only chosen apps in `app_token__in`. Without a lock (the CLI without `CONNECTOR_ACCOUNTS`), a report without `app_tokens` covers the whole account.
+Account picker `apps` (Adjust apps, one or more, listed by `list_apps`): a connection reports only on the apps chosen for it, so a host that offers the picker needs at least one app chosen. With none chosen, `get_report`, `list_events` and `api_get` refuse before anything is sent (`list_apps` and `get_filter_values` still answer). To report on the whole account, choose every app; an app added to the account later is covered once it is chosen too. A report covers all the chosen apps by default, app tokens outside them are refused before anything is sent, and `api_get` must list only chosen apps in `app_token__in`. `list_apps` marks the chosen apps `selected: true`. The platform is not part of the choice: a report takes it per call (`os_names`). Without a lock (the CLI without `CONNECTOR_ACCOUNTS`), a report without `app_tokens` covers the whole account.
 
 Connection check: `list_apps` with no arguments.
 
