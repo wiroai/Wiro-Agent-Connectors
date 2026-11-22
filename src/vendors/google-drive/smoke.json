@@ -1,0 +1,11 @@
+{
+  "read": { "tool": "list_folders", "args": {} },
+  "write": {
+    "tool": "create_document",
+    "args": {
+      "name": "Connector smoke test {{timestamp}}",
+      "text": "A document from the connector smoke test."
+    },
+    "note": "Creates a Google Doc in the service account's own Drive. Google refuses that with storageQuotaExceeded for most service accounts: add folder_id with a folder in a shared drive. Move it to the trash with update_file and trashed: true."
+  }
+}

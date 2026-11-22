@@ -1,0 +1,19 @@
+{
+  "kind": "calendar#event",
+  "etag": "\"3400000000000002\"",
+  "id": "REPLACED_BY_TEST",
+  "status": "confirmed",
+  "htmlLink": "https://www.google.com/calendar/event?eid=Y3JlYXRlZA",
+  "created": "2030-01-06T09:00:00.000Z",
+  "updated": "2030-01-06T09:00:00.000Z",
+  "summary": "Consultation: John Roe",
+  "description": "Caller: +1 555 0101",
+  "creator": { "email": "booking-agent@example-project.iam.gserviceaccount.com" },
+  "organizer": { "email": "bookings@group.calendar.google.com", "displayName": "Bookings", "self": true },
+  "start": { "dateTime": "2030-01-07T11:00:00+03:00", "timeZone": "Europe/Istanbul" },
+  "end": { "dateTime": "2030-01-07T11:45:00+03:00", "timeZone": "Europe/Istanbul" },
+  "iCalUID": "created@google.com",
+  "sequence": 0,
+  "reminders": { "useDefault": true },
+  "eventType": "default"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "3DocBriefDocument000000000000000",
+  "name": "Campaign brief",
+  "mimeType": "application/vnd.google-apps.document",
+  "parents": ["1MMZGoCreativesFolder00000000000"],
+  "description": "Summer campaign brief",
+  "starred": false,
+  "trashed": false,
+  "createdTime": "2026-03-30T12:00:00.000Z",
+  "modifiedTime": "2026-03-31T16:45:00.000Z",
+  "webViewLink": "https://docs.google.com/document/d/3DocBriefDocument000000000000000/edit?usp=drivesdk",
+  "owners": [{ "displayName": "Jane Doe", "emailAddress": "jane@example.com" }],
+  "lastModifyingUser": { "displayName": "John Roe", "emailAddress": "john@example.com" },
+  "exportLinks": {
+    "application/pdf": "https://docs.google.com/feeds/download/documents/export/Export?id=3DocBriefDocument000000000000000&exportFormat=pdf",
+    "text/markdown": "https://docs.google.com/feeds/download/documents/export/Export?id=3DocBriefDocument000000000000000&exportFormat=md",
+    "text/plain": "https://docs.google.com/feeds/download/documents/export/Export?id=3DocBriefDocument000000000000000&exportFormat=txt"
+  },
+  "permissions": [
+    { "id": "01234567890123456789", "type": "user", "role": "owner", "emailAddress": "jane@example.com" },
+    { "id": "98765432109876543210", "type": "user", "role": "writer", "emailAddress": "asset-agent@example-project.iam.gserviceaccount.com" }
+  ],
+  "capabilities": { "canEdit": true, "canShare": true }
+}

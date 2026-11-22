@@ -1,0 +1,35 @@
+{
+  "subscriptionOffers": [
+    {
+      "packageName": "com.example.app",
+      "productId": "pro_subscription",
+      "basePlanId": "weekly",
+      "offerId": "free-trial-3d",
+      "state": "ACTIVE",
+      "phases": [
+        {
+          "recurrenceCount": 1,
+          "duration": "P3D",
+          "regionalConfigs": [{ "regionCode": "US", "free": {} }, { "regionCode": "TR", "free": {} }],
+          "otherRegionsConfig": { "free": {} }
+        }
+      ],
+      "offerTags": [{ "tag": "trial" }],
+      "targeting": { "acquisitionRule": { "scope": { "thisSubscription": {} } } }
+    },
+    {
+      "packageName": "com.example.app",
+      "productId": "pro_subscription",
+      "basePlanId": "yearly",
+      "offerId": "intro-half",
+      "state": "INACTIVE",
+      "phases": [
+        {
+          "recurrenceCount": 1,
+          "duration": "P1Y",
+          "regionalConfigs": [{ "regionCode": "US", "price": { "currencyCode": "USD", "units": "24", "nanos": 990000000 } }]
+        }
+      ]
+    }
+  ]
+}

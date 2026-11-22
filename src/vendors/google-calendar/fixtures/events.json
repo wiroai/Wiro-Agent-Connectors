@@ -1,0 +1,49 @@
+{
+  "kind": "calendar#events",
+  "etag": "\"p3e8b9t2n2v2o0g\"",
+  "summary": "Bookings",
+  "description": "Appointments booked by phone",
+  "updated": "2030-01-05T08:12:44.120Z",
+  "timeZone": "Europe/Istanbul",
+  "accessRole": "writer",
+  "defaultReminders": [{ "method": "popup", "minutes": 30 }],
+  "nextPageToken": "CigKGjdxYmJ0aGVhbXBsZXRva2VuGAEggICA",
+  "items": [
+    {
+      "kind": "calendar#event",
+      "etag": "\"3400000000000000\"",
+      "id": "0h5q8k2l3m4n5o6p7q8r9s0t1u",
+      "status": "confirmed",
+      "htmlLink": "https://www.google.com/calendar/event?eid=MGg1cThrMmwzbTRuNW82cDdxOHI5czB0MXU",
+      "created": "2030-01-04T10:00:00.000Z",
+      "updated": "2030-01-04T10:05:00.000Z",
+      "summary": "Consultation: Jane Doe",
+      "description": "Caller: +1 555 0100\nTopic: first visit",
+      "location": "Main office",
+      "creator": { "email": "booking-agent@example-project.iam.gserviceaccount.com" },
+      "organizer": { "email": "bookings@group.calendar.google.com", "displayName": "Bookings", "self": true },
+      "start": { "dateTime": "2030-01-07T10:00:00+03:00", "timeZone": "Europe/Istanbul" },
+      "end": { "dateTime": "2030-01-07T11:00:00+03:00", "timeZone": "Europe/Istanbul" },
+      "iCalUID": "0h5q8k2l3m4n5o6p7q8r9s0t1u@google.com",
+      "sequence": 0,
+      "reminders": { "useDefault": true },
+      "eventType": "default"
+    },
+    {
+      "kind": "calendar#event",
+      "etag": "\"3400000000000001\"",
+      "id": "holiday20300108",
+      "status": "confirmed",
+      "htmlLink": "https://www.google.com/calendar/event?eid=aG9saWRheTIwMzAwMTA4",
+      "created": "2029-12-01T09:00:00.000Z",
+      "updated": "2029-12-01T09:00:00.000Z",
+      "summary": "Office closed",
+      "organizer": { "email": "bookings@group.calendar.google.com", "self": true },
+      "start": { "date": "2030-01-08" },
+      "end": { "date": "2030-01-09" },
+      "transparency": "transparent",
+      "reminders": { "useDefault": false, "overrides": [{ "method": "popup", "minutes": 1440 }] },
+      "eventType": "default"
+    }
+  ]
+}

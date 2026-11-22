@@ -1,0 +1,9 @@
+{
+  "spreadsheetId": "5SheetLeads0000000000000000000000",
+  "properties": { "title": "Leads", "locale": "en_US", "timeZone": "Europe/Istanbul" },
+  "sheets": [
+    { "properties": { "sheetId": 0, "title": "Sheet1", "index": 0, "sheetType": "GRID", "gridProperties": { "rowCount": 1000, "columnCount": 26 } } },
+    { "properties": { "sheetId": 1873456, "title": "Archive 2025", "index": 1, "sheetType": "GRID", "gridProperties": { "rowCount": 200, "columnCount": 8 } } }
+  ],
+  "spreadsheetUrl": "https://docs.google.com/spreadsheets/d/5SheetLeads0000000000000000000000/edit"
+}

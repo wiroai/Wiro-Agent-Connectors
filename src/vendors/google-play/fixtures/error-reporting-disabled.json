@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 403,
+    "message": "Google Play Developer Reporting API has not been used in project 123456789012 before or it is disabled. Enable it by visiting https://console.developers.google.com/apis/api/playdeveloperreporting.googleapis.com/overview?project=123456789012 then retry.",
+    "status": "PERMISSION_DENIED"
+  }
+}

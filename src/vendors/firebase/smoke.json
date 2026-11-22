@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "check_projects", "args": {} },
+  "write": {
+    "tool": "send_message",
+    "args": {
+      "topic": "connector-smoke-test",
+      "title": "Connector smoke test",
+      "body": "Sent {{timestamp}}"
+    },
+    "note": "Sends a push to the topic connector-smoke-test, which no install of the app subscribes to unless you made it: nothing to undo. With several projects connected, add project."
+  }
+}

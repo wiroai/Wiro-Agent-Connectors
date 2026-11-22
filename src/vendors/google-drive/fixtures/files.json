@@ -1,0 +1,34 @@
+{
+  "nextPageToken": "~!!~AI9FV7Qexample-next-page-token",
+  "incompleteSearch": false,
+  "files": [
+    {
+      "id": "1BxiMVsCampaignSummerFolder00000",
+      "name": "campaign-summer-2026",
+      "mimeType": "application/vnd.google-apps.folder",
+      "parents": ["1MMZGoCreativesFolder00000000000"],
+      "createdTime": "2026-04-01T10:00:00.000Z",
+      "modifiedTime": "2026-04-01T10:30:00.000Z",
+      "webViewLink": "https://drive.google.com/drive/folders/1BxiMVsCampaignSummerFolder00000"
+    },
+    {
+      "id": "2CyiNWtBanner1080Image0000000000",
+      "name": "banner-1080x1080.jpg",
+      "mimeType": "image/jpeg",
+      "size": "245760",
+      "parents": ["1MMZGoCreativesFolder00000000000"],
+      "createdTime": "2026-04-01T09:00:00.000Z",
+      "modifiedTime": "2026-04-01T09:15:00.000Z",
+      "webViewLink": "https://drive.google.com/file/d/2CyiNWtBanner1080Image0000000000/view?usp=drivesdk"
+    },
+    {
+      "id": "3DocBriefDocument000000000000000",
+      "name": "Campaign brief",
+      "mimeType": "application/vnd.google-apps.document",
+      "parents": ["1MMZGoCreativesFolder00000000000"],
+      "createdTime": "2026-03-30T12:00:00.000Z",
+      "modifiedTime": "2026-03-31T16:45:00.000Z",
+      "webViewLink": "https://docs.google.com/document/d/3DocBriefDocument000000000000000/edit?usp=drivesdk"
+    }
+  ]
+}

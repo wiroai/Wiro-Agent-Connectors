@@ -1,0 +1,13 @@
+{
+  "error": {
+    "code": 400,
+    "message": "Invalid value at 'message.android.notification.color' (TYPE_STRING), \"red\"",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        "fieldViolations": [{ "field": "message.android.notification.color", "description": "Invalid value at 'message.android.notification.color' (TYPE_STRING), \"red\"" }]
+      }
+    ]
+  }
+}

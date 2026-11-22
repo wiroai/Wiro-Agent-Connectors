@@ -1,0 +1,35 @@
+{
+  "files": [
+    {
+      "id": "5Folder2026Creatives000000000000",
+      "name": "2026",
+      "parents": ["1MMZGoCreativesFolder00000000000"],
+      "modifiedTime": "2026-04-03T10:00:00.000Z"
+    },
+    {
+      "id": "6Folder2026AdAssets0000000000000",
+      "name": "2026",
+      "parents": ["2CyiNWAdAssetsFolder000000000000"],
+      "modifiedTime": "2026-04-02T10:00:00.000Z"
+    },
+    {
+      "id": "2CyiNWAdAssetsFolder000000000000",
+      "name": "Ad Assets",
+      "parents": ["0AJaneRootFolder0000000000000000"],
+      "modifiedTime": "2026-03-28T08:00:00.000Z"
+    },
+    {
+      "id": "7BrandFolder00000000000000000000",
+      "name": "Brand",
+      "parents": ["0AMarketingSharedDriveUk9PVA"],
+      "driveId": "0AMarketingSharedDriveUk9PVA",
+      "modifiedTime": "2026-03-20T08:00:00.000Z"
+    },
+    {
+      "id": "1MMZGoCreativesFolder00000000000",
+      "name": "Creatives",
+      "parents": ["0AJaneRootFolder0000000000000000"],
+      "modifiedTime": "2026-04-01T10:30:00.000Z"
+    }
+  ]
+}
