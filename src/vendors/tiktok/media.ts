@@ -3,6 +3,7 @@
 // transfer rules ask for.
 
 export type VideoType = 'video/mp4' | 'video/quicktime' | 'video/webm';
+export const VIDEO_TYPES: readonly VideoType[] = ['video/mp4', 'video/quicktime', 'video/webm'];
 
 function ascii(bytes: Uint8Array, start: number, length: number): string {
   return String.fromCharCode(...bytes.subarray(start, start + length));
@@ -18,7 +19,16 @@ export function sniffVideo(bytes: Uint8Array): VideoType | undefined {
 const MB = 1024 * 1024;
 /** TikTok: each chunk 5 to 64 MB, the last one may hold the rest (up to 128 MB); a file under 5 MB goes whole. */
 export const MIN_CHUNK_BYTES = 5 * MB;
+/**
+ * The chunk size this connector uses. The last chunk holds the rest, so it
+ * stays under twice this: within the smallest common host download limit
+ * (25 MiB), as each chunk is read with one byte-range request.
+ */
 export const CHUNK_BYTES = 10 * MB;
+/** TikTok takes video files up to 4 GB. */
+export const MAX_VIDEO_BYTES = 4 * 1024 * MB;
+/** TikTok takes at most 1,000 chunks. */
+export const MAX_CHUNKS = 1000;
 
 export interface ChunkPlan {
   chunkSize: number;
@@ -28,12 +38,11 @@ export interface ChunkPlan {
 }
 
 /**
- * Chunks for a file of `size` bytes: one chunk up to 10 MB, otherwise 10 MB
- * chunks with the remainder added to the last one, as TikTok counts them
- * (total_chunk_count = floor(size / chunk_size)).
+ * The chunks of a file of `size` bytes in chunks of `chunkSize`, as TikTok
+ * counts them: total_chunk_count = floor(size / chunk_size), the last chunk
+ * holding the rest.
  */
-export function chunkPlan(size: number): ChunkPlan {
-  const chunkSize = size <= CHUNK_BYTES ? size : CHUNK_BYTES;
+export function planFor(size: number, chunkSize: number): ChunkPlan {
   const count = Math.max(1, Math.floor(size / chunkSize));
   const ranges: Array<[number, number]> = [];
   for (let index = 0; index < count; index++) {
@@ -42,4 +51,16 @@ export function chunkPlan(size: number): ChunkPlan {
     ranges.push([first, last]);
   }
   return { chunkSize, count, ranges };
+}
+
+/** The plan this connector uses for a file of `size` bytes: one chunk up to 10 MB, otherwise 10 MB chunks with the remainder added to the last one. */
+export function chunkPlan(size: number): ChunkPlan {
+  return planFor(size, size <= CHUNK_BYTES ? size : CHUNK_BYTES);
+}
+
+/** The index of the chunk that starts at byte `offset`, or -1 when no chunk starts there. */
+export function chunkAt(plan: ChunkPlan, offset: number): number {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset % plan.chunkSize !== 0) return -1;
+  const index = offset / plan.chunkSize;
+  return index < plan.count ? index : -1;
 }

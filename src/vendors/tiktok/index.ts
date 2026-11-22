@@ -11,34 +11,43 @@
 //
 // A video goes to TikTok either by PULL_FROM_URL (TikTok downloads it; the
 // URL's domain or prefix must be verified in the app's URL properties) or by
-// FILE_UPLOAD (this module downloads it from a public https URL and sends it in
-// chunks to the upload address TikTok returns). A FILE_UPLOAD holds the whole
-// file, so it must fit the host's download limit, which is often far below
-// TikTok's own; a larger video is refused before the post is started.
+// FILE_UPLOAD (this module reads it from a public https URL and sends it in
+// chunks to the upload address TikTok returns). A FILE_UPLOAD reads each
+// chunk by byte range just before it sends it, and goes on across calls with
+// a cursor when one call cannot send them all (upload.ts), so no call holds
+// more than about one chunk, whatever the size of the video.
 // TikTok has no upload for photos: they are always PULL_FROM_URL, so photo
 // URLs must be on a verified domain or prefix too, and TikTok refuses others.
 //
 // Hosts end a tool call after about a minute and drop a late result, so a
-// post follows TikTok's status only until 35 seconds into the call, then
-// returns its publish_id; get_post_status follows it from there.
+// call sends chunks and follows TikTok's status only until 35 seconds into
+// the call, then returns its cursor or publish_id; the next call, or
+// get_post_status, goes on from there.
 
 import { apiTools, cleanVendorText, defineConnector, formatNumber, OutcomeUnknown, ToolFailure, truncate, utf8Bytes, type ApiRequest, type ToolHelpers } from '../../core/index.js';
-import { chunkPlan, sniffVideo } from './media.js';
+import { chunkAt, CHUNK_BYTES, chunkPlan, MAX_VIDEO_BYTES, planFor, sniffVideo } from './media.js';
+import { readPart, SourceProblem, type SourcePart } from './source.js';
+import {
+  cursorState,
+  exclusive,
+  sourceKey,
+  stateFromCursor,
+  transfer,
+  UPLOAD_LIFETIME_MS,
+  UPLOAD_ORIGINS,
+  uploadAddress,
+  type TransferRun,
+  type UploadState,
+} from './upload.js';
 
-/**
- * The upload hosts TikTok's media transfer guide shows. Origins are exact, so
- * an upload address on any other tiktokapis.com host is refused before the
- * file is sent, and the post is not made.
- */
-const UPLOAD_ORIGINS = ['https://open-upload.tiktokapis.com', 'https://upload.us.tiktokapis.com'];
 const PRIVACY_LEVELS = ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'] as const;
-const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
 const POLL_SECONDS = 5;
 /** No status read starts later than this into a call: hosts end a call after about a minute and drop a late result. */
 const STATUS_BUDGET_MS = 35_000;
 const MAX_WAIT_SECONDS = 30;
 const DONE = new Set(['PUBLISH_COMPLETE', 'FAILED', 'SEND_TO_USER_INBOX']);
 const PUBLISH_ID = '^[A-Za-z0-9._~-]{1,64}$';
+const PUBLISH_PATTERN = new RegExp(PUBLISH_ID);
 const HTTPS_URL = { type: 'string' as const, format: 'uri' as const, pattern: '^https://', maxLength: 2000 };
 const JSON_TYPE = 'application/json; charset=UTF-8';
 const READ_TOOLS = new Set(['get_creator_info', 'get_profile', 'get_post_status', 'list_videos', 'get_videos', 'api_get']);
@@ -87,11 +96,10 @@ const PHOTO_REFUSED =
   'TikTok refused the photo post (TikTok downloads photos itself, only from a domain or URL prefix verified in the TikTok app\'s URL '
   + 'properties: use photo URLs on such a host, such as the creator\'s own website, or make a video of the photos and post it with '
   + `post_video, whose FILE_UPLOAD needs no verification; other causes: ${REFUSAL_CAUSES})`;
-const TOO_LARGE_TO_UPLOAD =
-  'The video is larger than this host can download for FILE_UPLOAD, so nothing was posted. Post it with source PULL_FROM_URL from a '
-  + 'domain or URL prefix verified in the TikTok app\'s URL properties, where TikTok downloads up to 4 GB itself, or use a smaller file.';
-/** How h.media says a download went over a size limit: the host's own ("the reply was too large") or this module's. */
-const DOWNLOAD_TOO_LARGE = /^The video (could not be downloaded \(the reply was too large\)|is larger than [0-9,]+ bytes)/;
+const GO_ON =
+  'call post_video again with the same video_url and cursor set to nextCursor, until done is true. Each call sends the next chunks: '
+  + 'no chunk goes twice, and the cursor belongs to this one post, so no second post is made. Go on soon: the upload must be finished '
+  + 'by uploadExpiresAt, an hour after the post was started (TikTok\'s limit).';
 const INBOX_REFUSED =
   'TikTok refused the inbox upload: MEDIA_UPLOAD needs the video.upload permission, which this connection may not have '
   + '(sign in to TikTok again with it, or use DIRECT_POST), or the token is no longer valid';
@@ -217,12 +225,12 @@ interface Followed {
 }
 
 /**
- * Reads a post's status, then again every 5 seconds until TikTok is done,
- * `waitSeconds` pass, or the next read would start after `deadline` (a time
- * from Date.now()). A failed read throws.
+ * Reads a post's status (unless `known` is one just read), then again every 5
+ * seconds until TikTok is done, `waitSeconds` pass, or the next read would
+ * start after `deadline` (a time from Date.now()). A failed read throws.
  */
-async function follow(h: ToolHelpers, publishId: string, waitSeconds: number, deadline: number): Promise<Followed> {
-  let status = await fetchStatus(h, publishId);
+async function follow(h: ToolHelpers, publishId: string, waitSeconds: number, deadline: number, known?: PublishStatus): Promise<Followed> {
+  let status = known ?? await fetchStatus(h, publishId);
   let waited = 0;
   while (!DONE.has(status.status) && waited < waitSeconds) {
     const step = Math.min(POLL_SECONDS, waitSeconds - waited);
@@ -236,9 +244,9 @@ async function follow(h: ToolHelpers, publishId: string, waitSeconds: number, de
 
 /**
  * Follows a started post until it is done, `waitSeconds` pass or the call's
- * status budget (`deadline`) runs out. The post is already under way, so a
- * failed status read is reported, never thrown: the caller must not post
- * again because of it.
+ * status budget (`deadline`) runs out, from `known` when its status was just
+ * read. The post is already under way, so a failed status read is reported,
+ * never thrown: the caller must not post again because of it.
  */
 async function finish(
   h: ToolHelpers,
@@ -247,14 +255,15 @@ async function finish(
   deadline: number,
   extra: Record<string, unknown>,
   notes: string[] = [],
+  known?: PublishStatus,
 ): Promise<Record<string, unknown>> {
   let status: PublishStatus | undefined;
   let note: string | undefined;
-  if (Date.now() >= deadline) {
+  if (Date.now() >= deadline && !known) {
     note = 'Sending it took most of the call, so its status was not read.';
   } else {
     try {
-      const followed = await follow(h, publishId, waitSeconds, deadline);
+      const followed = await follow(h, publishId, waitSeconds, deadline, known);
       status = followed.status;
       if (followed.stopped === 'cancelled') note = 'Stopped waiting because the call was cancelled.';
     } catch (error) {
@@ -352,49 +361,102 @@ function checkPostSettings(creator: CreatorInfo, privacy: PrivacyLevel | undefin
   return privacy;
 }
 
-/**
- * Downloads a FILE_UPLOAD video from its public https URL. A video over the
- * host's download limit (or this module's) is refused with the way around it.
- */
-async function downloadVideo(h: ToolHelpers, url: string): Promise<{ bytes: Uint8Array; type: string }> {
-  let bytes: Uint8Array;
-  try {
-    ({ bytes } = await h.media(url, { what: 'video', maxBytes: MAX_UPLOAD_BYTES, accept: 'video/mp4,video/quicktime,video/webm' }));
-  } catch (error) {
-    if (error instanceof ToolFailure && DOWNLOAD_TOO_LARGE.test(error.message)) throw new ToolFailure(TOO_LARGE_TO_UPLOAD);
-    throw error;
-  }
-  const type = sniffVideo(bytes);
-  if (!type || bytes.length === 0) throw new ToolFailure('The video URL did not return an MP4, MOV or WebM video. Nothing was posted.');
-  return { bytes, type };
-}
-
-async function uploadChunks(h: ToolHelpers, uploadUrl: unknown, bytes: Uint8Array, type: string): Promise<void> {
+/** The upload address TikTok returned, refused unless it is on one of TikTok's own upload hosts. */
+function checkedUploadUrl(value: unknown): string {
   let target: URL;
   try {
-    target = new URL(String(uploadUrl));
+    target = new URL(String(value));
   } catch {
     throw new ToolFailure('TikTok returned no valid upload address. Nothing was posted.');
   }
-  if (!UPLOAD_ORIGINS.includes(target.origin)) {
+  const address = uploadAddress(value);
+  if (!address) {
     throw new ToolFailure(`TikTok asked for the video to be uploaded to ${target.host}, an address this connector does not send files to. Nothing was posted.`);
   }
-  const plan = chunkPlan(bytes.length);
-  for (const [index, [first, last]] of plan.ranges.entries()) {
-    const final = index === plan.count - 1;
-    await h.api({
-      method: 'PUT',
-      origin: target.origin,
-      path: `${target.pathname}${target.search}`,
-      body: bytes.subarray(first, last + 1),
-      contentType: type,
-      headers: { 'content-range': `bytes ${first}-${last}/${bytes.length}` },
-      auth: false,
-      // TikTok posts once the last chunk is in: only that one makes the change.
-      write: final,
-      errors: { 403: 'The TikTok upload address expired before the upload finished', 416: 'TikTok did not accept the chunk\'s byte range' },
-    });
+  return address;
+}
+
+/** A FILE_UPLOAD that is not finished yet: how far it got, and the cursor to go on with. */
+function pending(
+  outcome: { uploaded: number; stopped?: string; retryAfter?: number },
+  state: UploadState,
+  cursor: string,
+  extra: Record<string, unknown>,
+  notes: string[],
+): Record<string, unknown> {
+  // A call that stopped for a problem says so first: going on before it is dealt with would stop the same way.
+  const first = outcome.stopped
+    ? `Deal with what stopped says first${outcome.retryAfter !== undefined ? ` (wait ${outcome.retryAfter} seconds)` : ''}, then `
+    : 'To go on, ';
+  return compact({
+    done: false,
+    publishId: state.publishId,
+    uploadedBytes: outcome.uploaded,
+    totalBytes: state.total,
+    stopped: outcome.stopped,
+    retryAfter: outcome.retryAfter,
+    uploadExpiresAt: new Date(state.startedAt + UPLOAD_LIFETIME_MS).toISOString(),
+    nextCursor: cursor,
+    next: `${first}${GO_ON}`,
+    ...extra,
+    note: notes.length ? notes.join(' ') : undefined,
+  });
+}
+
+/**
+ * Sends a FILE_UPLOAD's chunks from `run.offset` while the call has time,
+ * then follows the post once every chunk is in, or returns the cursor to go
+ * on with. Call it as the post's only sender (exclusive).
+ */
+async function sendVideo(
+  h: ToolHelpers,
+  run: Omit<TransferRun, 'cursor' | 'readStatus'>,
+  waitSeconds: number,
+  extra: Record<string, unknown>,
+  notes: string[],
+): Promise<Record<string, unknown>> {
+  const { state } = run;
+  const cursorAt = (offset: number): string => h.makeCursor(cursorState(state, offset));
+  const outcome = await transfer(h, { ...run, cursor: cursorAt, readStatus: () => fetchStatus(h, state.publishId) });
+  if (!outcome.done) return pending(outcome, state, cursorAt(outcome.uploaded), extra, notes);
+  return finish(h, state.publishId, waitSeconds, run.started + STATUS_BUDGET_MS, { done: true, ...extra, bytes: state.total }, notes);
+}
+
+/**
+ * Goes on with a FILE_UPLOAD a cursor holds: asks TikTok's status first (the
+ * post may be done, or further along than the cursor says), then sends the
+ * rest. The status read and the chunks after it go together (exclusive).
+ */
+async function goOn(h: ToolHelpers, args: VideoArgs, carried: Record<string, unknown>, started: number): Promise<Record<string, unknown>> {
+  const parsed = stateFromCursor(carried);
+  if (!parsed) throw new ToolFailure('The cursor holds no upload: pass nextCursor unchanged, or leave cursor out to start a new post. Nothing was changed.');
+  if (args.source === 'PULL_FROM_URL') {
+    throw new ToolFailure('A cursor goes on with a FILE_UPLOAD: leave source out, or set it to FILE_UPLOAD, when you pass cursor. Nothing was changed.');
   }
+  const { state } = parsed;
+  if (state.source !== (await sourceKey(args.video_url))) {
+    throw new ToolFailure('The cursor belongs to a post of another video_url: give the video_url it started with, or leave cursor out to start a new post. Nothing was changed.');
+  }
+  // Going on: the caption and settings were sent when the post started.
+  const extra = { mode: state.inbox ? 'MEDIA_UPLOAD' : 'DIRECT_POST', source: 'FILE_UPLOAD', account: h.credentials['tiktokusername'] };
+  return exclusive(state.publishId, async () => {
+    let status: PublishStatus;
+    try {
+      status = await fetchStatus(h, state.publishId);
+    } catch (error) {
+      if (error instanceof ToolFailure) throw new ToolFailure(`${error.message} Go on later with the same cursor.`, error.details);
+      throw error;
+    }
+    if (DONE.has(status.status) || status.uploadedBytes === state.total) {
+      // Every chunk is in (an earlier call's last answer may have been unclear), or TikTok ended the post: follow it.
+      return finish(h, state.publishId, args.wait_seconds, started + STATUS_BUDGET_MS, { done: true, ...extra, bytes: state.total }, [], status);
+    }
+    // TikTok may be further along than the cursor (an unclear answer that got through, or an older cursor).
+    const told = status.uploadedBytes;
+    const plan = planFor(state.total, state.chunkSize);
+    const offset = told !== undefined && told > parsed.offset && chunkAt(plan, told) !== -1 ? told : parsed.offset;
+    return sendVideo(h, { state, videoUrl: args.video_url, offset, started }, args.wait_seconds, extra, []);
+  });
 }
 
 interface VideoArgs {
@@ -411,6 +473,7 @@ interface VideoArgs {
   brand_organic_toggle?: boolean;
   is_aigc?: boolean;
   wait_seconds: number;
+  cursor?: string;
 }
 
 interface PhotoArgs {
@@ -522,12 +585,14 @@ const connector = defineConnector({
       check: 'get_post_status',
       title: 'Post a video to TikTok',
       description:
-        'Posts one video to the connected TikTok account from a public https URL. FILE_UPLOAD (default) downloads it here, then uploads '
-        + 'it in chunks (MP4, MOV or WebM), so the file must fit the host\'s download limit, which is often a few tens of MB and at most '
-        + `${formatNumber(MAX_UPLOAD_BYTES)} bytes: a larger one is refused with nothing posted. PULL_FROM_URL lets TikTok download it `
-        + '(up to 4 GB), only from a domain or URL prefix verified in the TikTok app\'s URL properties. Checks the creator\'s posting '
-        + 'options first, then waits a little for TikTok to finish and returns the publish_id to follow with get_post_status. Caption up '
-        + 'to 2,200 characters with #hashtags and @mentions (links are not clickable). One video per post: join clips beforehand.',
+        'Posts one video (MP4, MOV or WebM, up to 4 GB) to the connected TikTok account from a public https URL. FILE_UPLOAD (default) '
+        + 'sends it to TikTok in 10 MB chunks, each read from the URL by byte range just before it goes, for about 35 seconds a call: '
+        + 'while done is false, call again with the same video_url and cursor set to nextCursor, until done is true, within an hour of '
+        + 'the first call. A host that does not pass byte ranges on gets the whole file, which must then fit its download limit. '
+        + 'PULL_FROM_URL lets TikTok download it itself, only from a domain or URL prefix verified in the TikTok app\'s URL properties. '
+        + 'Checks the creator\'s posting options first, then waits a little for TikTok to finish and returns the publish_id to follow with '
+        + 'get_post_status. Caption up to 2,200 characters with #hashtags and @mentions (links are not clickable). One video per post: '
+        + 'join clips beforehand.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -536,7 +601,7 @@ const connector = defineConnector({
             type: 'string',
             enum: ['FILE_UPLOAD', 'PULL_FROM_URL'],
             default: 'FILE_UPLOAD',
-            description: 'FILE_UPLOAD (default; the file must fit the host\'s download limit) or PULL_FROM_URL (only from a domain or URL prefix verified for the TikTok app).',
+            description: 'FILE_UPLOAD (default; sent in chunks, across calls with cursor when one call is not enough) or PULL_FROM_URL (only from a domain or URL prefix verified for the TikTok app).',
           },
           post_mode: MODE_SCHEMA,
           caption: { type: 'string', maxLength: 2200, description: 'The caption, up to 2,200 characters, with hashtags and mentions (DIRECT_POST only).' },
@@ -549,12 +614,22 @@ const connector = defineConnector({
           brand_organic_toggle: { type: 'boolean', description: 'true when the video promotes the creator\'s own business.' },
           is_aigc: { type: 'boolean', description: 'true labels the video as AI-generated.' },
           wait_seconds: WAIT_SCHEMA,
+          cursor: {
+            type: 'string',
+            maxLength: 4096,
+            description:
+              'nextCursor from the previous result, while done is false: goes on with that FILE_UPLOAD where TikTok stopped. Give the same '
+              + 'video_url with it (the caption and settings were sent when the post started and are not sent again). Leave out to start a post.',
+          },
         },
         required: ['video_url'],
         additionalProperties: false,
       },
       async run(args: VideoArgs, h) {
-        const deadline = Date.now() + STATUS_BUDGET_MS;
+        const started = Date.now();
+        const deadline = started + STATUS_BUDGET_MS;
+        const carried = h.cursor(args.cursor);
+        if (carried) return goOn(h, args, carried, started);
         const direct = args.post_mode === 'DIRECT_POST';
         if (!direct) refuseInboxSettings(args, DIRECT_ONLY_VIDEO, 'the caption and every post setting');
         let creator: CreatorInfo | undefined;
@@ -568,65 +643,74 @@ const connector = defineConnector({
           if (creator.stitchDisabled && args.disable_stitch === false) turnedOff.push('stitches');
         }
 
-        const file = args.source === 'FILE_UPLOAD' ? await downloadVideo(h, args.video_url) : undefined;
-        const refused = file ? POST_REFUSED : PULL_REFUSED;
+        const notes = turnedOff.length ? [`The creator has ${turnedOff.join(', ')} turned off for every post, so they stay off.`] : [];
+        const extra = { mode: args.post_mode, source: args.source, account: creator?.username ?? h.credentials['tiktokusername'], privacyLevel: privacy };
+        const postInfo = direct
+          ? compact({
+            title: args.caption,
+            privacy_level: privacy,
+            disable_comment: creator?.commentDisabled ? true : args.disable_comment,
+            disable_duet: creator?.duetDisabled ? true : args.disable_duet,
+            disable_stitch: creator?.stitchDisabled ? true : args.disable_stitch,
+            video_cover_timestamp_ms: args.cover_timestamp_ms,
+            brand_content_toggle: args.brand_content_toggle,
+            brand_organic_toggle: args.brand_organic_toggle,
+            is_aigc: args.is_aigc,
+          })
+          : undefined;
+        const init = (sourceInfo: Record<string, unknown>, refused: string, write: boolean): Promise<any> => tiktok(h, {
+          method: 'POST',
+          path: direct ? '/v2/post/publish/video/init/' : '/v2/post/publish/inbox/video/init/',
+          ...jsonBody(postInfo ? { post_info: postInfo, source_info: sourceInfo } : { source_info: sourceInfo }),
+          write,
+          errors: direct ? { 403: refused } : { 401: INBOX_REFUSED, 403: refused },
+        });
 
-        const plan = file ? chunkPlan(file.bytes.length) : undefined;
-        const sourceInfo = file && plan
-          ? { source: 'FILE_UPLOAD', video_size: file.bytes.length, chunk_size: plan.chunkSize, total_chunk_count: plan.count }
-          : { source: 'PULL_FROM_URL', video_url: args.video_url };
-        const body = direct
-          ? {
-            post_info: compact({
-              title: args.caption,
-              privacy_level: privacy,
-              disable_comment: creator?.commentDisabled ? true : args.disable_comment,
-              disable_duet: creator?.duetDisabled ? true : args.disable_duet,
-              disable_stitch: creator?.stitchDisabled ? true : args.disable_stitch,
-              video_cover_timestamp_ms: args.cover_timestamp_ms,
-              brand_content_toggle: args.brand_content_toggle,
-              brand_organic_toggle: args.brand_organic_toggle,
-              is_aigc: args.is_aigc,
-            }),
-            source_info: sourceInfo,
-          }
-          : { source_info: sourceInfo };
-        let data: any;
-        try {
-          data = await tiktok(h, {
-            method: 'POST',
-            path: direct ? '/v2/post/publish/video/init/' : '/v2/post/publish/inbox/video/init/',
-            ...jsonBody(body),
-            // PULL_FROM_URL starts the post right here; a FILE_UPLOAD posts only after its last chunk.
-            write: !file,
-            errors: direct ? { 403: refused } : { 401: INBOX_REFUSED, 403: refused },
-          });
-        } catch (error) {
-          if (error instanceof OutcomeUnknown) throw withoutPublishId(error, !direct);
-          throw error;
-        }
-        const publishId = typeof data?.publish_id === 'string' ? data.publish_id : undefined;
-        if (!publishId) {
-          if (!file) throw new ToolFailure('TikTok accepted the request but sent back no publish_id. Check the TikTok app before posting again.');
-          throw new ToolFailure('TikTok sent back no publish_id. Nothing was posted.');
-        }
-        if (file) {
+        if (args.source === 'PULL_FROM_URL') {
+          let data: any;
           try {
-            await uploadChunks(h, data?.upload_url, file.bytes, file.type);
+            // PULL_FROM_URL starts the post right here.
+            data = await init({ source: 'PULL_FROM_URL', video_url: args.video_url }, PULL_REFUSED, true);
           } catch (error) {
-            // Only the last chunk's unclear answer gets here: TikTok may have taken the whole video.
-            if (error instanceof OutcomeUnknown) throw new OutcomeUnknown(`${error.message} The post's publish_id is ${publishId}.`);
+            if (error instanceof OutcomeUnknown) throw withoutPublishId(error, !direct);
             throw error;
           }
+          const publishId = typeof data?.publish_id === 'string' ? data.publish_id : undefined;
+          if (!publishId) throw new ToolFailure('TikTok accepted the request but sent back no publish_id. Check the TikTok app before posting again.');
+          return finish(h, publishId, args.wait_seconds, deadline, { done: true, ...extra }, notes);
         }
 
-        return finish(h, publishId, args.wait_seconds, deadline, {
-          mode: args.post_mode,
-          source: args.source,
-          account: creator?.username ?? h.credentials['tiktokusername'],
-          privacyLevel: privacy,
-          bytes: file?.bytes.length,
-        }, turnedOff.length ? [`The creator has ${turnedOff.join(', ')} turned off for every post, so they stay off.`] : []);
+        // FILE_UPLOAD: the first read tells the size (from its Content-Range) and the type, before the post is started.
+        const readStarted = Date.now();
+        let first: SourcePart;
+        try {
+          first = await readPart(h, args.video_url, 0, CHUNK_BYTES - 1);
+        } catch (error) {
+          if (error instanceof SourceProblem) throw new ToolFailure(`${error.message} Nothing was posted.`);
+          throw error;
+        }
+        const type = sniffVideo(first.bytes);
+        if (!type) throw new ToolFailure('The video URL did not return an MP4, MOV or WebM video. Nothing was posted.');
+        if (first.total > MAX_VIDEO_BYTES) {
+          throw new ToolFailure(`The video is ${formatNumber(first.total)} bytes; TikTok takes files up to 4 GB (${formatNumber(MAX_VIDEO_BYTES)} bytes). Nothing was posted.`);
+        }
+        const plan = chunkPlan(first.total);
+        // A FILE_UPLOAD posts only after its last chunk: starting it makes nothing yet.
+        const data = await init({ source: 'FILE_UPLOAD', video_size: first.total, chunk_size: plan.chunkSize, total_chunk_count: plan.count }, POST_REFUSED, false);
+        const publishId = typeof data?.publish_id === 'string' && PUBLISH_PATTERN.test(data.publish_id) ? data.publish_id : undefined;
+        if (!publishId) throw new ToolFailure('TikTok sent back no usable publish_id. Nothing was posted.');
+        const state: UploadState = {
+          uploadUrl: checkedUploadUrl(data?.upload_url),
+          publishId,
+          total: first.total,
+          chunkSize: plan.chunkSize,
+          type,
+          source: await sourceKey(args.video_url),
+          ...(first.etag ? { etag: first.etag } : {}),
+          inbox: !direct,
+          startedAt: Date.now(),
+        };
+        return exclusive(publishId, () => sendVideo(h, { state, videoUrl: args.video_url, offset: 0, started, held: first, heldSince: readStarted }, args.wait_seconds, extra, notes));
       },
     },
     {
