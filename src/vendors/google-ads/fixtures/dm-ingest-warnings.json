@@ -1,0 +1,10 @@
+{
+  "requestId": "4d2f7c1a-8b3e-4f0a-9c6d-2e1b5a7f9c30",
+  "fieldWarnings": [
+    {
+      "field": "events.events[1].currency",
+      "description": "The currency code is not set; the conversion action's default currency is used.",
+      "reason": "WARNING_REASON_GENERIC"
+    }
+  ]
+}

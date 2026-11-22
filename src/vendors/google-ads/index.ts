@@ -2,13 +2,19 @@
 // https://googleads.googleapis.com: GAQL reports, grouped mutates for
 // campaigns, budgets, ad groups, ads, keywords, criteria, assets, audiences and
 // conversion settings, image assets from a URL, Keyword Planner ideas, Customer
-// Match uploads, and the rest of the API through api_get and api_request.
+// Match uploads, and the rest of the API through api_get and api_request. Customer
+// Match members and offline conversions also go through Google's Data Manager
+// API on https://datamanager.googleapis.com (data-manager.ts), which Google
+// opens to every Google Cloud project, while the Google Ads API keeps those
+// uploads for the projects it allowlisted.
 //
 // Credentials:
 // - `access_token`: a Google OAuth access token with the scope
-//   https://www.googleapis.com/auth/adwords, from an OAuth client in the user's
-//   own Google Cloud project, whose Google Ads API access level applies. The
-//   host signs in, refreshes it and passes the current one on every call.
+//   https://www.googleapis.com/auth/adwords (and
+//   https://www.googleapis.com/auth/datamanager for the Data Manager tools),
+//   from an OAuth client in the user's own Google Cloud project, whose Google
+//   Ads API access level applies. The host signs in, refreshes it and passes the
+//   current one on every call.
 // - `developertoken` (optional): Google sunset developer tokens on 2026-09-09,
 //   ignores them since and will refuse them in a later major API version. It
 //   stays declared so an older setup's value still loads, but it is not sent.
@@ -35,6 +41,7 @@ import {
   type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
+import { DATA_MANAGER, dataManagerTools } from './data-manager.js';
 import {
   CONSENT,
   HASHED_LISTS,
@@ -74,6 +81,21 @@ const MUTATE_ERRORS = {
   400: 'Google Ads rejected the operations: check the field names (camelCase), resource names, enum values and text limits (headlines 30 characters, descriptions 90, paths 15); validate_only: true checks operations without changing anything',
 };
 
+/** Customer Match and click conversion uploads that Google Ads refuses to projects it has not allowlisted, and where they go instead. */
+const MATCH_REFUSED =
+  'since April 2026 Google Ads takes Customer Match data only from Google Cloud projects that sent some between October 2025 and '
+  + 'March 2026 (others get CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE), and add_audience_members and remove_audience_members send the '
+  + 'same people through Google\'s Data Manager API, open to every project';
+const MATCH_ERRORS = {
+  ...MUTATE_ERRORS,
+  400: `Google Ads did not accept the Customer Match job: the user list must be a CRM-based list of this account, and ${MATCH_REFUSED}`,
+  403: `Google Ads refused the Customer Match job: ${MATCH_REFUSED}; or the Google account has no access to this account, or reaches it through a manager account (give login_customer_id)`,
+};
+const CLICKS_REFUSED =
+  'since June 15, 2026 Google Ads takes click conversions only from Google Cloud projects that sent some between December 2025 and '
+  + 'June 2026 (others get CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE), and upload_conversions sends them through Google\'s Data Manager '
+  + 'API, open to every project';
+
 const CUSTOMER_QUERY =
   'SELECT customer.id, customer.descriptive_name, customer.manager, customer.status, customer.currency_code, customer.time_zone, customer.test_account FROM customer LIMIT 1';
 const CLIENTS_QUERY =
@@ -98,6 +120,19 @@ function customersIn(value: unknown): string[] {
 /** The account a generic request's path acts on: /v26/customers/<id>/... or /v26/customers/<id>:method. */
 function customerOfPath(path: string): string | undefined {
   return /^\/v[0-9]+\/customers\/([0-9]+)(?:[/:]|$)/.exec(path)?.[1];
+}
+
+/** A better sentence for the uploads Google Ads keeps for allowlisted projects. */
+function allowlistErrors(path: string): Partial<Record<number, string>> | undefined {
+  if (/:uploadClickConversions$/.test(path)) {
+    const sentence = `Google Ads refused the click conversions: ${CLICKS_REFUSED}`;
+    return { 400: sentence, 403: sentence };
+  }
+  if (/\/offlineUserDataJobs(?:[/:]|$)|:uploadUserData$/.test(path)) {
+    const sentence = `Google Ads refused the Customer Match upload: ${MATCH_REFUSED}`;
+    return { 400: sentence, 403: sentence };
+  }
+  return undefined;
 }
 
 /** A GAQL result row as flat fields named like the query's: {"campaign.id": "1", "metrics.cost_micros": "2500000"}. */
@@ -209,7 +244,8 @@ function genericTools(): ToolDefinition[] {
     description:
       `The Google Ads API ${VERSION} REST interface at ${ADS_ORIGIN} with the connected account: paths start with `
       + `/${VERSION}/customers/{customer_id}, such as /${VERSION}/customers/{customer_id}/campaigns:mutate, recommendations:apply or `
-      + 'recommendations:dismiss, offlineUserDataJobs:create, {customer_id}:uploadClickConversions or :uploadConversionAdjustments. '
+      + 'recommendations:dismiss, {customer_id}:uploadConversionAdjustments or :uploadCallConversions. Click conversions and Customer '
+      + 'Match data go through upload_conversions and add_audience_members unless Google allowlisted the project. '
       + 'Money is in micros (1 unit = 1000000). Reference: https://developers.google.com/google-ads/api/rest/overview.',
     basePath: `/${VERSION}/`,
     methods: ['POST'],
@@ -232,7 +268,8 @@ function genericTools(): ToolDefinition[] {
         const { login_customer_id: login, ...rest } = args;
         const api = async (request: ApiRequest) => {
           const resolved = await loginFor(h, customerOfPath(request.path), typeof login === 'string' ? login : undefined);
-          return h.api({ ...request, headers: { ...request.headers, ...loginHeaders(resolved) } });
+          const errors = allowlistErrors(request.path);
+          return h.api({ ...request, headers: { ...request.headers, ...loginHeaders(resolved) }, ...(errors ? { errors: { ...request.errors, ...errors } } : {}) });
         };
         return tool.run(rest, { ...h, api });
       },
@@ -278,7 +315,7 @@ interface MatchArgs {
 const connector = defineConnector({
   vendor: 'google-ads',
   label: LABEL,
-  origins: [ADS_ORIGIN],
+  origins: [ADS_ORIGIN, DATA_MANAGER],
   credentials: ['access_token', 'developertoken', 'managercustomerid'],
   requiredCredentials: [['access_token']],
   credentialLabels: {
@@ -305,7 +342,7 @@ const connector = defineConnector({
     return credentials;
   },
   // No developer-token header: Google ignores it since 2026-09-09 and will refuse it in a later major version.
-  // The login-customer-id goes on each request (loginFor).
+  // The login-customer-id goes on each Google Ads request (loginFor), never to the Data Manager API.
   authHeaders: (credentials) => ({ authorization: `Bearer ${credentials['access_token']}` }),
   tools: [
     {
@@ -623,9 +660,10 @@ const connector = defineConnector({
       title: 'Add or remove Google Ads Customer Match members',
       description:
         'Adds people to, or removes them from, a Customer Match user list (a CRM-based list with upload key type CONTACT_INFO) by email or '
-        + 'phone: normalizes and hashes them with SHA-256 here, then creates an offline user data job, adds them and runs it. Up to 10,000 '
-        + 'identifiers per call; matching takes up to 48 hours. Google only grants Customer Match uploads to Cloud projects that used them '
-        + 'before April 2026. Returns the job to check with search.',
+        + 'phone through the Google Ads API: normalizes and hashes them with SHA-256 here, then creates an offline user data job, adds them '
+        + 'and runs it. Up to 10,000 identifiers per call; matching takes up to 48 hours. Google Ads takes these only from Cloud projects it '
+        + 'allowlisted (those that uploaded Customer Match data between October 2025 and March 2026): add_audience_members and '
+        + 'remove_audience_members do the same for any project. Returns the job to check with search.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -660,7 +698,7 @@ const connector = defineConnector({
           headers,
           json: { job: { type: 'CUSTOMER_MATCH_USER_LIST', customerMatchUserListMetadata: compact({ userList, consent: Object.keys(consent).length ? consent : undefined }) } },
           write: true,
-          errors: { ...MUTATE_ERRORS, 400: 'Google Ads did not accept the Customer Match job: check that the user list exists in this account and is a CRM-based list' },
+          errors: MATCH_ERRORS,
         });
         const job = created.data?.resourceName;
         if (typeof job !== 'string' || !new RegExp(`^customers/${id}/offlineUserDataJobs/[0-9]+$`).test(job)) {
@@ -699,14 +737,16 @@ const connector = defineConnector({
         });
       },
     },
+    // Customer Match members and offline conversions through the Data Manager API, and the status of those uploads.
+    ...dataManagerTools(),
     {
       name: 'hash_user_identifiers',
       kind: 'read',
       title: 'Hash emails and phones for Google Ads',
       description:
         'Normalizes emails (trimmed, lower case, and for gmail.com and googlemail.com no dots and no +suffix in the name) and E.164 phone '
-        + 'numbers the way Google Ads requires and hashes them with SHA-256, for the hashedEmail and hashedPhoneNumber user identifiers of '
-        + 'enhanced conversions or Customer Match sent with api_request. Sends nothing anywhere.',
+        + 'numbers the way Google requires and hashes them with SHA-256 (hex), for user identifiers sent with api_request, such as '
+        + 'enhanced conversion adjustments. The upload tools hash on their own. Sends nothing anywhere.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -737,7 +777,7 @@ const connector = defineConnector({
         });
       },
     },
-    // The rest of the API: recommendations, conversion uploads, keyword plans, batch jobs, field metadata.
+    // The rest of the API: recommendations, conversion adjustments, keyword plans, batch jobs, field metadata.
     ...genericTools(),
   ],
 });

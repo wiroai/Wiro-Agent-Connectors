@@ -1,0 +1,25 @@
+{
+  "error": {
+    "code": 400,
+    "message": "There was a problem with the request.",
+    "status": "INVALID_ARGUMENT",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "INVALID_ARGUMENT",
+        "domain": "datamanager.googleapis.com",
+        "metadata": { "requestId": "t-a8896317-0000-4198-afed-182a3872a660" }
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.BadRequest",
+        "fieldViolations": [
+          {
+            "field": "destinations[0].product_destination_id",
+            "description": "The destination is not a Customer Match list.",
+            "reason": "INVALID_DESTINATION"
+          }
+        ]
+      }
+    ]
+  }
+}
