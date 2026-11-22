@@ -1,0 +1,276 @@
+{
+  "meta": {
+    "code": 200
+  },
+  "response": {
+    "holidays": [
+      {
+        "name": "Independence Day",
+        "description": "Independence Day is the national day of the United States.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-07-04",
+          "datetime": {
+            "year": 2026,
+            "month": 7,
+            "day": 4
+          }
+        },
+        "type": [
+          "National holiday"
+        ],
+        "primary_type": "Federal Holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/independence-day",
+        "urlid": "us/independence-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Veterans Day",
+        "description": "Veterans Day honors those who served in the armed forces.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-11-11",
+          "datetime": {
+            "year": 2026,
+            "month": 11,
+            "day": 11
+          }
+        },
+        "type": [
+          "National holiday"
+        ],
+        "primary_type": "Federal Holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/veterans-day",
+        "urlid": "us/veterans-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Thanksgiving Day",
+        "description": "Thanksgiving Day is a day of giving thanks for the harvest.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-11-26",
+          "datetime": {
+            "year": 2026,
+            "month": 11,
+            "day": 26
+          }
+        },
+        "type": [
+          "National holiday"
+        ],
+        "primary_type": "Federal Holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/thanksgiving-day",
+        "urlid": "us/thanksgiving-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Black Friday",
+        "description": "Black Friday is the day after Thanksgiving and the start of the holiday shopping season.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-11-27",
+          "datetime": {
+            "year": 2026,
+            "month": 11,
+            "day": 27
+          }
+        },
+        "type": [
+          "Observance"
+        ],
+        "primary_type": "Observance",
+        "canonical_url": "https://calendarific.com/holiday/us/black-friday",
+        "urlid": "us/black-friday",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Pearl Harbor Remembrance Day",
+        "description": "Pearl Harbor Remembrance Day remembers the attack on Pearl Harbor on December 7, 1941.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-12-07",
+          "datetime": {
+            "year": 2026,
+            "month": 12,
+            "day": 7
+          }
+        },
+        "type": [
+          "Observance"
+        ],
+        "primary_type": "Observance",
+        "canonical_url": "https://calendarific.com/holiday/us/pearl-harbor-remembrance-day",
+        "urlid": "us/pearl-harbor-remembrance-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "December Solstice",
+        "description": "December Solstice is the shortest day of the year in the Northern Hemisphere.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-12-21T15:50:00-05:00",
+          "datetime": {
+            "year": 2026,
+            "month": 12,
+            "day": 21,
+            "hour": 15,
+            "minute": 50,
+            "second": 0
+          },
+          "timezone": {
+            "offset": "-05:00",
+            "zoneabb": "EST",
+            "zoneoffset": -18000,
+            "zonedst": 0,
+            "zonetotaloffset": -18000
+          }
+        },
+        "type": [
+          "Season"
+        ],
+        "primary_type": "Season",
+        "canonical_url": "https://calendarific.com/holiday/seasons/december-solstice",
+        "urlid": "seasons/december-solstice",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Christmas Eve",
+        "description": "Christmas Eve is the day before Christmas Day.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-12-24",
+          "datetime": {
+            "year": 2026,
+            "month": 12,
+            "day": 24
+          }
+        },
+        "type": [
+          "Observance",
+          "Christian"
+        ],
+        "primary_type": "Observance",
+        "canonical_url": "https://calendarific.com/holiday/us/christmas-eve",
+        "urlid": "us/christmas-eve",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Christmas Day",
+        "description": "Christmas Day is one of the biggest Christian celebrations and falls on December 25.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-12-25",
+          "datetime": {
+            "year": 2026,
+            "month": 12,
+            "day": 25
+          }
+        },
+        "type": [
+          "National holiday",
+          "Christian"
+        ],
+        "primary_type": "Federal Holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/christmas-day",
+        "urlid": "us/christmas-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Day After Christmas Day",
+        "description": "Some states give the day after Christmas Day off.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-12-26",
+          "datetime": {
+            "year": 2026,
+            "month": 12,
+            "day": 26
+          }
+        },
+        "type": [
+          "Local holiday"
+        ],
+        "primary_type": "Local holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/day-after-christmas",
+        "urlid": "us/day-after-christmas",
+        "locations": "KY, NC",
+        "states": [
+          {
+            "id": 18,
+            "abbrev": "KY",
+            "name": "Kentucky",
+            "exception": null,
+            "iso": "us-ky"
+          },
+          {
+            "id": 34,
+            "abbrev": "NC",
+            "name": "North Carolina",
+            "exception": null,
+            "iso": "us-nc"
+          }
+        ]
+      },
+      {
+        "name": "New Year's Eve",
+        "description": "New Year's Eve is the last day of the year.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2026-12-31",
+          "datetime": {
+            "year": 2026,
+            "month": 12,
+            "day": 31
+          }
+        },
+        "type": [
+          "Observance"
+        ],
+        "primary_type": "Observance",
+        "canonical_url": "https://calendarific.com/holiday/us/new-year-eve",
+        "urlid": "us/new-year-eve",
+        "locations": "All",
+        "states": "All"
+      }
+    ]
+  }
+}
