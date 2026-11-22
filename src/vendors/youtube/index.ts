@@ -16,7 +16,8 @@
 // and sees its private videos and playlists: with a channel choice in place,
 // anything that could reach them, and every write, needs that channel chosen.
 // Uploads take the video from a public https URL and send it through
-// YouTube's resumable upload, in one request.
+// YouTube's resumable upload in parts, each read by byte range just before it
+// is sent, across calls when one call cannot send them all (upload.ts).
 
 import {
   allowedAccounts,
@@ -28,19 +29,37 @@ import {
   truncate,
   utf8Length,
   type ApiToolRequest,
+  type FailureDetails,
   type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
 import { ownChannel, requireOwnChannel, resolveChannel } from './channel.js';
 import { compact, count, cursorNumber, googleApi, utcTime } from './google.js';
 import { durationSeconds, sniffImage, sniffVideo } from './media.js';
+import {
+  askSession,
+  cursorState,
+  DEFAULT_PART_MB,
+  exclusive,
+  GONE,
+  MAX_PART_MB,
+  MAX_VIDEO_BYTES,
+  readPart,
+  SourceProblem,
+  sourceKey,
+  stateFromCursor,
+  transfer,
+  uploadAddress,
+  type SourcePart,
+  type UploadOutcome,
+  type UploadState,
+} from './upload.js';
 
 type Schema = ToolDefinition['inputSchema'];
 
 const API = 'https://www.googleapis.com';
 const ANALYTICS = 'https://youtubeanalytics.googleapis.com';
-/** The largest video upload_video downloads; hosts allow less (this package's CLI 25 MiB). */
-const MAX_VIDEO_BYTES = 256 * 1024 * 1024;
+const MIB = 1024 * 1024;
 /** The highest offset or index a list cursor may carry. */
 const MAX_OFFSET = 100_000;
 const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024;
@@ -280,17 +299,66 @@ async function uploadsPage(h: ToolHelpers, state: Record<string, unknown> | null
   };
 }
 
-/** The upload address YouTube gave for a resumable session, checked to be YouTube's own. */
-function uploadTarget(location: string | null): { path: string; query: Record<string, string> } | undefined {
-  if (!location) return undefined;
-  let url: URL;
-  try {
-    url = new URL(location);
-  } catch {
-    return undefined;
+const GO_ON =
+  'call upload_video again with the same arguments and cursor set to nextCursor, until done is true. Each call asks YouTube how far '
+  + 'it got and sends only the rest: no byte goes twice and no second video is made. Go on soon: YouTube drops an upload that is not '
+  + 'finished in time.';
+
+/** An upload's result: the video once YouTube made it, else how far it got and the cursor to go on with. */
+function uploadResult(outcome: UploadOutcome, state: UploadState, cursor: string): Record<string, unknown> {
+  if (!outcome.done) {
+    // A call that stopped for a problem says so first: going on before it is dealt with would stop the same way.
+    const first = outcome.stopped
+      ? `Deal with what stopped says first${outcome.retryAfter !== undefined ? ` (wait ${outcome.retryAfter} seconds)` : ''}, then `
+      : 'To go on, ';
+    return compact({
+      done: false,
+      bytes_uploaded: outcome.uploaded,
+      bytes_total: state.total,
+      stopped: outcome.stopped,
+      retryAfter: outcome.retryAfter,
+      nextCursor: cursor,
+      next: `${first}${GO_ON}`,
+    });
   }
-  if (url.origin !== API || url.pathname !== '/upload/youtube/v3/videos' || !url.searchParams.get('upload_id')) return undefined;
-  return { path: url.pathname, query: Object.fromEntries(url.searchParams) };
+  const video = trimVideo(outcome.video);
+  return compact({
+    done: true,
+    id: video['id'],
+    url: video['url'],
+    studio_url: video['studio_url'],
+    title: video['title'],
+    channel_id: video['channel_id'],
+    privacy_status: video['privacy_status'],
+    publish_at: video['publish_at'],
+    upload_status: video['upload_status'],
+    bytes: state.total,
+    content_type: state.type,
+    note: UPLOAD_NOTE,
+  });
+}
+
+/**
+ * Goes on with an upload a cursor holds: asks YouTube how far it got (or for
+ * the video), then sends the rest. Call it as the upload's only sender
+ * (exclusive): the question and the parts that follow it go together.
+ */
+async function goOn(h: ToolHelpers, state: UploadState, videoUrl: string, started: number): Promise<Record<string, unknown>> {
+  const cursor = h.makeCursor(cursorState(state));
+  const status = await askSession(h, state);
+  if (status.kind === 'done') return uploadResult({ done: true, video: status.video }, state, cursor);
+  if (status.kind === 'refused') {
+    const details: FailureDetails = {
+      ...(status.status !== undefined ? { status: status.status } : {}),
+      ...(status.retryAfter !== undefined ? { retryAfter: status.retryAfter } : {}),
+    };
+    throw new ToolFailure(status.gone ? GONE : `${status.message} Nothing was sent: go on later with the same cursor.`, details);
+  }
+  if (status.kind === 'unclear' || status.received >= state.total) {
+    const why = status.kind === 'unclear' ? status.reason : 'every byte in, but no video';
+    throw new ToolFailure(`YouTube could not say how far the upload got (${why}). Nothing was sent: go on later with the same cursor.`);
+  }
+  return uploadResult(await transfer(h, { state, videoUrl, offset: status.received, started, cursor }), state, cursor);
 }
 
 const REPORTS: Record<string, { metrics: string[]; dimensions: string[]; sort?: string; maxResults?: number; needsVideo?: boolean }> = {
@@ -528,11 +596,12 @@ const connector = defineConnector({
       title: 'Upload a video to YouTube',
       description:
         'Uploads a video (regular or Short) from a public https URL to the connected channel, with its title, description, tags, '
-        + 'category, languages, visibility or scheduled release, audience setting and synthetic-media label, through YouTube\'s '
-        + 'resumable upload. A vertical or square video of 3 minutes or less becomes a Short. Returns the video id and link. Upload '
-        + 'each video once: when the outcome is unclear, look for it with list_videos first. The whole file is downloaded and sent in '
-        + 'one request, so it must fit the host\'s download limit, often 25 to 50 MB (never more than '
-        + `${formatNumber(MAX_VIDEO_BYTES)} bytes): a larger video is refused before anything reaches YouTube.`,
+        + 'category, languages, visibility or scheduled release, audience setting and synthetic-media label. A vertical or square '
+        + 'video of 3 minutes or less becomes a Short. It goes through YouTube\'s resumable upload in parts, each read from the URL by '
+        + 'byte range just before it is sent, for about 35 seconds a call: while done is false, call again with the same arguments and '
+        + 'cursor set to nextCursor, until done is true and the video id and link come back. A host that does not pass byte ranges on '
+        + 'gets the whole file, which must then fit its download limit (often 25 to 50 MB). Upload each video once: when the outcome is '
+        + 'unclear, look for it with list_videos first.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -545,11 +614,35 @@ const connector = defineConnector({
           public_stats_viewable: { ...(STATUS_FIELDS['public_stats_viewable'] as Schema), default: true },
           license: { ...(STATUS_FIELDS['license'] as Schema), default: 'youtube' },
           notify_subscribers: { type: 'boolean', default: true, description: 'Tell subscribers about the new video (default true).' },
+          part_mb: {
+            type: 'integer',
+            minimum: 1,
+            maximum: MAX_PART_MB,
+            default: DEFAULT_PART_MB,
+            description: `The size of each part in MiB, 1 to ${MAX_PART_MB} (default ${DEFAULT_PART_MB}); an upload keeps the size it started with. Lower it when a part is refused as too large for the host or takes too long.`,
+          },
+          cursor: {
+            type: 'string',
+            maxLength: 4096,
+            description: 'nextCursor from the previous result, while done is false: goes on with that upload where YouTube stopped. Give the same video_url with it (the other details are not sent again). Leave out to start an upload.',
+          },
         },
         required: ['video_url', 'title', 'privacy_status', 'contains_synthetic_media'],
         additionalProperties: false,
       },
-      async run(args: MetadataArgs & { video_url: string; notify_subscribers: boolean }, h) {
+      async run(args: MetadataArgs & { video_url: string; notify_subscribers: boolean; part_mb: number; cursor?: string }, h) {
+        const started = Date.now();
+        const carried = h.cursor(args.cursor);
+        if (carried) {
+          // Going on: the details were sent when the upload started, and its time checks no longer apply.
+          const state = stateFromCursor(carried);
+          if (!state) throw new ToolFailure('The cursor holds no upload: pass nextCursor unchanged, or leave cursor out to start a new upload. Nothing was changed.');
+          if (state.source !== (await sourceKey(args.video_url))) {
+            throw new ToolFailure('The cursor belongs to an upload of another video_url: give the video_url it started with, or leave cursor out to start a new upload. Nothing was changed.');
+          }
+          await requireOwnChannel(h);
+          return exclusive(state, () => goOn(h, state, args.video_url, started));
+        }
         checkMetadata(args);
         let publishAt: string | undefined;
         if (args.publish_at !== undefined) {
@@ -557,9 +650,20 @@ const connector = defineConnector({
           publishAt = futureTime(args.publish_at);
         }
         await requireOwnChannel(h);
-        const { bytes } = await h.media(args.video_url, { what: 'video', maxBytes: MAX_VIDEO_BYTES, accept: 'video/*,application/octet-stream;q=0.8' });
-        const type = sniffVideo(bytes);
+        const part = args.part_mb * MIB;
+        const readStarted = Date.now();
+        let first: SourcePart;
+        try {
+          first = await readPart(h, args.video_url, 0, part - 1);
+        } catch (error) {
+          if (error instanceof SourceProblem) throw new ToolFailure(`${error.message} Nothing was changed.`);
+          throw error;
+        }
+        const type = sniffVideo(first.bytes);
         if (!type) throw new ToolFailure('The video URL did not return a video file YouTube takes (MP4, MOV, WebM, AVI, FLV, WMV, MPEG or 3GP). Nothing was changed.');
+        if (first.total > MAX_VIDEO_BYTES) {
+          throw new ToolFailure(`The video is ${formatNumber(first.total)} bytes; YouTube takes files up to 256 GB. Nothing was changed.`);
+        }
         const snippet = compact({
           title: args.title,
           description: args.description,
@@ -577,38 +681,28 @@ const connector = defineConnector({
           selfDeclaredMadeForKids: args.made_for_kids,
           containsSyntheticMedia: args.contains_synthetic_media,
         });
+        // Opening the upload makes nothing yet: YouTube makes the video only once its last byte is in.
         const session = await googleApi(h, {
           method: 'POST',
           path: '/upload/youtube/v3/videos',
           query: { uploadType: 'resumable', part: 'snippet,status', notifySubscribers: args.notify_subscribers },
-          headers: { 'x-upload-content-type': type, 'x-upload-content-length': String(bytes.length) },
+          headers: { 'x-upload-content-type': type, 'x-upload-content-length': String(first.total) },
           json: { snippet, status },
           errors: { 400: 'YouTube did not accept the video details', 403: 'YouTube refused the upload' },
         });
-        const target = uploadTarget(session.headers.get('location'));
-        if (!target) throw new ToolFailure('YouTube opened no upload address for the video. Nothing was changed.');
-        const { data } = await googleApi(h, {
-          method: 'PUT',
-          path: target.path,
-          query: target.query,
-          body: bytes,
-          contentType: type,
-          write: true,
-        });
-        const video = trimVideo(data);
-        return compact({
-          id: video['id'],
-          url: video['url'],
-          studio_url: video['studio_url'],
-          title: video['title'],
-          channel_id: video['channel_id'],
-          privacy_status: video['privacy_status'],
-          publish_at: video['publish_at'],
-          upload_status: video['upload_status'],
-          bytes: bytes.length,
-          content_type: type,
-          note: UPLOAD_NOTE,
-        });
+        const address = uploadAddress(session.headers.get('location'));
+        if (!address) throw new ToolFailure('YouTube opened no upload address for the video. Nothing was changed.');
+        const state: UploadState = {
+          session: address,
+          total: first.total,
+          part,
+          type,
+          source: await sourceKey(args.video_url),
+          ...(first.etag ? { etag: first.etag } : {}),
+        };
+        const cursor = h.makeCursor(cursorState(state));
+        const outcome = await exclusive(state, () => transfer(h, { state, videoUrl: args.video_url, offset: 0, started, cursor, held: first, heldSince: readStarted }));
+        return uploadResult(outcome, state, cursor);
       },
     },
     {
