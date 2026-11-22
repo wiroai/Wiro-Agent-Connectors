@@ -367,7 +367,7 @@ const connector = defineConnector({
       description:
         "Whether an app's Roasit data is current: the last nightly pull and its errors per source (a failing spend or revenue pull makes that source's "
         + 'numbers stale), events in the last 24 hours and whether the SDK still sends, the last verified SKAN postback, and for a web app its browser '
-        + 'SDK and Stripe sales.',
+        + 'SDK and its web payment sales.',
       inputSchema: { type: 'object', properties: { app_token: APP_TOKEN }, required: ['app_token'], additionalProperties: false },
       async run(args: { app_token: string }, h) {
         requireApp(h, args.app_token);
@@ -389,7 +389,7 @@ const connector = defineConnector({
       name: 'list_events',
       kind: 'read',
       title: 'List an app\'s Roasit events',
-      description: "An app's SDK event catalogue and its conversion mapping to Meta, TikTok and Google: is the purchase event still arriving?",
+      description: "An app's SDK event catalogue and its conversion mapping to the ad networks' events: is the purchase event still arriving?",
       inputSchema: { type: 'object', properties: { app_token: APP_TOKEN }, required: ['app_token'], additionalProperties: false },
       async run(args: { app_token: string }, h) {
         requireApp(h, args.app_token);

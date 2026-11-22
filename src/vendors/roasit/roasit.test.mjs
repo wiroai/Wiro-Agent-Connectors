@@ -178,6 +178,14 @@ test('errors: Roasit\'s own words, a closed route, and a rate limit', async () =
   assert.equal((await callTool(limited.module, 'get_report', CREATIVES, limited.ctx)).payload.retryAfter, 20);
 });
 
+test('tool texts name only Roasit, never another company', () => {
+  const { module } = loadModuleFor(import.meta.url);
+  for (const tool of module.tools) {
+    const texts = `${tool.title} ${tool.description} ${JSON.stringify(tool.inputSchema)}`.replace(/\["[a-z_", ]+\]|\([a-z_, .]+\)/g, '');
+    assert.doesNotMatch(texts, /\b(Meta|TikTok|Google|Stripe|Facebook|AppLovin|Apple Search Ads)\b/, tool.name);
+  }
+});
+
 test('log lines carry no token and no arguments', async () => {
   const { module, ctx, logs } = setup(() => jsonResponse(200, fixture(import.meta.url, 'report.json')));
   await callTool(module, 'get_report', CREATIVES, ctx);

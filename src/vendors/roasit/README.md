@@ -1,6 +1,6 @@
 # Roasit (`roasit`)
 
-Mobile attribution numbers from [Roasit](https://roasit.com), through its report API: installs, spend, CPI, cohort revenue, ROAS (to date and day N) and retention by network, campaign, ad group and creative, with the ad networks' own campaign, ad group and ad ids (the keys to match them with Google Ads, Meta and TikTok), iOS SKAdNetwork, install reconciliation against the stores, data freshness, the metric catalogue and each app's filter values and events. Every value equals the Roasit dashboard's Reports screen. Read-only, like the token.
+Mobile attribution numbers from [Roasit](https://roasit.com), through its report API: installs, spend, CPI, cohort revenue, ROAS (to date and day N) and retention by network, campaign, ad group and creative, with the ad networks' own campaign, ad group and ad ids (the keys to match them with the networks' own reports), iOS SKAdNetwork, install reconciliation against the stores, data freshness, the metric catalogue and each app's filter values and events. Every value equals the Roasit dashboard's Reports screen. Read-only, like the token.
 
 ## README rows
 
@@ -32,7 +32,7 @@ Quick start table:
 | `list_events` | read | An app's SDK events and their conversion mapping. |
 | `api_get` | read | Any other GET of the Roasit API under `/api/`. |
 
-Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`).
+Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`). A selection is a whole app: one Roasit app token covers all of the app's platforms, and `get_report` (`platform`), `get_reconciliation` and `get_skan_report` scope a call to one platform.
 
 Connection check: `get_account` with no arguments.
 
