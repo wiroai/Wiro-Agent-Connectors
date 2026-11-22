@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "list_products", "args": { "per_page": 5 } },
+  "write": {
+    "tool": "create_product",
+    "args": {
+      "name": "Connector smoke test {{timestamp}}",
+      "regular_price": "1.00",
+      "description": "<p>A draft product from the connector smoke test.</p>"
+    },
+    "note": "Leaves a draft product in the store; it is not on sale. Delete it under WooCommerce → Products → Drafts, or with api_request DELETE /wc/v3/products/<id> and force=true."
+  }
+}

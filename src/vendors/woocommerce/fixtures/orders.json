@@ -1,0 +1,18 @@
+[
+  {
+    "id": 5521,
+    "number": "5521",
+    "status": "processing",
+    "currency": "EUR",
+    "date_created": "2026-11-21T19:04:11",
+    "date_paid": "2026-11-21T19:04:15",
+    "date_completed": null,
+    "total": "53.90",
+    "customer_id": 88,
+    "payment_method_title": "Credit card",
+    "line_items": [
+      { "id": 9001, "name": "Ceramic Pour-Over Dripper", "product_id": 101, "variation_id": 0, "quantity": 2, "subtotal": "48.00", "total": "48.00", "sku": "DRIP-01", "meta_data": [] }
+    ],
+    "refunds": [{ "id": 5530, "reason": "Damaged", "total": "-5.00" }]
+  }
+]

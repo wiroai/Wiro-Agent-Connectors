@@ -1,0 +1,19 @@
+[
+  {
+    "total_sales": "1250.40",
+    "net_sales": "1101.20",
+    "average_sales": "41.68",
+    "total_orders": 28,
+    "total_items": 43,
+    "total_tax": "149.20",
+    "total_shipping": "65.00",
+    "total_refunds": 5,
+    "total_discount": "12.00",
+    "totals_grouped_by": "day",
+    "totals": {
+      "2026-11-20": { "sales": "610.20", "orders": 14, "items": 20, "tax": "70.00", "shipping": "30.00", "discount": "0.00", "customers": 0 },
+      "2026-11-21": { "sales": "640.20", "orders": 14, "items": 23, "tax": "79.20", "shipping": "35.00", "discount": "12.00", "customers": 2 }
+    },
+    "total_customers": 2
+  }
+]

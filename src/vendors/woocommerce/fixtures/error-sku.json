@@ -1,0 +1,1 @@
+{ "code": "product_invalid_sku", "message": "Invalid or duplicated SKU.", "data": { "status": 400, "resource_id": 140, "unique_sku": "JAR-1L" } }

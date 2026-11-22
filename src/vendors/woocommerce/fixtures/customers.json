@@ -1,0 +1,3 @@
+[
+  { "id": 88, "date_created": "2026-09-14T12:00:00", "email": "ada@example.com", "first_name": "Ada", "last_name": "Example", "role": "customer", "username": "ada", "billing": { "city": "Berlin" }, "shipping": {}, "is_paying_customer": true, "avatar_url": "https://secure.gravatar.example/avatar", "meta_data": [] }
+]
