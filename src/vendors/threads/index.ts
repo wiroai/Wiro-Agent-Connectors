@@ -18,14 +18,18 @@ import {
   type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
+import { readGraphRequest, refuseUnsafe, withoutSecrets, withRateLimits } from './graph-rules.js';
 
 type SchemaType = ToolDefinition['inputSchema'];
 
 const VERSION = 'v1.0';
 const MAX_TEXT = 500;
-const POLL_MS = 3000;
-/** Threads has no profile insights before this day. */
+/** How often a container is checked: one about every 10 seconds; the items of a carousel in one round about every 20. */
+const POLL_ONE_MS = 10_000;
+const POLL_ROUND_MS = 20_000;
+/** Threads has no profile insights before this day; the earliest time its insights take is 1712991600 (07:00 UTC that day). */
 const INSIGHTS_START = '2024-04-13';
+const INSIGHTS_EARLIEST = 1_712_991_600;
 const POST_METRICS = ['views', 'likes', 'replies', 'reposts', 'quotes', 'shares'];
 const PROFILE_TOTALS = ['likes', 'replies', 'reposts', 'quotes'];
 const ID: SchemaType = { type: 'string', pattern: '^[0-9]{1,30}$' };
@@ -125,9 +129,10 @@ async function createContainer(h: ToolHelpers, userId: string, params: Record<st
   return String(data.id);
 }
 
-/** Polls containers until none is still processing, or until the deadline. */
+/** Polls containers until none is still processing, or until the deadline: one container about every 10 seconds, a carousel's items in a round about every 20. */
 async function waitContainers(h: ToolHelpers, ids: string[], deadline: number): Promise<Map<string, ContainerStatus>> {
   const statuses = new Map<string, ContainerStatus>();
+  const interval = ids.length > 1 ? POLL_ROUND_MS : POLL_ONE_MS;
   for (;;) {
     for (const id of ids) {
       const known = statuses.get(id)?.status;
@@ -136,8 +141,8 @@ async function waitContainers(h: ToolHelpers, ids: string[], deadline: number): 
       statuses.set(id, compact({ status: data?.status, error_message: data?.error_message }) as ContainerStatus);
     }
     const pending = ids.some((id) => !statuses.get(id)?.status || statuses.get(id)?.status === 'IN_PROGRESS');
-    if (!pending || Date.now() + POLL_MS > deadline) return statuses;
-    await sleep(POLL_MS, h.ctx.signal);
+    if (!pending || Date.now() + interval > deadline) return statuses;
+    await sleep(interval, h.ctx.signal);
   }
 }
 
@@ -296,7 +301,7 @@ const connector = defineConnector({
   requiredCredentials: [['access_token']],
   credentialLabels: { access_token: 'Threads access token', threadsuserid: 'Threads user id', threadsusername: 'Threads username' },
   authHeaders: (credentials) => ({ authorization: `Bearer ${credentials['access_token']}` }),
-  tools: [
+  tools: withRateLimits([
     {
       name: 'get_profile',
       kind: 'read',
@@ -674,7 +679,8 @@ const connector = defineConnector({
         if (first < unixDay(INSIGHTS_START, 'since')) throw new ToolFailure(`Threads has no profile insights before ${INSIGHTS_START}. Nothing was sent.`);
         const { data } = await h.api({
           path: `/${VERSION}/${user.id}/threads_insights`,
-          query: { metric: ['views', ...PROFILE_TOTALS, 'clicks'].join(','), since: first, until: last + DAY },
+          // Threads refuses a since earlier than its first insights time, 07:00 UTC on the first day.
+          query: { metric: ['views', ...PROFILE_TOTALS, 'clicks'].join(','), since: Math.max(first, INSIGHTS_EARLIEST), until: last + DAY },
         });
         const rows = rowsOf(data);
         const row = (name: string) => rows.find((item) => item?.name === name);
@@ -700,11 +706,23 @@ const connector = defineConnector({
       label: 'Threads',
       description:
         'The Threads API v1.0 at https://graph.threads.net, with the connected profile\'s token: paths start with /v1.0/, such as /v1.0/me/replies '
-        + '(the profile\'s own replies), /v1.0/<media_id>?fields=id,text,permalink or /v1.0/<media_id>/conversation. Reference: https://developers.facebook.com/docs/threads.',
+        + '(the profile\'s own replies), /v1.0/<media_id>?fields=id,text,permalink or /v1.0/<media_id>/conversation. One request per call: batch and '
+        + 'method are refused, and tokens stay out of reach. Reference: https://developers.facebook.com/docs/threads.',
       basePath: `/${VERSION}/`,
       methods: ['POST', 'DELETE'],
-    }),
-  ],
+      send: async (request, h) => {
+        const response = await h.api(request);
+        return { ...response, data: withoutSecrets(response.data) };
+      },
+    }).map((tool): ToolDefinition => ({
+      ...tool,
+      async run(args: Record<string, unknown>, h: ToolHelpers) {
+        // Everything Threads would read (query, json or form body, batch, method) is checked first.
+        refuseUnsafe(readGraphRequest(args, 'Threads'), 'Threads');
+        return tool.run(args, h);
+      },
+    })),
+  ], 'Threads'),
 });
 
 export = connector;

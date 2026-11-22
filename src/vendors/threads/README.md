@@ -47,10 +47,12 @@ One profile per connection; there is no account picker.
 
 - Text: 500 characters, with an emoji counted by its UTF-8 bytes (usually 4); at most 5 links; one topic tag; a text attachment of up to 10,000 characters on text-only posts.
 - Media is fetched by Threads from public https URLs that must still work when the post is published. Images: JPEG or PNG, up to 8 MB. Videos: MP4 or MOV (H.264 or HEVC, AAC audio), 23 to 60 fps, up to 1920 px wide, 5 minutes and 1 GB. Carousels: 2 to 20 items; a refused item is left out while 2 remain.
-- Threads publishes at once, with no scheduling. A call waits up to `wait_seconds` (at most 45) for processing; when the post is not ready by then, it returns a `container_id` (or, for a carousel, `child_container_ids`) to publish later. Containers expire after 24 hours.
+- Threads publishes at once, with no scheduling. A call waits up to `wait_seconds` (at most 45) for processing, checking one container about every 10 seconds and a carousel's items in one round about every 20 seconds; when the post is not ready by then, it returns a `container_id` (or, for a carousel, `child_container_ids`) to publish later. Containers expire after 24 hours.
 - Replies go only inside threads the profile started. Each profile may publish 250 posts, 1,000 replies and 100 deletions in any 24 hours.
-- Insights: a missing value is returned as `null` (no data yet), never as 0; there are no profile insights before 2024-04-13, and follower demographics need at least 100 followers.
+- Insights: a missing value is returned as `null` (no data yet), never as 0; there are no profile insights before 2024-04-13 (Threads takes nothing earlier than 07:00 UTC that day, where a range starting on it begins), and follower demographics need at least 100 followers.
 - Writes are never retried. When a publish's outcome is unclear, check `list_posts` before trying again.
+- Threads throttles with HTTP 400 or 403 and a rate limit code (such as 4 or 17), not with HTTP 429. Such an error says "rate limit reached"; wait before trying again, since the limit counts calls over a rolling hour.
+- `api_get` and `api_request` send one request per call, with parameters in `query`, or for `api_request` in `json` or a form `body` (`application/x-www-form-urlencoded`); other bodies are refused. Batch requests (`batch`) and method overrides (`method`) are refused, and so is any request that names a token or an app secret anywhere, however it is encoded, as are `/oauth` and token refresh endpoints. A reply never carries a token back.
 
 ## Repository README rows
 

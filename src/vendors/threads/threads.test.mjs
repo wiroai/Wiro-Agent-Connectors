@@ -107,11 +107,12 @@ test('an image post carries its alt text; a video still processing is left as a 
     'GET /v1.0/18200000000000001': f('post-details.json'),
   }));
   fastWaits(video.context);
-  const waiting = await callTool(video.module, 'publish_post', { media: [{ url: 'https://cdn.example.com/clip.mov' }], wait_seconds: 9 }, video.ctx);
+  const waiting = await callTool(video.module, 'publish_post', { media: [{ url: 'https://cdn.example.com/clip.mov' }], wait_seconds: 45 }, video.ctx);
   assert.equal(waiting.payload.status, 'IN_PROGRESS');
   assert.equal(waiting.payload.container_id, CONTAINER);
   assert.equal(formOf(video.fetch.calls[0]).media_type, 'VIDEO');
   assert.equal(video.fetch.calls.some((call) => call.path.endsWith('/threads_publish')), false);
+  assert.equal(video.fetch.calls.filter((call) => call.path === `/v1.0/${CONTAINER}`).length, 5, 'checked about every 10 seconds within 45: at 0, 10, 20, 30 and 40');
 
   ready = true;
   const done = await callTool(video.module, 'publish_container', { container_id: CONTAINER }, video.ctx);
@@ -210,6 +211,14 @@ test('insights: posts carry their metrics and errors; the profile adds up its vi
   assert.deepEqual(totals.payload.link_clicks, [{ link: 'https://bakery.example.com/menu', clicks: 17 }]);
   const early = await callTool(profile.module, 'get_profile_insights', { since: '2024-01-01', until: '2024-02-01' }, profile.ctx);
   assert.match(early.payload.error, /no profile insights before 2024-04-13/);
+
+  // Threads takes no since earlier than 1712991600 (2024-04-13 07:00 UTC): the first day starts there.
+  const firstDay = await callTool(profile.module, 'get_profile_insights', { since: '2024-04-13', until: '2024-04-20' }, profile.ctx);
+  assert.equal(firstDay.isError, false);
+  const sent = profile.fetch.calls.filter((call) => call.query.metric !== 'followers_count').at(-1);
+  assert.equal(sent.query.since, '1712991600');
+  assert.equal(sent.query.until, String(Date.parse('2024-04-21T00:00:00Z') / 1000));
+  assert.equal(firstDay.payload.since, '2024-04-13');
 });
 
 test('get_publishing_limit reads the three quotas', async () => {
@@ -222,7 +231,7 @@ test('get_publishing_limit reads the three quotas', async () => {
   });
 });
 
-test('errors: an unclear publish names its check tool after one publish request, and a 429 carries retryAfter', async () => {
+test('errors: an unclear publish names its check tool after one publish request, and Threads\' throttling reads as a rate limit', async () => {
   const broken = setup(router({
     [`POST /v1.0/${USER}/threads`]: f('container-create.json'),
     [`GET /v1.0/${CONTAINER}`]: f('container-finished.json'),
@@ -235,7 +244,15 @@ test('errors: an unclear publish names its check tool after one publish request,
   assert.equal(unknown.payload.check, 'list_posts');
   assert.equal(broken.fetch.calls.filter((call) => call.path.endsWith('/threads_publish')).length, 1);
 
-  const limited = setup(router({ 'GET /v1.0/me': () => jsonResponse(429, { error: { message: 'Too many calls' } }, { 'retry-after': '120' }) }));
+  // Threads throttles with HTTP 400 and a Graph rate limit code, not with a 429.
+  const throttled = setup(router({ [`POST /v1.0/${USER}/threads`]: () => jsonResponse(400, f('error-rate-limit.json')) }));
+  const limit = await callTool(throttled.module, 'publish_post', { text: 'Hello' }, throttled.ctx);
+  assert.equal(limit.payload.status, 400);
+  assert.match(limit.payload.error, /^Threads rate limit reached \(HTTP 400\): \(#4\) Application request limit reached\. Nothing was changed\. Wait a while before trying again/);
+  assert.equal(throttled.fetch.calls.length, 1, 'never retried');
+
+  // A plain HTTP 429 keeps the core's retryAfter.
+  const limited = setup(router({ 'GET /v1.0/me': () => new Response('Too Many Requests', { status: 429, headers: { 'retry-after': '120' } }) }));
   const rate = await callTool(limited.module, 'get_profile', {}, limited.ctx);
   assert.equal(rate.payload.retryAfter, 120);
   const missing = setup(router({}), {});
@@ -248,8 +265,31 @@ test('api_get and api_request keep to /v1.0/ with the token in the header', asyn
   const read = await callTool(module, 'api_get', { path: '/v1.0/me/replies', query: { fields: 'id,text' } }, ctx);
   assert.deepEqual(read.payload, { status: 200, data: { data: [] } });
   assert.equal(fetch.calls[0].headers.authorization, `Bearer ${TOKEN}`);
-  const outside = await callTool(module, 'api_get', { path: '/oauth/access_token' }, ctx);
+  const outside = await callTool(module, 'api_get', { path: '/v2.0/me' }, ctx);
   assert.match(outside.payload.error, /The path must start with \/v1\.0\//);
+  const token = await callTool(module, 'api_get', { path: '/oauth/access_token' }, ctx);
+  assert.match(token.payload.error, /Tokens and app secrets are not available through the generic Threads tools/);
+  assert.equal(fetch.calls.length, 1);
+});
+
+test('the generic tools refuse token endpoints, a batch and a method override, and a reply never carries a token', async () => {
+  const { module, fetch, ctx } = setup(router({ 'GET /v1.0/me': { id: USER, username: 'example.bakery', access_token: TOKEN } }));
+  const attempts = [
+    ['api_get', { path: '/v1.0/refresh_access_token', query: { grant_type: 'th_refresh_token' } }],
+    ['api_get', { path: '/v1.0/oauth/access_token' }],
+    ['api_get', { path: '/v1.0/me', query: { fields: 'id,access%5Ftoken' } }],
+    ['api_request', { method: 'POST', path: `/v1.0/${USER}/threads`, query: { batch: '[]' } }],
+    ['api_request', { method: 'POST', path: '/v1.0/18200000000000003', json: { method: 'delete' } }],
+  ];
+  for (const [tool, args] of attempts) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, /not available through the generic Threads tools.* Nothing was sent\.$/, JSON.stringify(args));
+  }
+  assert.equal(fetch.calls.length, 0);
+  const { payload, text } = await callTool(module, 'api_get', { path: '/v1.0/me', query: { fields: 'id,username' } }, ctx);
+  assert.deepEqual(payload.data, { id: USER, username: 'example.bakery' });
+  assert.doesNotMatch(text, new RegExp(TOKEN));
 });
 
 test('log lines carry no token or arguments', async () => {
