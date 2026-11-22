@@ -109,6 +109,47 @@ test('a message deleted between the list and the read is left out', async () => 
   assert.deepEqual(payload.messages.map((message) => message.id), ['18c3f2a9d4e5b601']);
 });
 
+test('a page cut by the size limit after deleted messages continues right after the last one shown', async () => {
+  const ids = Array.from({ length: 50 }, (_, index) => `m${String(index).padStart(3, '0')}`);
+  const gone = new Set(['m003', 'm007']);
+  const long = (word) => `${word} ${'x'.repeat(290)}`;
+  const { module, fetch, ctx } = setup((request) => {
+    if (request.path === '/gmail/v1/users/me/messages') return jsonResponse(200, { messages: ids.map((id) => ({ id, threadId: id })), resultSizeEstimate: 50 });
+    const id = request.path.split('/').pop();
+    if (gone.has(id)) return jsonResponse(404, { error: { code: 404, message: 'Requested entity was not found.' } });
+    return jsonResponse(200, {
+      id,
+      threadId: id,
+      labelIds: ['INBOX'],
+      snippet: long('snippet'),
+      payload: { headers: [{ name: 'From', value: long('from') }, { name: 'To', value: long('to') }, { name: 'Subject', value: long(id) }] },
+    });
+  });
+  const seen = [];
+  let cursor;
+  for (let round = 0; round < 10; round++) {
+    const { payload } = await callTool(module, 'list_messages', { max_results: 50, ...(cursor ? { cursor } : {}) }, ctx);
+    seen.push(...payload.messages.map((message) => message.id));
+    if (round === 0) assert.equal(payload.truncated, true, 'the first page was cut');
+    cursor = payload.nextCursor;
+    if (!cursor) break;
+  }
+  assert.deepEqual(seen, ids.filter((id) => !gone.has(id)), 'every message once, in order');
+  assert.ok(fetch.calls.filter((call) => call.path === '/gmail/v1/users/me/messages').every((call) => call.query.maxResults === '50'));
+});
+
+test('a cursor cannot ask for more than 50 messages a page', async () => {
+  const { module, fetch, ctx } = setup(gmail());
+  const crafted = Buffer.from(JSON.stringify({ t: 'list_messages', n: 500, o: -5 })).toString('base64url');
+  const { isError, payload } = await callTool(module, 'list_messages', { cursor: crafted }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(fetch.calls[0].query.maxResults, '20', 'the cursor\'s page size is out of range, so the default applies');
+  assert.equal(payload.messages.length, 2);
+  const drafts = await callTool(module, 'list_drafts', { cursor: Buffer.from(JSON.stringify({ t: 'list_drafts', n: 1e9 })).toString('base64url') }, ctx);
+  assert.equal(drafts.isError, false);
+  assert.equal(fetch.calls.find((call) => call.path === '/gmail/v1/users/me/drafts').query.maxResults, '20');
+});
+
 test('get_message prefers the plain text, lists attachments, and gives the reply headers', async () => {
   const { module, fetch, ctx } = setup(gmail());
   const { payload } = await callTool(module, 'get_message', { message_id: '18c3f2a9d4e5b601' }, ctx);
@@ -157,6 +198,103 @@ test('a long body comes in parts that join up', async () => {
   }
   assert.ok(parts.length > 2);
   assert.equal(parts.join(''), long.trim());
+});
+
+/** A message with a plain-text or HTML body, long headers and `count` attachments with long ids. */
+function bigMessage({ body, type = 'text/plain', attachments = 0, recipients = 0 }) {
+  const people = Array.from({ length: recipients }, (_, index) => `"Person ${index}, Example" <person.${index}@example.com>`).join(', ');
+  return {
+    id: '18c3f0c1d2e3f405',
+    threadId: '18c3f0c1d2e3f405',
+    labelIds: ['INBOX'],
+    payload: {
+      mimeType: 'multipart/mixed',
+      headers: [
+        { name: 'From', value: 'Long Mail <long@example.com>' },
+        { name: 'To', value: people || 'inbox@example.com' },
+        { name: 'Cc', value: people },
+        { name: 'Subject', value: 'A "long" one' },
+      ],
+      parts: [
+        { partId: '0', mimeType: type, headers: [{ name: 'Content-Type', value: `${type}; charset=UTF-8` }], body: { data: Buffer.from(body).toString('base64url') } },
+        ...Array.from({ length: attachments }, (_, index) => ({
+          partId: String(index + 1),
+          mimeType: 'application/pdf',
+          filename: `report-${index}.pdf`,
+          body: { size: 40213, attachmentId: `ANGjdJ8${'x'.repeat(480)}${String(index).padStart(4, '0')}` },
+        })),
+      ],
+    },
+  };
+}
+
+/** Reads get_message part by part; every result fits 32 KB and nothing is cut by the size limit. */
+async function readParts(module, ctx, args) {
+  const results = [];
+  let offset = 0;
+  for (let round = 0; round < 50; round++) {
+    const { payload, result, isError } = await callTool(module, 'get_message', { ...args, content_offset: offset }, ctx);
+    assert.equal(isError, false, payload.error);
+    assert.ok(textBytes(result) <= 32 * 1024, `part ${round} is ${textBytes(result)} bytes`);
+    assert.equal(payload.truncated, undefined, `part ${round} was cut to fit`);
+    results.push(payload);
+    if (payload.next_content_offset === undefined) return results;
+    assert.ok(payload.next_content_offset > offset, 'every part moves on');
+    offset = payload.next_content_offset;
+  }
+  throw new Error('too many parts');
+}
+
+test('a long body with long headers and many attachments comes in parts that join up to the whole body', async () => {
+  const body = `${'He said "fine" \\ and left.\n\t'.repeat(1500)}${'Çok uzun bir satır 😀 '.repeat(1500)}`;
+  const message = bigMessage({ body, attachments: 30, recipients: 60 });
+  const { module, ctx } = setup(gmail({ 'GET /messages/18c3f0c1d2e3f405': () => jsonResponse(200, message) }));
+  const parts = await readParts(module, ctx, { message_id: '18c3f0c1d2e3f405' });
+  assert.ok(parts.length > 3);
+  assert.equal(parts.map((part) => part.body).join(''), body.trim());
+  const [first, ...rest] = parts;
+  assert.equal(first.attachment_count, 30);
+  assert.ok(first.attachments.length > 0 && first.attachments.length <= 20);
+  assert.equal(first.attachments[0].attachment_id, message.payload.parts[1].body.attachmentId, 'attachment ids are never cut');
+  for (const part of rest) {
+    assert.equal(part.attachments, undefined, 'later parts carry the count only');
+    assert.equal(part.attachment_count, 30);
+  }
+  assert.ok(first.to.startsWith('"Person 0, Example"'));
+
+  // The HTML as sent, full of quotes, joins up the same way.
+  const html = '<p class="a" style="color:red">Merhaba "dünya"</p>\n'.repeat(3000);
+  const htmlMessage = bigMessage({ body: html, type: 'text/html', attachments: 3 });
+  const other = setup(gmail({ 'GET /messages/18c3f0c1d2e3f405': () => jsonResponse(200, htmlMessage) }));
+  const htmlParts = await readParts(other.module, other.ctx, { message_id: '18c3f0c1d2e3f405', body_format: 'html' });
+  assert.equal(htmlParts[0].body_type, 'html');
+  assert.equal(htmlParts.map((part) => part.body).join(''), html);
+});
+
+test('HTML that never closes its tags is made readable in time that grows with its length only', async () => {
+  // A "<" before a non-letter is text; a comment, tag or script left open ends the text.
+  for (const [unit, starts] of [['<', 'Start <<<'], ['<!--', 'Start'], ['<a x', 'Start'], ['<script>', 'Start'], ['<a href="https://example.com/x">x', 'Start xxx']]) {
+    const html = `Start ${unit.repeat(Math.ceil(1_000_000 / unit.length))}`.slice(0, 1_000_000);
+    const message = bigMessage({ body: html, type: 'text/html' });
+    const { module, ctx } = setup(gmail({ 'GET /messages/18c3f0c1d2e3f405': () => jsonResponse(200, message) }));
+    const started = performance.now();
+    const { payload, isError } = await callTool(module, 'get_message', { message_id: '18c3f0c1d2e3f405' }, ctx);
+    const elapsed = performance.now() - started;
+    assert.equal(isError, false, payload.error);
+    assert.ok(elapsed < 1000, `${unit}: ${Math.round(elapsed)} ms`);
+    assert.equal(payload.body_type, 'text from html');
+    assert.ok(payload.body.startsWith(starts), `${unit}: ${payload.body.slice(0, 20)}`);
+  }
+  const links = setup(gmail({ 'GET /messages/18c3f0c1d2e3f405': () => jsonResponse(200, bigMessage({ body: '<p>See <a href="https://example.com/a">this</a></p>'.repeat(20_000), type: 'text/html' })) }));
+  const started = performance.now();
+  const many = await callTool(links.module, 'get_message', { message_id: '18c3f0c1d2e3f405' }, links.ctx);
+  assert.ok(performance.now() - started < 1000);
+  assert.ok(many.payload.body.startsWith('See this (https://example.com/a)\nSee this (https://example.com/a)\n'));
+
+  // HTML past 1,000,000 characters is read up to there, and the result says so.
+  const long = setup(gmail({ 'GET /messages/18c3f0c1d2e3f405': () => jsonResponse(200, bigMessage({ body: `<p>${'word '.repeat(240_000)}</p>`, type: 'text/html' })) }));
+  const cut = await callTool(long.module, 'get_message', { message_id: '18c3f0c1d2e3f405' }, long.ctx);
+  assert.match(cut.payload.body_note, /longer than 1,000,000 characters/);
 });
 
 test('get_thread returns the conversation oldest first', async () => {
@@ -343,6 +481,15 @@ test('api_get and api_request stay in the mailbox and never change settings', as
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(broken.fetch.calls.length, 1);
+});
+
+test('api_request can delete a draft for good, as the README says', async () => {
+  const { module, fetch, ctx } = setup(() => new Response(null, { status: 204 }));
+  const deleted = await callTool(module, 'api_request', { method: 'DELETE', path: '/gmail/v1/users/me/drafts/r-5823415097465892115' }, ctx);
+  assert.equal(deleted.isError, false, deleted.payload.error);
+  assert.equal(fetch.calls[0].method, 'DELETE');
+  assert.equal(fetch.calls[0].url, `${BASE}/drafts/r-5823415097465892115`);
+  assert.deepEqual(deleted.payload, { status: 204 });
 });
 
 test('log lines carry no token, no addresses and no content', async () => {

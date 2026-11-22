@@ -39,21 +39,114 @@ export function decodeEntities(text: string): string {
   });
 }
 
-/** Readable text from an HTML mail body: paragraphs and line breaks kept, links as "text (url)". */
+/** The most HTML htmlToText reads; text after it is left out. */
+export const MAX_HTML_CHARS = 1_000_000;
+/** Elements whose content is not text. */
+const HIDDEN = new Set(['script', 'style', 'head', 'title']);
+/** Closing tags that end a line. */
+const BLOCKS = new Set(['p', 'div', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'table', 'ul', 'ol', 'section', 'article', 'header', 'footer']);
+
+function isLetter(code: number): boolean {
+  return (code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a);
+}
+
+function isNameChar(code: number): boolean {
+  return isLetter(code) || (code >= 0x30 && code <= 0x39);
+}
+
+/** The tag name at `from` (lower case), or '' when none starts there. */
+function tagName(html: string, from: number, end: number): string {
+  let at = from;
+  while (at < end && isNameChar(html.charCodeAt(at))) at++;
+  return at > from && isLetter(html.charCodeAt(from)) ? html.slice(from, at).toLowerCase() : '';
+}
+
+/** Where the text after `</name>` starts, searching from `from`; -1 when the element is never closed. */
+function afterClosing(html: string, from: number, name: string): number {
+  let at = from;
+  for (;;) {
+    const open = html.indexOf('</', at);
+    if (open === -1) return -1;
+    const end = open + 2 + name.length;
+    if (html.slice(open + 2, end).toLowerCase() === name && !isNameChar(html.charCodeAt(end))) {
+      const close = html.indexOf('>', end);
+      return close === -1 ? -1 : close + 1;
+    }
+    at = open + 2;
+  }
+}
+
+/** A link's address, from its tag (at most its first 2,000 characters). */
+function hrefOf(tag: string): string | undefined {
+  const match = /\shref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/i.exec(tag);
+  const href = (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim();
+  return href || undefined;
+}
+
+/**
+ * Readable text from an HTML mail body: paragraphs and line breaks kept, links
+ * as "text (url)". One pass from start to end, so its time grows with the
+ * length of the HTML only (mail HTML is anyone's input); an element left open
+ * at the end (a comment, a tag, a script) ends the text there. It reads at
+ * most MAX_HTML_CHARS characters.
+ */
 export function htmlToText(html: string): string {
-  const text = html
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<(script|style|head|title)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|tr|h[1-6]|li|blockquote|table|ul|ol|section|article|header|footer)\s*>/gi, '\n')
-    .replace(/<li\b[^>]*>/gi, '- ')
-    .replace(/<a\s[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a\s*>/gi, (_match, href: string, label: string) => {
-      const words = label.replace(/<[^>]*>/g, '').trim();
-      if (!words || words === href || /^mailto:/i.test(href)) return words || href;
-      return `${words} (${href})`;
-    })
-    .replace(/<[^>]*>/g, '');
-  return decodeEntities(text)
+  const source = html.length > MAX_HTML_CHARS ? html.slice(0, MAX_HTML_CHARS) : html;
+  const pieces: string[] = [];
+  let link: { href: string; at: number } | undefined;
+  let index = 0;
+  while (index < source.length) {
+    const open = source.indexOf('<', index);
+    if (open === -1) {
+      pieces.push(source.slice(index));
+      break;
+    }
+    if (open > index) pieces.push(source.slice(index, open));
+    const next = source.charCodeAt(open + 1);
+    // As in browsers, a "<" before anything but a letter, "/", "!" or "?" is text.
+    if (!isLetter(next) && next !== 0x2f && next !== 0x21 && next !== 0x3f) {
+      pieces.push('<');
+      index = open + 1;
+      continue;
+    }
+    if (source.startsWith('<!--', open)) {
+      const end = source.indexOf('-->', open + 4);
+      if (end === -1) break;
+      index = end + 3;
+      continue;
+    }
+    const close = source.indexOf('>', open + 1);
+    if (close === -1) break;
+    index = close + 1;
+    const closing = next === 0x2f;
+    const name = tagName(source, closing ? open + 2 : open + 1, close);
+    if (!name) continue;
+    if (closing) {
+      if (name === 'a' && link) {
+        const words = pieces.slice(link.at).join('').trim();
+        const { href } = link;
+        pieces.length = link.at;
+        pieces.push(!words || words === href || /^mailto:/i.test(href) ? words || href : `${words} (${href})`);
+        link = undefined;
+      } else if (BLOCKS.has(name)) {
+        pieces.push('\n');
+      }
+      continue;
+    }
+    if (HIDDEN.has(name)) {
+      const after = afterClosing(source, index, name);
+      if (after === -1) break;
+      index = after;
+      continue;
+    }
+    if (name === 'br') pieces.push('\n');
+    else if (name === 'li') pieces.push('- ');
+    else if (name === 'a') {
+      const href = hrefOf(source.slice(open, Math.min(close, open + 2000)));
+      if (href) link = { href, at: pieces.length };
+    }
+  }
+  return decodeEntities(pieces.join(''))
     .replace(/[ \t\u00a0]+/g, ' ')
     .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -126,10 +219,16 @@ export function readPayload(payload: unknown): MessageBody {
   return out;
 }
 
-/** A message's body as text: the plain-text parts, or the HTML parts made readable. */
-export function bodyText(body: MessageBody): { text: string; from: 'text' | 'html' | 'none' } {
+/**
+ * A message's body as text: the plain-text parts, or the HTML parts made
+ * readable (cut: the HTML was longer than htmlToText reads).
+ */
+export function bodyText(body: MessageBody): { text: string; from: 'text' | 'html' | 'none'; cut?: boolean } {
   if (body.plain.some((part) => part.trim())) return { text: body.plain.join('\n\n').trim(), from: 'text' };
-  if (body.html.length) return { text: htmlToText(body.html.join('\n')), from: 'html' };
+  if (body.html.length) {
+    const html = body.html.join('\n');
+    return { text: htmlToText(html), from: 'html', ...(html.length > MAX_HTML_CHARS ? { cut: true } : {}) };
+  }
   return { text: '', from: 'none' };
 }
 

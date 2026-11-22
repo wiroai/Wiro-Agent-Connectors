@@ -1,15 +1,20 @@
 // Gmail, through the Gmail API v1 (https://developers.google.com/gmail/api/reference/rest).
 //
 // Credential: `access_token`, an OAuth 2.0 access token of the mailbox's
-// Google account with the scope https://www.googleapis.com/auth/gmail.modify
-// (read, label, draft and send; never delete for good). The host refreshes
-// it; the module sends it to https://gmail.googleapis.com/gmail/v1/users/me/
-// only. One connection is one mailbox, so there is no account picker.
+// Google account with the scope https://www.googleapis.com/auth/gmail.modify:
+// read, label, draft and send mail and move it to the trash. Messages and
+// threads are never deleted for good (the scope does not allow it); drafts and
+// labels can be, through api_request. The host refreshes the token; the
+// module sends it to https://gmail.googleapis.com/gmail/v1/users/me/ only.
+// One connection is one mailbox, so there is no account picker.
 
 import {
   apiTools,
   base64UrlEncode,
   defineConnector,
+  formatNumber,
+  jsonSize,
+  shrinkToFit,
   ToolFailure,
   truncate,
   utf8Bytes,
@@ -17,16 +22,22 @@ import {
   type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
-import { compact, googleApi, sliceText } from './google.js';
-import { bodyText, buildMessage, decodeEntities, formatAddress, header, oneLine, readPayload, type Attachment } from './mime.js';
+import { compact, cursorNumber, fitTextPart, googleApi } from './google.js';
+import { bodyText, buildMessage, decodeEntities, formatAddress, header, MAX_HTML_CHARS, oneLine, readPayload, type MessageBody } from './mime.js';
 
 type Schema = ToolDefinition['inputSchema'];
 
 const BASE = '/gmail/v1/users/me';
-/** The most body text get_message returns in one call, in UTF-8 bytes. */
-const BODY_BYTES = 24_000;
+/** The most room the fields besides the body take in a get_message result, so every part carries at least 16 KB of body. */
+const REST_BYTES = 16 * 1024;
+/** The most attachments get_message lists (with the first part of the body). */
+const MAX_LISTED_ATTACHMENTS = 20;
+/** The most labels a message result lists. */
+const MAX_LABELS = 100;
 /** The most body text get_thread returns per message. */
 const THREAD_BODY_CHARS = 3_000;
+/** The highest offset a list cursor may carry. */
+const MAX_OFFSET = 100_000;
 /** Message reads at a time while listing (Gmail allows short bursts per user). */
 const PARALLEL_READS = 5;
 const LIST_HEADERS = ['From', 'To', 'Subject', 'Date'];
@@ -106,7 +117,7 @@ function trimSummary(message: any): Record<string, unknown> {
     received: receivedAt(message),
     snippet: typeof message?.snippet === 'string' ? truncate(decodeEntities(message.snippet), 300) : undefined,
     unread: labels.includes('UNREAD'),
-    labels,
+    labels: labels.slice(0, MAX_LABELS),
   });
 }
 
@@ -135,10 +146,9 @@ async function mapLimit<T, R>(items: readonly T[], limit: number, fn: (item: T) 
   return results;
 }
 
-/** A message read with format=full: headers, body text and attachments. */
-function readFull(message: any): { headers: Record<string, unknown>; body: ReturnType<typeof bodyText>; html: string[]; attachments: Attachment[] } {
+/** A message read with format=full: its headers, and its text parts and attachments. */
+function readFull(message: any): { headers: Record<string, unknown>; parts: MessageBody } {
   const headers = message?.payload?.headers;
-  const parts = readPayload(message?.payload);
   return {
     headers: compact({
       from: text(header(headers, 'From'), 500),
@@ -151,10 +161,24 @@ function readFull(message: any): { headers: Record<string, unknown>; body: Retur
       message_id_header: text(header(headers, 'Message-ID'), 500),
       in_reply_to: text(header(headers, 'In-Reply-To'), 500),
     }),
-    body: bodyText(parts),
-    html: parts.html,
-    attachments: parts.attachments,
+    parts: readPayload(message?.payload),
   };
+}
+
+/**
+ * Summaries read for listed ids, and where each sits among those ids: a
+ * cursor after a cut continues at the first id not shown, even when a message
+ * deleted since the list left a gap.
+ */
+function withPlaces<T>(read: Array<T | undefined>): { items: T[]; places: number[] } {
+  const items: T[] = [];
+  const places: number[] = [];
+  read.forEach((item, place) => {
+    if (item === undefined) return;
+    items.push(item);
+    places.push(place);
+  });
+  return { items, places };
 }
 
 /** The RFC 2822 message of a draft or a send, as base64url, and the thread it joins. */
@@ -262,8 +286,8 @@ const connector = defineConnector({
       async run(args: { query?: string; label_ids?: string[]; include_spam_trash: boolean; max_results: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const max = typeof state?.['n'] === 'number' ? state['n'] : args.max_results;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const max = cursorNumber(state, 'n', args.max_results, 1, 50);
         const { data } = await googleApi(h, {
           path: `${BASE}/messages`,
           query: { q: args.query, labelIds: args.label_ids, includeSpamTrash: args.include_spam_trash || undefined, maxResults: max, pageToken },
@@ -272,12 +296,12 @@ const connector = defineConnector({
           .map((message: any) => message?.id)
           .filter((id: unknown): id is string => typeof id === 'string')
           .slice(skip);
-        const messages = (await mapLimit(ids, PARALLEL_READS, (id) => readSummary(h, id))).filter((message) => message !== undefined);
+        const { items, places } = withPlaces(await mapLimit(ids, PARALLEL_READS, (id) => readSummary(h, id)));
         return h.page({
           key: 'messages',
-          items: messages,
+          items,
           extra: compact({ result_size_estimate: data?.resultSizeEstimate }),
-          resumeAt: (index) => h.makeCursor({ ...(pageToken ? { p: pageToken } : {}), o: skip + index, n: max }),
+          resumeAt: (index) => h.makeCursor({ ...(pageToken ? { p: pageToken } : {}), o: skip + (places[index] as number), n: max }),
           ...(typeof data?.nextPageToken === 'string' && data.nextPageToken ? { nextPage: h.makeCursor({ p: data.nextPageToken, o: 0, n: max }) } : {}),
         });
       },
@@ -288,8 +312,9 @@ const connector = defineConnector({
       title: 'Read a Gmail message',
       description:
         'Reads one message: sender, recipients, subject, date, reply headers, labels, the body as text (HTML-only mail is made '
-        + 'readable) and the list of attachments. A long body comes in parts: when next_content_offset is set, call again with '
-        + 'content_offset set to it. Reading a message does not mark it read; mark_as_read does.',
+        + `readable) and, with the first part of the body, up to ${MAX_LISTED_ATTACHMENTS} attachments with their ids (attachment_count `
+        + 'is the total). A long body comes in parts: when next_content_offset is set, call again with content_offset set to it; '
+        + 'the parts join up to the whole body. Reading a message does not mark it read; mark_as_read does.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -307,24 +332,41 @@ const connector = defineConnector({
           errors: { 404: `Gmail found no message ${args.message_id}`, 400: `Gmail found no message ${args.message_id}` },
         });
         const message = readFull(data);
-        const labels = labelsOf(data);
-        const html = args.body_format === 'html' && message.html.length ? message.html.join('\n') : undefined;
-        const body = html ?? message.body.text;
-        const part = sliceText(body, args.content_offset, BODY_BYTES);
-        return compact({
+        const allLabels = labelsOf(data);
+        const labels = allLabels.slice(0, MAX_LABELS);
+        const html = args.body_format === 'html' && message.parts.html.length ? message.parts.html.join('\n') : undefined;
+        const asText = html === undefined ? bodyText(message.parts) : undefined;
+        const body = html ?? asText?.text ?? '';
+        const { attachments } = message.parts;
+        let listed = args.content_offset === 0 ? attachments.slice(0, MAX_LISTED_ATTACHMENTS) : [];
+        let headers = message.headers;
+        const build = (part: string, next: number | undefined): Record<string, unknown> => compact({
           id: data?.id,
           thread_id: data?.threadId,
-          ...message.headers,
+          ...headers,
           received: receivedAt(data),
-          unread: labels.includes('UNREAD'),
+          unread: allLabels.includes('UNREAD'),
           labels,
-          body_type: html !== undefined ? 'html' : message.body.from === 'html' ? 'text from html' : message.body.from,
+          body_type: html !== undefined ? 'html' : asText?.from === 'html' ? 'text from html' : asText?.from,
           body_length: body.length,
-          body: part.text,
-          next_content_offset: part.next,
-          attachments: message.attachments.length ? message.attachments.slice(0, 50) : undefined,
+          body_note: asText?.cut
+            ? `The HTML part is longer than ${formatNumber(MAX_HTML_CHARS)} characters: the text was made from its first ${formatNumber(MAX_HTML_CHARS)}. body_format html returns all of it.`
+            : undefined,
+          body: part,
+          next_content_offset: next,
+          attachment_count: attachments.length || undefined,
+          attachments: listed.length ? listed : undefined,
           size: data?.sizeEstimate,
         });
+        // The fields besides the body keep to REST_BYTES: fewer attachments are listed, then the headers are cut.
+        const restSize = (): number => jsonSize(build('', body.length));
+        while (listed.length && restSize() > REST_BYTES) listed = listed.slice(0, -1);
+        if (restSize() > REST_BYTES) {
+          const others = restSize() - jsonSize(headers);
+          headers = (shrinkToFit(headers, Math.max(0, REST_BYTES - others))?.value as Record<string, unknown> | undefined) ?? {};
+        }
+        // The body part gets the rest of the 32 KB, counted as JSON, so the parts join up to the whole body.
+        return fitTextPart(body, args.content_offset, build);
       },
     },
     {
@@ -345,7 +387,7 @@ const connector = defineConnector({
       },
       async run(args: { thread_id: string; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         const { data } = await googleApi(h, {
           path: `${BASE}/threads/${encodeURIComponent(args.thread_id)}`,
           query: { format: 'full' },
@@ -354,14 +396,15 @@ const connector = defineConnector({
         const messages = (Array.isArray(data?.messages) ? data.messages : []).map((item: any) => {
           const message = readFull(item);
           const labels = labelsOf(item);
+          const { attachments } = message.parts;
           return compact({
             id: item?.id,
             ...message.headers,
             received: receivedAt(item),
             unread: labels.includes('UNREAD'),
-            labels,
-            body: truncate(message.body.text, THREAD_BODY_CHARS),
-            attachments: message.attachments.length ? message.attachments.map((attachment) => attachment.filename ?? attachment.mime_type).slice(0, 20) : undefined,
+            labels: labels.slice(0, MAX_LABELS),
+            body: truncate(bodyText(message.parts).text, THREAD_BODY_CHARS),
+            attachments: attachments.length ? attachments.map((attachment) => attachment.filename ?? attachment.mime_type).slice(0, 20) : undefined,
           });
         });
         return h.page({
@@ -380,7 +423,7 @@ const connector = defineConnector({
       inputSchema: { type: 'object', properties: { cursor: { type: 'string', description: 'nextCursor from the previous result.' } }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         const { data } = await googleApi(h, { path: `${BASE}/labels` });
         const labels = (Array.isArray(data?.labels) ? data.labels : [])
           .map((label: any) => compact({ id: label?.id, name: text(label?.name, 300), type: typeof label?.type === 'string' ? label.type.toLowerCase() : undefined }));
@@ -404,18 +447,18 @@ const connector = defineConnector({
       async run(args: { query?: string; max_results: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const max = typeof state?.['n'] === 'number' ? state['n'] : args.max_results;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const max = cursorNumber(state, 'n', args.max_results, 1, 50);
         const { data } = await googleApi(h, { path: `${BASE}/drafts`, query: { q: args.query, maxResults: max, pageToken } });
         const drafts: any[] = (Array.isArray(data?.drafts) ? data.drafts : []).filter((draft: any) => typeof draft?.message?.id === 'string').slice(skip);
-        const items = (await mapLimit(drafts, PARALLEL_READS, async (draft) => {
+        const { items, places } = withPlaces(await mapLimit(drafts, PARALLEL_READS, async (draft) => {
           const summary = await readSummary(h, draft.message.id);
           return summary ? { draft_id: draft.id, ...summary } : undefined;
-        })).filter((item) => item !== undefined);
+        }));
         return h.page({
           key: 'drafts',
           items,
-          resumeAt: (index) => h.makeCursor({ ...(pageToken ? { p: pageToken } : {}), o: skip + index, n: max }),
+          resumeAt: (index) => h.makeCursor({ ...(pageToken ? { p: pageToken } : {}), o: skip + (places[index] as number), n: max }),
           ...(typeof data?.nextPageToken === 'string' && data.nextPageToken ? { nextPage: h.makeCursor({ p: data.nextPageToken, o: 0, n: max }) } : {}),
         });
       },
@@ -597,7 +640,9 @@ const connector = defineConnector({
         'The Gmail API v1 for the connected mailbox at https://gmail.googleapis.com/gmail/v1/users/me: paths start with '
         + '/gmail/v1/users/me/, such as /gmail/v1/users/me/history (startHistoryId in query), '
         + '/gmail/v1/users/me/messages/MESSAGE_ID/attachments/ATTACHMENT_ID, /gmail/v1/users/me/threads/THREAD_ID/modify or '
-        + '/gmail/v1/users/me/drafts/DRAFT_ID. Settings are read only. Reference: https://developers.google.com/gmail/api/reference/rest.',
+        + '/gmail/v1/users/me/drafts/DRAFT_ID (a DELETE there deletes the draft for good, as one on /gmail/v1/users/me/labels/LABEL_ID does '
+        + 'the label). Settings are read only, and messages and threads cannot be deleted for good. '
+        + 'Reference: https://developers.google.com/gmail/api/reference/rest.',
       basePath: '/gmail/v1/users/me/',
       guard: settingsGuard,
       send: (request, h) => googleApi(h, request),
