@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "list_items", "args": { "limit": 5 } },
+  "write": {
+    "tool": "create_item",
+    "args": { "workspace_id": "ws_1", "name": "Connector smoke test {{timestamp}}" },
+    "note": "Creates an item on the account: say here how to remove it."
+  }
+}
