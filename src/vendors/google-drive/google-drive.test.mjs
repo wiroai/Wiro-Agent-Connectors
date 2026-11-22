@@ -901,3 +901,152 @@ test('a 429 carries retryAfter, and log lines carry no key, token or content', a
   for (const secret of [ACCESS_TOKEN, 'PRIVATE KEY', KEY_BASE64.slice(0, 40), 'secret plan', 'secret-plan']) assert.equal(all.includes(secret), false, secret);
   for (const line of logs) assert.match(line, /^google-drive upload_file (POST|GET) \d{3} \d+ms$/);
 });
+
+// Files handed to the host: a stored file as it is, a Google file as an export.
+
+const FILES = { maxBytes: 4096 };
+const BANNER = '4UploadedBannerImage00000000000';
+const PDF = new TextEncoder().encode('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+
+/** setup() with a host that takes files (FILES unless given). */
+function withFiles(routes, { accounts = null, files = FILES } = {}) {
+  const context = setup(routes, { accounts });
+  context.ctx.files = files;
+  return context;
+}
+
+test('download_file checks the size first, then hands the stored file to the host with its details', async () => {
+  const { module, ctx, apiCalls, logs } = withFiles({
+    [`GET /drive/v3/files/${BANNER}`]: (request) => (request.query.alt === 'media'
+      ? bytesResponse(200, PNG, { 'content-type': 'image/png' })
+      : jsonResponse(200, { ...fixture(import.meta.url, 'uploaded.json'), md5Checksum: 'd41d8cd98f00b204e9800998ecf8427e', capabilities: { canDownload: true } })),
+  });
+  const { payload, files, isError } = await callTool(module, 'download_file', { file_id: BANNER }, ctx);
+  assert.equal(isError, false, payload.error);
+  const [metadata, media] = apiCalls();
+  assert.match(metadata.query.fields, /size/);
+  assert.match(metadata.query.fields, /capabilities\(canDownload\)/);
+  assert.deepEqual(media.query, { alt: 'media', supportsAllDrives: 'true' });
+  assert.equal(media.headers.authorization, `Bearer ${ACCESS_TOKEN}`);
+  assert.deepEqual(files, [{ name: 'banner.png', mimeType: 'image/png', bytes: PNG }]);
+  assert.deepEqual(payload.file, { name: 'banner.png', mimeType: 'image/png', size: PNG.length });
+  assert.equal(payload.id, BANNER);
+  assert.equal(payload.md5Checksum, 'd41d8cd98f00b204e9800998ecf8427e');
+  for (const line of logs) assert.match(line, /^google-drive download_file (POST|GET) \d{3} \d+ms$/, 'no file name or content in the logs');
+});
+
+test('download_file refuses before downloading: no files taken, too large, a Google file, a folder, or downloads turned off', async () => {
+  const banner = fixture(import.meta.url, 'uploaded.json');
+  // A host that takes no files: nothing is sent at all, not even for a token.
+  const none = setup({});
+  const refused = await callTool(none.module, 'download_file', { file_id: BANNER }, none.ctx);
+  assert.equal(
+    refused.payload.error,
+    'This host takes no files, so download_file cannot hand one back. Open the file with get_file\'s webViewLink, or hand it to a service '
+      + 'that downloads by URL with share_file. Nothing was sent to Google Drive.',
+  );
+  assert.equal(none.fetch.calls.length, 0);
+
+  const cases = [
+    [{ ...banner, size: '4097' }, /^The file has 4,097 bytes, more than the 4,096 bytes this host takes, so it was not downloaded\. share_file \(type anyone\) hands it to a service that downloads by URL instead\.$/],
+    [fixture(import.meta.url, 'file.json'), /^That is a Google Doc, which has no stored file: export it with export_file\.$/],
+    [{ id: BANNER, name: 'Creatives', mimeType: 'application/vnd.google-apps.folder' }, /^That is a folder: list its files with list_files\.$/],
+    [{ id: BANNER, name: 'Survey', mimeType: 'application/vnd.google-apps.form' }, /^A Google Form cannot be downloaded or exported\.$/],
+    [{ ...banner, capabilities: { canDownload: false } }, /^Google Drive does not let the service account asset-agent@example-project\.iam\.gserviceaccount\.com download this file: downloads are turned off for its role/],
+  ];
+  for (const [file, message] of cases) {
+    const { module, ctx, apiCalls } = withFiles({ [`GET /drive/v3/files/${BANNER}`]: (request) => (request.query.alt === 'media' ? bytesResponse(200, PNG) : jsonResponse(200, file)) });
+    const { payload, files, isError } = await callTool(module, 'download_file', { file_id: BANNER }, ctx);
+    assert.equal(isError, true);
+    assert.match(payload.error, message);
+    assert.deepEqual(files, []);
+    assert.deepEqual(apiCalls().map((call) => call.query.alt), [undefined], 'the metadata only');
+  }
+
+  // A reply larger than its metadata said still stops at the host's limit.
+  const grown = withFiles({ [`GET /drive/v3/files/${BANNER}`]: (request) => (request.query.alt === 'media' ? bytesResponse(200, new Uint8Array(4097)) : jsonResponse(200, banner)) });
+  const cut = await callTool(grown.module, 'download_file', { file_id: BANNER }, grown.ctx);
+  assert.equal(cut.payload.error, 'Google Drive answered HTTP 200, but the reply could not be read (the reply is larger than 4,096 bytes).');
+  assert.deepEqual(cut.files, []);
+});
+
+test('with a lock, download_file and export_file reach only files inside the chosen folders', async () => {
+  const routes = {
+    ...parentsOf({ elsewhere1: ['root0'], root0: [] }),
+    'GET /drive/v3/files/elsewhere1': (request) => (request.query.alt === 'media' ? bytesResponse(200, PNG) : jsonResponse(200, { id: 'elsewhere1', name: 'a.png', mimeType: 'image/png', size: '16', parents: ['root0'] })),
+  };
+  for (const tool of ['download_file', 'export_file']) {
+    const { module, ctx, apiCalls } = withFiles(routes, { accounts: { folders: [CREATIVES] } });
+    const { payload } = await callTool(module, tool, { file_id: 'elsewhere1' }, ctx);
+    assert.match(payload.error, /^The file elsewhere1 is not inside the folders chosen for this connection/, tool);
+    assert.ok(apiCalls().every((call) => call.query.alt === undefined && !call.path.endsWith('/export')), 'nothing was downloaded or exported');
+  }
+});
+
+test('export_file exports a Google Doc as PDF and hands the copy to the host, named after the document', async () => {
+  const { module, ctx, apiCalls } = withFiles({
+    [`GET /drive/v3/files/${DOC}`]: jsonResponse(200, fixture(import.meta.url, 'file.json')),
+    [`GET /drive/v3/files/${DOC}/export`]: bytesResponse(200, PDF, { 'content-type': 'application/pdf' }),
+  });
+  const { payload, files, isError } = await callTool(module, 'export_file', { file_id: DOC }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(apiCalls()[1].query, { mimeType: 'application/pdf' });
+  assert.deepEqual(files, [{ name: 'Campaign brief.pdf', mimeType: 'application/pdf', bytes: PDF }]);
+  assert.equal(payload.format, 'pdf');
+  assert.equal(payload.kind, 'document');
+  assert.deepEqual(payload.file, { name: 'Campaign brief.pdf', mimeType: 'application/pdf', size: PDF.length });
+
+  const docx = await callTool(module, 'export_file', { file_id: DOC, format: 'docx' }, ctx);
+  assert.equal(apiCalls()[3].query.mimeType, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  assert.equal(docx.files[0].name, 'Campaign brief.docx');
+});
+
+test('export_file takes the formats Google offers for each kind, says what a csv or png leaves out, and refuses the rest', async () => {
+  const sheet = { id: SHEET, name: 'Leads.csv', mimeType: 'application/vnd.google-apps.spreadsheet' };
+  const slides = { id: 'slides1', name: 'Pitch', mimeType: 'application/vnd.google-apps.presentation' };
+  const { module, ctx, apiCalls } = withFiles({
+    [`GET /drive/v3/files/${SHEET}`]: jsonResponse(200, sheet),
+    [`GET /drive/v3/files/${SHEET}/export`]: textResponse(200, 'Date,Name\n2026-05-11,Jane\n', { 'content-type': 'text/csv' }),
+    'GET /drive/v3/files/slides1': jsonResponse(200, slides),
+    'GET /drive/v3/files/slides1/export': bytesResponse(200, PNG, { 'content-type': 'image/png' }),
+    [`GET /drive/v3/files/${BANNER}`]: jsonResponse(200, fixture(import.meta.url, 'uploaded.json')),
+  });
+  const csv = await callTool(module, 'export_file', { file_id: SHEET, format: 'csv' }, ctx);
+  assert.equal(apiCalls()[1].query.mimeType, 'text/csv');
+  assert.equal(csv.files[0].name, 'Leads.csv', 'a name that has the extension keeps it once');
+  assert.equal(new TextDecoder().decode(csv.files[0].bytes), 'Date,Name\n2026-05-11,Jane\n');
+  assert.equal(csv.payload.note, 'csv holds the first sheet only; read_sheet reads any sheet.');
+  const png = await callTool(module, 'export_file', { file_id: 'slides1', format: 'png' }, ctx);
+  assert.deepEqual([png.files[0].name, png.files[0].mimeType, png.payload.note], ['Pitch.png', 'image/png', 'png shows the first slide only.']);
+
+  const before = apiCalls().length;
+  const wrong = await callTool(module, 'export_file', { file_id: SHEET, format: 'docx' }, ctx);
+  assert.equal(wrong.payload.error, 'A Google Sheet exports as pdf, xlsx, or csv, not docx.');
+  const stored = await callTool(module, 'export_file', { file_id: BANNER }, ctx);
+  assert.equal(stored.payload.error, 'That is a stored file, not a Google Doc, Sheet, Slides file or Drawing: download it with download_file.');
+  assert.deepEqual(apiCalls().slice(before).map((call) => call.path), [`/drive/v3/files/${SHEET}`, `/drive/v3/files/${BANNER}`], 'no export was asked for');
+
+  const invalid = await callTool(module, 'export_file', { file_id: SHEET, format: 'odt' }, ctx);
+  assert.match(invalid.payload.error, /^Invalid arguments for export_file: `format` must be one of "pdf", "docx", "xlsx", "pptx", "csv", "txt", "png"/);
+});
+
+test('export_file: no files taken sends nothing, and Google\'s 10 MB export limit is explained', async () => {
+  const none = setup({});
+  const refused = await callTool(none.module, 'export_file', { file_id: DOC }, none.ctx);
+  assert.match(refused.payload.error, /^This host takes no files, so export_file cannot hand one back\./);
+  assert.equal(none.fetch.calls.length, 0);
+
+  const tooLarge = { error: { code: 403, message: 'This file is too large to be exported.', errors: [{ domain: 'global', reason: 'exportSizeLimitExceeded', message: 'This file is too large to be exported.' }] } };
+  const { module, ctx } = withFiles({
+    [`GET /drive/v3/files/${DOC}`]: jsonResponse(200, fixture(import.meta.url, 'file.json')),
+    [`GET /drive/v3/files/${DOC}/export`]: jsonResponse(403, tooLarge),
+  });
+  const { payload, files } = await callTool(module, 'export_file', { file_id: DOC }, ctx);
+  assert.equal(payload.status, 403);
+  assert.equal(
+    payload.error,
+    'Google Drive refused the request (HTTP 403): This file is too large to be exported. Google Drive exports up to 10 MB of a Google file: '
+      + 'export another format (txt and csv are smaller), or open it with webViewLink.',
+  );
+  assert.deepEqual(files, []);
+});

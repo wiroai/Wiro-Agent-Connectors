@@ -13,18 +13,21 @@
 // reach): the tools then reach those folders, their subfolders and the files
 // in them, and nothing else.
 //
-// Modules hand results back as text, so a binary file (an image, a video, a
-// PDF export) leaves Drive by link: share_file with type anyone returns a
-// download link for the service that needs the file, and unshare_file takes
-// the link back afterwards, in the same run. share_file says when that link
-// cannot work: a sharing setting forbids it, downloads are off for viewers,
-// or the file is over Google's 100 MB virus-scan limit (a download by link
-// then gets a warning page). list_files finds links still open.
+// download_file and export_file hand a stored file, or a PDF or Office copy
+// of a Google file, to a host that takes files, within its limit. For a
+// service that downloads by URL, a file leaves Drive by link: share_file with
+// type anyone returns a download link, and unshare_file takes the link back
+// afterwards, in the same run. share_file says when that link cannot work: a
+// sharing setting forbids it, downloads are off for viewers, or the file is
+// over Google's 100 MB virus-scan limit (a download by link then gets a
+// warning page). list_files finds links still open.
 
 import {
   allowedAccounts,
   apiTools,
   defineConnector,
+  formatNumber,
+  orList,
   OutcomeUnknown,
   ToolFailure,
   truncate,
@@ -108,6 +111,8 @@ const STORAGE_FULL = /storage quota/i;
  */
 const EMAIL_NOT_SENT = /successfully shared but (the )?emails? could not be sent/i;
 const USER_MESSAGE = /User message:/i;
+/** Google's 403 exportSizeLimitExceeded: an export over its 10 MB limit. */
+const EXPORT_TOO_LARGE = /too large to be exported/i;
 
 /** What the service account needs to share a file. */
 const SHARING_RIGHTS = 'in a shared drive it needs the Content manager or Manager role, elsewhere Editor access with "Editors can change permissions and share" on';
@@ -141,6 +146,9 @@ function explainRefusal(h: ToolHelpers, error: unknown, sharing?: string): unkno
   if (status !== 403 && !(sharing !== undefined && status === 400)) return error;
   const ending = error.message.endsWith(NOTHING_CHANGED) ? NOTHING_CHANGED : '';
   const text = error.message.slice(0, error.message.length - ending.length);
+  if (status === 403 && EXPORT_TOO_LARGE.test(text)) {
+    return new ToolFailure(`${text} Google Drive exports up to 10 MB of a Google file: export another format (txt and csv are smaller), or open it with webViewLink.`, error.details);
+  }
   if (status === 403 && STORAGE_FULL.test(text)) {
     return new ToolFailure(`${text} A service account has no Drive storage of its own: use a folder in a shared drive, where files belong to the drive.${ending}`, error.details);
   }
@@ -524,6 +532,62 @@ const EXPORTS: Record<string, Record<string, string>> = {
   [GOOGLE_TYPES.presentation]: { text: 'text/plain' },
 };
 
+/** What each kind of Google file is called in messages. */
+const KIND_NAMES: Record<string, string> = {
+  document: 'Google Doc',
+  spreadsheet: 'Google Sheet',
+  presentation: 'Google Slides file',
+  drawing: 'Google Drawing',
+  form: 'Google Form',
+  site: 'Google Site',
+};
+
+/**
+ * The formats export_file makes of each kind of Google file, from Google
+ * Drive's export types: csv holds a Sheet's first sheet only, and png a
+ * Slides file's first slide. Their types come from the extension.
+ */
+const FILE_EXPORTS: Record<string, string[]> = {
+  document: ['pdf', 'docx', 'txt'],
+  spreadsheet: ['pdf', 'xlsx', 'csv'],
+  presentation: ['pdf', 'pptx', 'txt', 'png'],
+  drawing: ['pdf', 'png'],
+};
+const EXPORT_FORMATS = ['pdf', 'docx', 'xlsx', 'pptx', 'csv', 'txt', 'png'];
+
+/** The most bytes this host takes in files from the call; a host that takes none is refused before anything is sent. */
+function filesTaken(h: ToolHelpers): number {
+  const limit = h.fileLimit();
+  if (limit === null) {
+    throw new ToolFailure(
+      `This host takes no files, so ${h.tool} cannot hand one back. Open the file with get_file's webViewLink, or hand it to a service `
+        + `that downloads by URL with share_file. Nothing was sent to ${LABEL}.`,
+    );
+  }
+  return limit;
+}
+
+/** Why an item is not a stored file to hand back as it is (a folder, a shortcut, a Google file to export), or undefined for one. */
+function notStoredFile(kind: string): string | undefined {
+  if (kind === 'file') return undefined;
+  if (kind === 'folder') return 'That is a folder: list its files with list_files.';
+  if (kind === 'shortcut') return 'That is a shortcut: use its target, whose id get_file returns as shortcutTarget.';
+  if (FILE_EXPORTS[kind]) return `That is a ${KIND_NAMES[kind]}, which has no stored file: export it with export_file.`;
+  return `A ${KIND_NAMES[kind] ?? 'Google file of this kind'} cannot be downloaded or exported.`;
+}
+
+/** Refuses a file the service account may not download: downloads are off for its role, on the file or in its shared drive. */
+function assertDownloadable(h: ToolHelpers, file: any): void {
+  if (file?.capabilities?.canDownload === false) {
+    throw new ToolFailure(`Google Drive does not let ${serviceAccountWords(h)} download this file: downloads are turned off for its role, on the file or in its shared drive.`);
+  }
+}
+
+/** An export's file name: the Google file's name with the format's extension. */
+function exportName(name: string, format: string): string {
+  return name.toLowerCase().endsWith(`.${format}`) ? name : `${name}.${format}`;
+}
+
 const CELL_ROWS: JsonSchema = {
   type: 'array',
   minItems: 1,
@@ -815,10 +879,10 @@ const connector = defineConnector({
       description:
         'Returns the text of a file, in pages of about 25 KB: a Google Doc as Markdown (or plain text or HTML), a Google Sheet\'s first sheet '
         + 'as CSV (read_sheet reads any sheet and range), a Slides file as plain text, and text files (TXT, CSV, JSON, HTML, XML and similar) '
-        + 'as they are, up to 4 MB. A binary file (an image, a video, a PDF) is not read: a connector returns text, not files, so its '
-        + 'details and links come back instead. To hand a file, or a PDF, Word, Excel or PowerPoint export of a Google file, to a service '
-        + 'that downloads by URL, use share_file (type anyone), then unshare_file in the same run. Pass nextCursor back as cursor for the '
-        + 'next page.',
+        + 'as they are, up to 4 MB. A binary file (an image, a video, a PDF) is not read: its details and links come back instead, and '
+        + 'download_file hands the file itself to the host (export_file a PDF, Word, Excel or PowerPoint copy of a Google file). To hand a '
+        + 'file to a service that downloads by URL, use share_file (type anyone), then unshare_file in the same run. Pass nextCursor back '
+        + 'as cursor for the next page.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -858,9 +922,10 @@ const connector = defineConnector({
           return compact({
             ...trimFile(file),
             binary: true,
-            note: 'This is a binary file, and a connector returns text, not files. Open it with webViewLink. For a service that downloads files '
-              + 'by URL, share_file with type anyone and role reader returns its downloadUrl; in the same run, once the service has the file '
-              + '(or has failed), unshare_file with permission_id anyoneWithLink takes the link back.',
+            note: 'This is a binary file, which read_file does not read: download_file hands it to the host as a file, where the host takes '
+              + 'files. Open it with webViewLink. For a service that downloads files by URL, share_file with type anyone and role reader '
+              + 'returns its downloadUrl; in the same run, once the service has the file (or has failed), unshare_file with permission_id '
+              + 'anyoneWithLink takes the link back.',
             warning: scanWarning(file),
           });
         }
@@ -878,6 +943,91 @@ const connector = defineConnector({
           text: page.piece,
           nextCursor: page.next !== undefined ? h.makeCursor({ o: page.next }) : undefined,
         });
+      },
+    },
+    {
+      name: 'download_file',
+      kind: 'read',
+      title: 'Download a Google Drive file',
+      description:
+        'Hands a stored file (an image, a video, a PDF, an Office file or any other upload) to the host as a file, with its details, for the '
+        + 'host to save or pass on. Its size is checked against the most the host takes before anything is downloaded. A Google Doc, Sheet, '
+        + 'Slides file or Drawing has no stored file: export_file makes a PDF or Office copy of it. A host that takes no files gets a '
+        + 'refusal; share_file (type anyone) then hands the file to a service that downloads by URL.',
+      inputSchema: { type: 'object', properties: { file_id: ID }, required: ['file_id'], additionalProperties: false },
+      async run(args: { file_id: string }, h) {
+        const limit = filesTaken(h);
+        const file = await getChecked(h, args.file_id, 'id,name,mimeType,size,md5Checksum,modifiedTime,webViewLink,capabilities(canDownload)');
+        const problem = notStoredFile(kindOf(file?.mimeType));
+        if (problem) throw new ToolFailure(problem);
+        assertDownloadable(h, file);
+        const size = Number(file?.size);
+        if (Number.isFinite(size) && size > limit) {
+          throw new ToolFailure(
+            `The file has ${formatNumber(size)} bytes, more than the ${formatNumber(limit)} bytes this host takes, so it was not downloaded. `
+              + 'share_file (type anyone) hands it to a service that downloads by URL instead.',
+          );
+        }
+        const { data } = await drive(h, {
+          path: `/drive/v3/files/${enc(args.file_id)}`,
+          query: { alt: 'media', supportsAllDrives: true },
+          headers: { accept: '*/*' },
+          binary: true,
+          maxBytes: limit,
+        });
+        const name = typeof file?.name === 'string' && file.name ? file.name : args.file_id;
+        const mimeType = typeof file?.mimeType === 'string' ? file.mimeType : 'application/octet-stream';
+        return compact({ ...trimFile(file), md5Checksum: file?.md5Checksum, file: h.file({ name, mimeType, bytes: data }) });
+      },
+    },
+    {
+      name: 'export_file',
+      kind: 'read',
+      title: 'Export a Google Doc, Sheet, Slides file or Drawing',
+      description:
+        'Exports a Google Doc, Sheet, Slides file or Drawing and hands the copy to the host as a file: a Doc as pdf, docx or txt; a Sheet as '
+        + 'pdf, xlsx or csv (csv holds its first sheet only); a Slides file as pdf, pptx, txt or png (png shows its first slide only); a '
+        + 'Drawing as pdf or png. Google Drive exports up to 10 MB. A host that takes no files gets a refusal; read_file reads the text of '
+        + 'a Doc, Sheet or Slides file instead.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          file_id: ID,
+          format: {
+            type: 'string',
+            enum: EXPORT_FORMATS,
+            default: 'pdf',
+            description: 'pdf (default, every kind), docx (Doc), xlsx (Sheet), pptx (Slides), csv (Sheet, its first sheet), txt (Doc or Slides) or png (Slides, its first slide; Drawing).',
+          },
+        },
+        required: ['file_id'],
+        additionalProperties: false,
+      },
+      async run(args: { file_id: string; format: string }, h) {
+        const limit = filesTaken(h);
+        const file = await getChecked(h, args.file_id, 'id,name,mimeType,modifiedTime,webViewLink,capabilities(canDownload)');
+        const kind = kindOf(file?.mimeType);
+        const formats = FILE_EXPORTS[kind];
+        if (!formats) {
+          throw new ToolFailure(kind === 'file'
+            ? 'That is a stored file, not a Google Doc, Sheet, Slides file or Drawing: download it with download_file.'
+            : (notStoredFile(kind) as string));
+        }
+        if (!formats.includes(args.format)) throw new ToolFailure(`A ${KIND_NAMES[kind]} exports as ${orList(formats)}, not ${args.format}.`);
+        assertDownloadable(h, file);
+        const mimeType = typeByName(`export.${args.format}`) ?? 'application/octet-stream';
+        const { data } = await drive(h, {
+          path: `/drive/v3/files/${enc(args.file_id)}/export`,
+          query: { mimeType },
+          headers: { accept: '*/*' },
+          binary: true,
+          maxBytes: limit,
+        });
+        const note = kind === 'spreadsheet' && args.format === 'csv'
+          ? 'csv holds the first sheet only; read_sheet reads any sheet.'
+          : kind === 'presentation' && args.format === 'png' ? 'png shows the first slide only.' : undefined;
+        const name = exportName(typeof file?.name === 'string' && file.name ? file.name : args.file_id, args.format);
+        return compact({ ...trimFile(file), format: args.format, note, file: h.file({ name, mimeType, bytes: data }) });
       },
     },
     {

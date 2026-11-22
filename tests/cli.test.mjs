@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import { once } from 'node:events';
@@ -19,6 +20,8 @@ const PRELOAD = pathToFileURL(path.join(ROOT, 'tests', 'fixtures', 'mock-vendor-
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
 const SERPER_KEY = 'serper-cli-test-key';
 const search = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'vendors', 'serper', 'fixtures', 'search.json'), 'utf8'));
+const DRIVE_FILE = '7ReportPdfFile00000000000000000';
+const DRIVE_BYTES = Buffer.from('%PDF-1.7\n% a report\n%%EOF\n');
 
 async function startMockVendor() {
   const requests = [];
@@ -33,6 +36,19 @@ async function startMockVendor() {
       res.setHeader('content-type', 'application/json');
       if (req.url === '/google.serper.dev/search') {
         res.end(JSON.stringify(search));
+        return;
+      }
+      if (req.url === '/oauth2.googleapis.com/token') {
+        res.end(JSON.stringify({ access_token: 'ya29.cli-test-token', expires_in: 3599, token_type: 'Bearer' }));
+        return;
+      }
+      if (req.url.startsWith(`/www.googleapis.com/drive/v3/files/${DRIVE_FILE}?`)) {
+        if (new URL(req.url, 'http://mock').searchParams.get('alt') === 'media') {
+          res.setHeader('content-type', 'application/pdf');
+          res.end(DRIVE_BYTES);
+          return;
+        }
+        res.end(JSON.stringify({ id: DRIVE_FILE, name: 'report.pdf', mimeType: 'application/pdf', size: String(DRIVE_BYTES.length), parents: ['1Folder'] }));
         return;
       }
       res.statusCode = 404;
@@ -120,6 +136,39 @@ test('without its credentials a connector still lists its tools and names the mi
   }
   assert.equal(mock.requests.length, before, 'nothing was sent');
   assert.match(stderr(), /devto: DEVTO_APIKEY is not set/);
+});
+
+test('a file a tool hands back reaches the MCP client as an embedded resource after the JSON text, unchanged', async () => {
+  const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const key = {
+    type: 'service_account',
+    project_id: 'example-project',
+    private_key_id: 'kid-cli-test',
+    private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    client_email: 'cli-test@example-project.iam.gserviceaccount.com',
+  };
+  const { client, stderr } = await connect('google-drive', {
+    GOOGLE_DRIVE_SERVICEACCOUNTJSON: Buffer.from(JSON.stringify(key)).toString('base64'),
+    MOCK_VENDOR_URL: mock.url,
+  });
+  const before = mock.requests.length;
+  try {
+    const result = await client.callTool({ name: 'download_file', arguments: { file_id: DRIVE_FILE } });
+    assert.notEqual(result.isError, true, result.content[0].text);
+    assert.equal(result.content.length, 2);
+    assert.equal(result.content[0].type, 'text');
+    assert.deepEqual(JSON.parse(result.content[0].text).file, { name: 'report.pdf', mimeType: 'application/pdf', size: DRIVE_BYTES.length });
+    assert.deepEqual(result.content[1], {
+      type: 'resource',
+      resource: { uri: 'attachment:///report.pdf', mimeType: 'application/pdf', blob: DRIVE_BYTES.toString('base64') },
+    });
+  } finally {
+    await client.close();
+  }
+  const drive = mock.requests.slice(before).filter((request) => request.url.startsWith('/www.googleapis.com/'));
+  assert.equal(drive.length, 2, 'the metadata, then the file');
+  assert.equal(drive[1].headers.authorization, 'Bearer ya29.cli-test-token');
+  assert.match(stderr(), /google-drive download_file ok \d+ms/);
 });
 
 test('--list, --version, an unknown connector and a bad CONNECTOR_ACCOUNTS', () => {
