@@ -244,7 +244,7 @@ test('create_product without options makes one default variant, and refuses dupl
   assert.equal(errors.payload.vendorCode, 'INVALID_VARIANT');
 });
 
-test('update_product sends only the given fields, redirects a changed handle and adds images', async () => {
+test('update_product sends only the given fields and redirects a changed handle; images go through add_product_images', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, load('product-update.json')));
   const { payload } = await callTool(module, 'update_product', {
     id: '8800000002',
@@ -254,7 +254,6 @@ test('update_product sends only the given fields, redirects a changed handle and
     tags: ['apparel', 'new'],
     seo_title: 'Logo Tee',
     collections_to_join: ['4400000002'],
-    add_images: [{ url: 'https://cdn.example.net/tee-back.jpg', alt: 'Back' }],
   }, ctx);
   assert.deepEqual(fetch.calls[0].json.variables, {
     product: {
@@ -267,15 +266,59 @@ test('update_product sends only the given fields, redirects a changed handle and
       seo: { title: 'Logo Tee' },
       collectionsToJoin: ['gid://shopify/Collection/4400000002'],
     },
-    media: [{ originalSource: 'https://cdn.example.net/tee-back.jpg', alt: 'Back', mediaContentType: 'IMAGE' }],
   });
+  assert.doesNotMatch(fetch.calls[0].json.query, /media/);
   assert.equal(payload.title, 'Logo Tee');
-  assert.equal(payload.imagesAdded, 1);
   const nothing = await callTool(module, 'update_product', { id: '1' }, ctx);
   assert.match(nothing.payload.error, /Nothing to change/);
   const badId = await callTool(module, 'update_product', { id: 'gid://shopify/Order/1', title: 'x' }, ctx);
   assert.match(badId.payload.error, /does not have the expected format/);
+  // Adding images is not idempotent, so update_product (an update) does not take them.
+  const images = await callTool(module, 'update_product', { id: '1', add_images: [{ url: 'https://cdn.example.net/a.jpg' }] }, ctx);
+  assert.match(images.payload.error, /Invalid arguments/);
   assert.equal(fetch.calls.length, 1);
+});
+
+test('add_product_images adds images from public URLs in one productUpdate and returns the newest media', async () => {
+  const answer = { data: { productUpdate: { product: {
+    id: 'gid://shopify/Product/8800000002',
+    title: 'Logo Tee',
+    mediaCount: { count: 3 },
+    media: { nodes: [
+      { id: 'gid://shopify/MediaImage/3300000012', alt: 'Side', mediaContentType: 'IMAGE', status: 'UPLOADED', preview: { image: null } },
+      { id: 'gid://shopify/MediaImage/3300000011', alt: 'Back', mediaContentType: 'IMAGE', status: 'PROCESSING', preview: { image: null } },
+    ] },
+  }, userErrors: [] } } };
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, answer));
+  const { payload, isError } = await callTool(module, 'add_product_images', {
+    product_id: '8800000002',
+    images: [{ url: 'https://cdn.example.net/tee-back.jpg', alt: 'Back' }, { url: 'https://cdn.example.net/tee-side.jpg', alt: 'Side' }],
+  }, ctx);
+  assert.equal(isError, false);
+  assert.equal(fetch.calls.length, 1);
+  assert.match(fetch.calls[0].json.query, /productUpdate\(product: \$product, media: \$media\)/);
+  assert.match(fetch.calls[0].json.query, /media\(first: \$count, sortKey: CREATED_AT, reverse: true\)/);
+  assert.deepEqual(fetch.calls[0].json.variables, {
+    product: { id: 'gid://shopify/Product/8800000002' },
+    media: [
+      { originalSource: 'https://cdn.example.net/tee-back.jpg', alt: 'Back', mediaContentType: 'IMAGE' },
+      { originalSource: 'https://cdn.example.net/tee-side.jpg', alt: 'Side', mediaContentType: 'IMAGE' },
+    ],
+    count: 2,
+  });
+  assert.equal(payload.imagesAdded, 2);
+  assert.equal(payload.mediaCount, 3);
+  assert.deepEqual(payload.newestMedia[1], { id: 'gid://shopify/MediaImage/3300000011', type: 'IMAGE', status: 'PROCESSING', alt: 'Back' });
+  assert.match(payload.note, /in the background/);
+
+  const tool = module.tools.find((candidate) => candidate.name === 'add_product_images');
+  assert.deepEqual({ ...tool.annotations }, { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true });
+
+  const broken = setup(() => jsonResponse(200, load('internal-error.json')));
+  const unknown = await callTool(broken.module, 'add_product_images', { product_id: '1', images: [{ url: 'https://cdn.example.net/a.jpg' }] }, broken.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'get_product');
+  assert.equal(broken.fetch.calls.length, 1, 'never resent');
 });
 
 test('update_variants changes prices and SKUs in one call; "" removes a compare-at price', async () => {
@@ -366,7 +409,7 @@ test('set_inventory_quantity reports a stale quantity and an item not stocked at
 });
 
 test('orders: the list has no customer details; get_order by name keeps protected fields Shopify withheld as warnings', async () => {
-  const { module, fetch, ctx } = setup(byOperation({ Orders: load('orders.json'), OrderByName: load('order.json') }));
+  const { module, fetch, ctx } = setup(byOperation({ Orders: load('orders.json'), OrderIdByName: load('order-id-by-name.json'), Order: load('order.json') }));
   const list = await callTool(module, 'list_orders', { query: 'financial_status:paid' }, ctx);
   assert.deepEqual(list.payload.orders[1], {
     id: 'gid://shopify/Order/9900000002',
@@ -387,7 +430,14 @@ test('orders: the list has no customer details; get_order by name keeps protecte
   assert.doesNotMatch(fetch.calls[0].json.query, /customer|email|Address/);
 
   const { payload } = await callTool(module, 'get_order', { name: '#1001', include_customer_details: true }, ctx);
-  assert.deepEqual(fetch.calls[1].json.variables, { query: 'name:#1001', contact: true });
+  // Two requests: the id by name with a query that selects nothing nested (a page of full orders costs more than
+  // Shopify's 1,000-point limit for one query), then the order by that id.
+  assert.equal(fetch.calls.length, 3);
+  assert.deepEqual(fetch.calls[1].json.variables, { query: 'name:#1001' });
+  assert.match(fetch.calls[1].json.query, /orders\(first: 5, query: \$query\) \{ nodes \{ id name \} \}/);
+  assert.doesNotMatch(fetch.calls[1].json.query, /lineItems|fulfillmentOrders|fulfillments|refunds|OrderDetail|\(first: (?!5\b)/);
+  assert.deepEqual(fetch.calls[2].json.variables, { id: 'gid://shopify/Order/9900000001', contact: true });
+  assert.match(fetch.calls[2].json.query, /order\(id: \$id\) \{ \.\.\.OrderDetail \}/);
   assert.equal(payload.name, '#1001');
   assert.equal(payload.note, 'Gift wrap please');
   assert.deepEqual(payload.fulfillmentOrders[0], {
@@ -404,6 +454,12 @@ test('orders: the list has no customer details; get_order by name keeps protecte
 
   const missing = await callTool(module, 'get_order', { name: '1009' }, ctx);
   assert.match(missing.payload.error, /found no order with that name/);
+  assert.equal(fetch.calls.length, 4, 'no order query without an exact name match');
+
+  const byId = await callTool(module, 'get_order', { id: '9900000001' }, ctx);
+  assert.equal(fetch.calls.length, 5);
+  assert.deepEqual(fetch.calls[4].json.variables, { id: 'gid://shopify/Order/9900000001', contact: false });
+  assert.equal(byId.payload.name, '#1001');
 });
 
 test('fulfill_order ships what is left of a fulfillment order with tracking', async () => {
@@ -544,12 +600,23 @@ test('graphql_mutation: refusals before sending, userErrors, partial success and
     ['mutation { webhookSubscriptionCreate(topic: ORDERS_CREATE, webhookSubscription: { callbackUrl: "https://elsewhere.example" }) { userErrors { message } } }', /webhookSubscriptionCreate cannot be sent/],
     ['mutation { ...M }\nfragment M on Mutation { storefrontAccessTokenCreate(input: { title: "x" }) { storefrontAccessToken { accessToken } } }', /storefrontAccessTokenCreate cannot be sent/],
     ['mutation A($input: InventoryAdjustQuantitiesInput!) { inventoryAdjustQuantities(input: $input) { userErrors { message } } }', /inventoryAdjustQuantities needs @idempotent/],
+    // A bulk mutation runs another mutation from a string, where its name is not a name the document uses.
+    ['mutation { bulkOperationRunMutation(mutation: "mutation { delegateAccessTokenCreate(input: { delegateAccessScope: [\\"read_orders\\"] }) { delegateAccessToken { accessToken } } }", stagedUploadPath: "tmp/1/vars.jsonl") { bulkOperation { id } userErrors { message } } }', /bulkOperationRunMutation cannot be sent/],
+    ['mutation { carrierServiceCreate(input: { name: "Rates", callbackUrl: "https://elsewhere.example/rates", active: true }) { carrierService { id } userErrors { message } } }', /carrierServiceCreate cannot be sent/],
+    ['mutation { fulfillmentServiceUpdate(id: "gid://shopify/FulfillmentService/1", callbackUrl: "https://elsewhere.example") { fulfillmentService { id } userErrors { message } } }', /fulfillmentServiceUpdate cannot be sent/],
+    ['mutation { pubSubServerPixelUpdate(pubSubProject: "elsewhere", pubSubTopic: "events") { serverPixel { id } userErrors { message } } }', /pubSubServerPixelUpdate cannot be sent/],
   ]) {
     const refused = await callTool(module, 'graphql_mutation', { query: document }, ctx);
     assert.equal(refused.isError, true, document);
     assert.match(refused.payload.error, pattern);
     assert.match(refused.payload.error, /Nothing was sent/);
   }
+  const viaVariables = await callTool(module, 'graphql_mutation', {
+    query: 'mutation Run($m: String!, $p: String!) { bulkOperationRunMutation(mutation: $m, stagedUploadPath: $p) { bulkOperation { id url } userErrors { message } } }',
+    variables: { m: 'mutation { webhookSubscriptionCreate(topic: ORDERS_CREATE, webhookSubscription: { uri: "https://elsewhere.example" }) { userErrors { message } } }', p: 'tmp/1/vars.jsonl' },
+  }, ctx);
+  assert.equal(viaVariables.isError, true);
+  assert.match(viaVariables.payload.error, /bulkOperationRunMutation cannot be sent through this connector\. Nothing was sent\./);
   assert.equal(fetch.calls.length, 1);
   await callTool(module, 'graphql_mutation', { query: 'mutation A($input: InventoryAdjustQuantitiesInput!) { inventoryAdjustQuantities(input: $input) @idempotent(key: "k-1") { userErrors { message } } }', variables: { input: {} } }, ctx);
   assert.equal(fetch.calls.length, 2, 'with the directive it is sent');

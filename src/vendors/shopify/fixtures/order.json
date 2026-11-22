@@ -1,5 +1,5 @@
 {
-  "data": { "orders": { "nodes": [ {
+  "data": { "order": {
     "id": "gid://shopify/Order/9900000001", "name": "#1001", "createdAt": "2026-11-21T18:04:11Z", "processedAt": "2026-11-21T18:04:11Z", "cancelledAt": null, "cancelReason": null,
     "closed": false, "closedAt": null, "test": false, "tags": [], "note": "Gift wrap please", "returnStatus": "NO_RETURN", "sourceName": "web", "paymentGatewayNames": ["shopify_payments"],
     "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "currencyCode": "EUR", "subtotalLineItemsQuantity": 2,
@@ -10,6 +10,6 @@
     "fulfillments": [],
     "refunds": [],
     "customer": null, "email": null, "phone": null, "shippingAddress": null, "billingAddress": null
-  } ] } },
-  "errors": [{ "message": "This app is not approved to access the Customer object. See https://shopify.dev/docs/apps/launch/protected-customer-data for more details.", "extensions": { "code": "ACCESS_DENIED" }, "path": ["orders", "nodes", 0, "customer"] }]
+  } },
+  "errors": [{ "message": "This app is not approved to access the Customer object. See https://shopify.dev/docs/apps/launch/protected-customer-data for more details.", "extensions": { "code": "ACCESS_DENIED" }, "path": ["order", "customer"] }]
 }

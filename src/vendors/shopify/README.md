@@ -40,7 +40,8 @@ Names, emails, phone numbers and addresses of customers are protected customer d
 | `list_products` | read | Products, most recently updated first, by Shopify search syntax: id, title, handle, status, vendor, type, tags, price range, variants, stock and image. |
 | `get_product` | read | One product by id or handle: description, SEO, options, media, collections, and its variants (100 at a time) with prices, SKUs, stock and inventory item ids. |
 | `create_product` | create | A product with options, variants (price, compare-at price, SKU, barcode, stock per location) and images from public URLs, in one request; a draft by default. Refuses a handle or SKU in use unless `allow_duplicates`. |
-| `update_product` | update | Title, description, vendor, type, tags, handle (the old URL redirects), status, SEO, manual collections to join or leave, and images to add. |
+| `update_product` | update | Title, description, vendor, type, tags, handle (the old URL redirects), status, SEO, and manual collections to join or leave. |
+| `add_product_images` | create | Adds images to a product from public URLs (Shopify fetches and processes them); returns the media count and the newest media with their status. Each call adds the images again. |
 | `update_variants` | update | Prices, compare-at prices, SKUs, barcodes, inventory policy, tracking, cost and shipping of one product's variants, all or nothing. |
 | `list_publications` | read | The sales channels (Online Store, Point of Sale, ...) with their ids, or where one product is published. |
 | `publish_product` | update | Publishes a product on sales channels, or takes it off them. |
@@ -63,7 +64,8 @@ Names, emails, phone numbers and addresses of customers are protected customer d
 - Shopify meters GraphQL by query cost: a query may cost at most 1,000 points, and a throttled call comes back with `retryAfter`. List tools ask for at most 100 items a page.
 - Orders older than 60 days need the `read_all_orders` scope, which Shopify grants on request.
 - `create_product` creates up to 100 variants; add more with `productVariantsBulkCreate` through `graphql_mutation`. Images come from public URLs that Shopify fetches itself; videos and 3D models need Shopify's staged uploads, which the connector does not do.
-- `graphql_query` refuses mutations. `graphql_mutation` refuses webhook subscriptions and new access tokens, and requires `@idempotent(key: ...)` on the mutations that need it in this API version (inventory changes and `refundCreate`). Bulk operations can be started and checked through them, but the connector does not download their result file.
+- `graphql_query` refuses mutations. `graphql_mutation` refuses the mutations that point Shopify at an address of the caller's choosing (webhook subscriptions, `carrierServiceCreate` and `carrierServiceUpdate`, `fulfillmentServiceCreate` and `fulfillmentServiceUpdate`, `eventBridgeServerPixelUpdate` and `pubSubServerPixelUpdate`), new access tokens (`delegateAccessTokenCreate`, `storefrontAccessTokenCreate`) and bulk mutations (`bulkOperationRunMutation`, which runs mutations from a file the connector cannot read); it requires `@idempotent(key: ...)` on the mutations that need it in this API version (inventory changes and `refundCreate`). Bulk queries can be started and checked through them, but the connector does not download their result file.
+- `get_order` by name looks the order up by its name first, then reads it by id: a page of full orders would cost more than one query may.
 - Writes are never retried: one whose outcome is unclear comes back as unknown, with the read tool to check first.
 
 ## README rows

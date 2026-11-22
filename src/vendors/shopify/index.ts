@@ -37,7 +37,12 @@ const STOCK_NAMES = ['available', 'on_hand', 'committed', 'incoming', 'reserved'
 const INVENTORY_REASONS = ['correction', 'cycle_count_available', 'damaged', 'received', 'restock', 'shrinkage', 'promotion', 'quality_control', 'safety_stock', 'other'];
 /** Mutations that need the @idempotent directive in this API version. */
 const IDEMPOTENT_MUTATIONS = ['inventoryActivate', 'inventoryAdjustQuantities', 'inventorySetQuantities', 'inventoryMoveQuantities', 'refundCreate'];
-/** Mutations graphql_mutation never sends: they send store data elsewhere or make new credentials. */
+/**
+ * Mutations graphql_mutation never sends: they point Shopify at an address the
+ * caller picks (webhooks, carrier and fulfillment service callbacks, server
+ * pixels), make new credentials, or run other mutations from a string and a
+ * file (bulkOperationRunMutation), whose names this check would not see.
+ */
 const BLOCKED_MUTATIONS = [
   'webhookSubscriptionCreate',
   'webhookSubscriptionUpdate',
@@ -45,8 +50,15 @@ const BLOCKED_MUTATIONS = [
   'eventBridgeWebhookSubscriptionUpdate',
   'pubSubWebhookSubscriptionCreate',
   'pubSubWebhookSubscriptionUpdate',
+  'carrierServiceCreate',
+  'carrierServiceUpdate',
+  'fulfillmentServiceCreate',
+  'fulfillmentServiceUpdate',
+  'eventBridgeServerPixelUpdate',
+  'pubSubServerPixelUpdate',
   'delegateAccessTokenCreate',
   'storefrontAccessTokenCreate',
+  'bulkOperationRunMutation',
 ];
 
 function compact(value: Record<string, unknown>): Record<string, unknown> {
@@ -764,8 +776,8 @@ const connector = defineConnector({
       title: 'Update a Shopify product',
       description:
         'Changes a product\'s title, description, vendor, type, tags (the list replaces the old one), handle (the old URL redirects), '
-        + 'status, SEO, manual collections (join or leave), and adds images from public URLs. Only the fields given change. Prices and '
-        + 'SKUs are per variant: update_variants.',
+        + 'status, SEO and manual collections (join or leave). Only the fields given change. Prices and SKUs are per variant: '
+        + 'update_variants; images are added with add_product_images.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -781,17 +793,6 @@ const connector = defineConnector({
           seo_description: { type: 'string', maxLength: 1000 },
           collections_to_join: ID_LIST('Collection', 'Manual collections to add it to.'),
           collections_to_leave: ID_LIST('Collection', 'Manual collections to take it out of.'),
-          add_images: {
-            type: 'array',
-            maxItems: 20,
-            items: {
-              type: 'object',
-              properties: { url: { type: 'string', format: 'uri', maxLength: 2000 }, alt: { type: 'string', maxLength: 512 } },
-              required: ['url'],
-              additionalProperties: false,
-            },
-            description: 'Images to add, from public URLs.',
-          },
         },
         required: ['id'],
         additionalProperties: false,
@@ -813,16 +814,13 @@ const connector = defineConnector({
         });
         if (args.description_html === '') product['descriptionHtml'] = '';
         if (args.tags?.length === 0) product['tags'] = [];
-        const media = Array.isArray(args.add_images) && args.add_images.length
-          ? args.add_images.map((image: any) => compact({ originalSource: image.url, alt: image.alt, mediaContentType: 'IMAGE' }))
-          : null;
-        if (Object.keys(product).length === 1 && !media) throw new ToolFailure('Nothing to change: give at least one field besides id. Nothing was sent.');
-        const response = await graphql(h, `mutation UpdateProduct($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
-  productUpdate(product: $product, media: $media) {
+        if (Object.keys(product).length === 1) throw new ToolFailure('Nothing to change: give at least one field besides id. Nothing was sent.');
+        const response = await graphql(h, `mutation UpdateProduct($product: ProductUpdateInput!) {
+  productUpdate(product: $product) {
     product { id title handle status vendor productType tags updatedAt onlineStoreUrl seo { title description } }
     userErrors { field message }
   }
-}`, { product, media }, { write: true });
+}`, { product }, { write: true });
         const payload = response.data?.productUpdate;
         assertNoUserErrors(payload, 'update the product');
         const saved = payload?.product;
@@ -837,7 +835,60 @@ const connector = defineConnector({
           seo: saved?.seo?.title || saved?.seo?.description ? compact({ title: saved.seo.title, description: saved.seo.description }) : undefined,
           onlineStoreUrl: saved?.onlineStoreUrl,
           updatedAt: saved?.updatedAt,
-          imagesAdded: media ? media.length : undefined,
+        }), response);
+      },
+    },
+    {
+      // A create, not an update: every call adds the images again.
+      name: 'add_product_images',
+      kind: 'create',
+      check: 'get_product',
+      title: 'Add images to a Shopify product',
+      description:
+        'Adds images to a product from public URLs; Shopify downloads and processes them in the background. Each call adds them again: '
+        + 'it is not retried, and after an unclear outcome look at the product\'s media with get_product before sending it again. Returns '
+        + 'the product\'s media count and its newest media with their processing status.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          product_id: ID('Product', 'The product id'),
+          images: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 20,
+            items: {
+              type: 'object',
+              properties: { url: { type: 'string', format: 'uri', maxLength: 2000, description: 'A public image URL.' }, alt: { type: 'string', maxLength: 512 } },
+              required: ['url'],
+              additionalProperties: false,
+            },
+            description: 'The images to add, from public URLs.',
+          },
+        },
+        required: ['product_id', 'images'],
+        additionalProperties: false,
+      },
+      async run(args: { product_id: string; images: Array<{ url: string; alt?: string }> }, h) {
+        const media = args.images.map((image) => compact({ originalSource: image.url, alt: image.alt, mediaContentType: 'IMAGE' }));
+        const response = await graphql(h, `mutation AddProductImages($product: ProductUpdateInput!, $media: [CreateMediaInput!], $count: Int!) {
+  productUpdate(product: $product, media: $media) {
+    product { id title mediaCount { count } media(first: $count, sortKey: CREATED_AT, reverse: true) { nodes { id alt mediaContentType status preview { image { url } } } } }
+    userErrors { field message }
+  }
+}`, { product: { id: gid('Product', args.product_id, 'product_id') }, media, count: media.length }, { write: true });
+        const payload = response.data?.productUpdate;
+        assertNoUserErrors(payload, 'add the images');
+        const saved = payload?.product;
+        const newest: any[] = Array.isArray(saved?.media?.nodes) ? saved.media.nodes : [];
+        return withWarnings(compact({
+          id: saved?.id,
+          title: saved?.title,
+          imagesAdded: media.length,
+          mediaCount: saved?.mediaCount?.count,
+          newestMedia: newest.length
+            ? newest.map((item) => compact({ id: item?.id, type: item?.mediaContentType, status: item?.status, alt: item?.alt, url: item?.preview?.image?.url }))
+            : undefined,
+          note: 'Shopify processes new images in the background: their status turns READY, or FAILED for a URL it could not fetch.',
         }), response);
       },
     },
@@ -1218,13 +1269,17 @@ const connector = defineConnector({
           });
           order = response.data?.order;
         } else {
+          // The name first, with a query that asks for nothing else: a page of full orders would cost more than Shopify runs.
           const name = args.name as string;
-          response = await graphql(h, `query OrderByName($query: String!, $contact: Boolean!) { orders(first: 5, query: $query) { nodes { ...OrderDetail } } }\n${ORDER_DETAIL}`, {
-            query: `name:${searchValue(name)}`,
+          const lookup = await graphql(h, 'query OrderIdByName($query: String!) { orders(first: 5, query: $query) { nodes { id name } } }', { query: `name:${searchValue(name)}` });
+          const wanted = name.replace(/^#/, '');
+          const match = (Array.isArray(lookup.data?.orders?.nodes) ? lookup.data.orders.nodes : []).find((node: any) => String(node?.name ?? '').replace(/^#/, '') === wanted);
+          if (typeof match?.id !== 'string') throw new ToolFailure('Shopify found no order with that name.');
+          response = await graphql(h, `query Order($id: ID!, $contact: Boolean!) { order(id: $id) { ...OrderDetail } }\n${ORDER_DETAIL}`, {
+            id: match.id,
             contact: args.include_customer_details,
           });
-          const wanted = name.replace(/^#/, '');
-          order = (Array.isArray(response.data?.orders?.nodes) ? response.data.orders.nodes : []).find((node: any) => String(node?.name ?? '').replace(/^#/, '') === wanted);
+          order = response.data?.order;
         }
         if (!order) throw new ToolFailure(`Shopify found no order with that ${args.id !== undefined ? 'id' : 'name'}.`);
         return withWarnings(trimOrder(order), response);
@@ -1483,7 +1538,8 @@ const connector = defineConnector({
         `Runs one GraphQL mutation on the shop's Admin API ${API_VERSION}, such as customerCreate, orderCancel, refundCreate, `
         + 'collectionCreate, productVariantsBulkCreate, productDelete, inventoryAdjustQuantities or tagsAdd. Inventory and refund '
         + 'mutations need @idempotent(key: "...") with a unique key. userErrors mean nothing changed. Sent once, never retried: check '
-        + 'with graphql_query. Webhook subscriptions and new access tokens are refused.',
+        + 'with graphql_query. Refused: webhook subscriptions, carrier and fulfillment service callbacks, server pixel endpoints, '
+        + 'bulk mutations (bulkOperationRunMutation) and new access tokens.',
       inputSchema: {
         type: 'object',
         properties: {
