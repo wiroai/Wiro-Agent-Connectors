@@ -130,7 +130,7 @@ test('create_product saves a draft with the given fields and more_fields, and re
     sku: 'JAR-1L',
     regular_price: '34.00',
     description: '<p>One litre.</p>',
-    categories: [15],
+    categories: [{ id: 15 }],
     images: [{ src: 'https://cdn.example.net/jar.jpg', alt: 'Jar' }],
     manage_stock: true,
     stock_quantity: 25,
@@ -228,6 +228,14 @@ test('update_product changes a product or a variation, and checks the stock befo
   const nothing = await callTool(variation.module, 'update_product', { id: 102 }, variation.ctx);
   assert.match(nothing.payload.error, /Nothing to change/);
   assert.equal(variation.fetch.calls.length, 2);
+
+  // WooCommerce takes categories and tags as objects with an id.
+  const terms = setup(() => jsonResponse(200, fixture(import.meta.url, 'product-created.json')));
+  await callTool(terms.module, 'update_product', { id: 140, tags: [7, 8], categories: [15] }, terms.ctx);
+  assert.equal(terms.fetch.calls[0].method, 'PUT');
+  assert.deepEqual(terms.fetch.calls[0].json, { categories: [{ id: 15 }], tags: [{ id: 7 }, { id: 8 }] });
+  await callTool(terms.module, 'update_product', { id: 140, tags: [] }, terms.ctx);
+  assert.deepEqual(terms.fetch.calls[1].json, { tags: [] }, 'an empty list clears them');
 });
 
 test('list_orders and get_order: no contact details unless asked, notes on request', async () => {
@@ -236,9 +244,11 @@ test('list_orders and get_order: no contact details unless asked, notes on reque
     if (request.path.endsWith('/orders')) return jsonResponse(200, fixture(import.meta.url, 'orders.json'), pages(1, 1));
     return jsonResponse(200, fixture(import.meta.url, 'order.json'));
   });
-  const list = await callTool(module, 'list_orders', { status: ['processing', 'on-hold'], after: '2026-11-01' }, ctx);
+  const list = await callTool(module, 'list_orders', { status: ['processing', 'on-hold'], after: '2026-11-01', before: '2026-11-30' }, ctx);
   assert.equal(fetch.calls[0].query.status, 'processing,on-hold');
-  assert.equal(fetch.calls[0].query.after, '2026-11-01');
+  // WooCommerce takes date-times with seconds only: a date alone covers its whole day.
+  assert.equal(fetch.calls[0].query.after, '2026-11-01T00:00:00');
+  assert.equal(fetch.calls[0].query.before, '2026-11-30T23:59:59');
   assert.deepEqual(list.payload.orders[0], {
     id: 5521,
     number: '5521',
@@ -252,6 +262,17 @@ test('list_orders and get_order: no contact details unless asked, notes on reque
     items: [{ name: 'Ceramic Pour-Over Dripper', quantity: 2, total: '48.00', product_id: 101 }],
     refunded: '5.00',
   });
+
+  await callTool(module, 'list_orders', { after: '2026-11-01T09:30', before: '2026-11-02T18:00:15' }, ctx);
+  assert.equal(fetch.calls[1].query.after, '2026-11-01T09:30:00');
+  assert.equal(fetch.calls[1].query.before, '2026-11-02T18:00:15');
+  // A next page carries the filter as given, and sends it the same way.
+  const pageTwo = Buffer.from(JSON.stringify({ t: 'list_orders', p: 2, o: 0, f: JSON.stringify({ after: '2026-11-01' }) })).toString('base64url');
+  const next = await callTool(module, 'list_orders', { cursor: pageTwo }, ctx);
+  assert.equal(next.isError, false);
+  assert.equal(fetch.calls[2].query.after, '2026-11-01T00:00:00');
+  assert.equal(fetch.calls[2].query.page, '2');
+  fetch.calls.splice(0, 3);
 
   const plain = await callTool(module, 'get_order', { id: 5521 }, ctx);
   assert.equal(plain.payload.billing, undefined);
@@ -293,6 +314,9 @@ test('update_order, add_order_note and create_refund send exactly what was asked
   await callTool(module, 'create_refund', { order_id: 5521, amount: '5.00', refund_payment: true, restock_items: true }, ctx);
   assert.equal(fetch.calls[3].json.api_refund, true);
   assert.equal(fetch.calls[3].json.api_restock, true);
+  // A gateway refund moves money and cannot be undone: the tool is not marked additive or safe to repeat.
+  const { annotations } = module.tools.find((tool) => tool.name === 'create_refund');
+  assert.deepEqual({ ...annotations }, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
 });
 
 test('coupons, customers and reports', async () => {
@@ -354,8 +378,27 @@ test('list_terms and create_term: attributes are not paged, attribute values nee
 
   const created = await callTool(module, 'create_term', { taxonomy: 'categories', name: 'Brewing & Gear' }, ctx);
   assert.equal(fetch.calls[3].method, 'POST');
-  assert.equal(fetch.calls[4].query.search, 'Brewing & Gear');
+  // WordPress stores & as &amp;, so the search leaves it out; a category is looked for under its parent.
+  assert.equal(fetch.calls[4].query.search, 'Brewing');
+  assert.equal(fetch.calls[4].query.parent, '0');
   assert.deepEqual(created.payload, { id: 15, name: 'Brewing & Gear', slug: 'brewing-gear', count: 12, existing: true });
+
+  const elsewhere = setup((request) => (request.method === 'POST'
+    ? jsonResponse(400, fixture(import.meta.url, 'term-exists.json'))
+    : jsonResponse(200, [{ ...fixture(import.meta.url, 'categories.json')[0], id: 16, parent: 9 }], pages(1, 1))));
+  const child = await callTool(elsewhere.module, 'create_term', { taxonomy: 'categories', name: 'Brewing & Gear', parent: 9 }, elsewhere.ctx);
+  assert.equal(elsewhere.fetch.calls[1].query.parent, '9');
+  assert.equal(child.payload.id, 16);
+  const top = await callTool(elsewhere.module, 'create_term', { taxonomy: 'categories', name: 'Brewing & Gear' }, elsewhere.ctx);
+  assert.equal(top.isError, true, 'a same-named category under another parent is not the one WooCommerce meant');
+  assert.match(top.payload.error, /already exists, but it was not found by name/);
+
+  const tags = setup((request) => (request.method === 'POST'
+    ? jsonResponse(400, fixture(import.meta.url, 'term-exists.json'))
+    : jsonResponse(200, [{ id: 21, name: 'Gift', slug: 'gift', count: 2 }], pages(1, 1))));
+  const tag = await callTool(tags.module, 'create_term', { taxonomy: 'tags', name: 'gift' }, tags.ctx);
+  assert.equal(tags.fetch.calls[1].query.parent, undefined, 'tags have no parent');
+  assert.equal(tag.payload.id, 21);
 });
 
 test('errors: the hints, a 404 page, a rate limit, and unclear writes reported as unknown after one request', async () => {
@@ -400,15 +443,30 @@ test('api_get and api_request stay on the WooCommerce routes of the store', asyn
 
   for (const [tool, args, pattern] of [
     ['api_get', { path: '/wp/v2/users' }, /must start with \/wc\/v3\//],
-    ['api_get', { path: '/wc/v3/products', query: { _method: 'DELETE' } }, /_method is not allowed/],
+    ['api_get', { path: '/wc/v3/products', query: { _method: 'DELETE' } }, /"_method" is not allowed/],
     ['api_request', { method: 'POST', path: '/wc-analytics/reports/import' }, /read-only/],
     ['api_request', { method: 'POST', path: '/wc/v3/webhooks', json: { topic: 'order.created', delivery_url: 'https://elsewhere.example' } }, /Webhooks/],
-    ['api_request', { method: 'PUT', path: '/wc/v3/payment_gateways/paypal', json: { settings: { email: 'x@example.com' } } }, /Payment gateway/],
+    ['api_request', { method: 'PUT', path: '/wc/v3/payment_gateways/paypal', json: { settings: { email: 'x@example.com' } } }, /Payment gateways cannot be read or changed/],
+    ['api_get', { path: '/wc/v3/payment_gateways' }, /Payment gateways cannot be read or changed/],
+    ['api_get', { path: '/wc/v3/payment_gateways/stripe' }, /Payment gateways cannot be read or changed/],
     ['api_request', { method: 'PUT', path: '/wc/v3/system_status/tools/clear_transients' }, /System status tools/],
+    // Query names PHP turns into _method or rest_route.
+    ['api_get', { path: '/wc/v3/products/1', query: { '.method': 'DELETE', force: true } }, /"\.method" is not allowed/],
+    ['api_get', { path: '/wc/v3/products', query: { 'rest.route': '/wc/v3/webhooks' } }, /"rest\.route" is not allowed/],
+    ['api_get', { path: '/wc/v3/products', query: { ' rest_route': '/wp/v2/users' } }, /is not allowed/],
+    ['api_get', { path: '/wc/v3/products', query: { 'rest[route': '/wp/v2/plugins' } }, /is not allowed/],
+    ['api_request', { method: 'POST', path: '/wc/v3/products', query: { '_method\u0000': 'DELETE' }, json: {} }, /is not allowed/],
+    // A form body: rest_route in $_POST would switch the route after the key was accepted.
+    ['api_request', { method: 'POST', path: '/wc/v3/products', body: 'rest_route=/wp/v2/users&username=x&roles[]=administrator', content_type: 'application/x-www-form-urlencoded' }, /The body must be JSON/],
+    ['api_request', { method: 'POST', path: '/wc/v3/products', json: { x: '&rest_route=/wp/v2/plugins&' }, content_type: 'multipart/form-data; boundary=x' }, /The body must be JSON/],
+    // An encoded slash becomes a separator when WordPress decodes the route.
+    ['api_request', { method: 'POST', path: '/wc/v3/webhooks%2F', json: { topic: 'order.created' } }, /encoded slash/],
+    ['api_get', { path: '/wc/v3/payment_gateways%2Fstripe' }, /encoded slash/],
   ]) {
     const { payload, isError } = await callTool(module, tool, args, ctx);
     assert.equal(isError, true, JSON.stringify(args));
-    assert.match(payload.error, pattern);
+    assert.match(payload.error, pattern, JSON.stringify(args));
+    assert.match(payload.error, /Nothing was sent/);
   }
   assert.equal(fetch.calls.length, 4);
 
@@ -417,6 +475,29 @@ test('api_get and api_request stay on the WooCommerce routes of the store', asyn
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(broken.fetch.calls.length, 1);
+});
+
+test('api_get and api_request leave the values of password-type settings out of replies', async () => {
+  const methods = [{
+    id: 3,
+    method_id: 'example_carrier',
+    title: 'Carrier rates',
+    settings: {
+      title: { id: 'title', label: 'Title', type: 'text', value: 'Carrier rates', default: '' },
+      api_key: { id: 'api_key', label: 'API key', type: 'password', value: 'carrier-secret-123', default: '' },
+    },
+  }];
+  const { module, fetch, ctx } = setup((request) => (request.method === 'GET'
+    ? jsonResponse(200, methods)
+    : jsonResponse(200, { id: 'example_integration_key', label: 'License key', type: 'password', value: 'license-456', default: '' })));
+  const read = await callTool(module, 'api_get', { path: '/wc/v3/shipping/zones/1/methods' }, ctx);
+  assert.equal(read.payload.data[0].settings.title.value, 'Carrier rates');
+  assert.equal('value' in read.payload.data[0].settings.api_key, false);
+  assert.equal(read.payload.data[0].settings.api_key.value_hidden, true);
+  const written = await callTool(module, 'api_request', { method: 'PUT', path: '/wc/v3/settings/integration/example_integration_key', json: { value: 'license-456' } }, ctx);
+  assert.equal(written.payload.data.value_hidden, true);
+  assert.equal(written.text.includes('carrier-secret-123') || written.text.includes('license-456') || read.text.includes('carrier-secret-123'), false);
+  assert.equal(fetch.calls.length, 2);
 });
 
 test('log lines carry no credentials and no arguments', async () => {

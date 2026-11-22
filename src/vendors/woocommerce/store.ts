@@ -161,3 +161,49 @@ export function cutHtml(html: unknown, max: number): { text?: string; cut?: true
 export function refuse(sentence: string): never {
   throw new ToolFailure(`${sentence} Nothing was sent.`);
 }
+
+/**
+ * A query or form field name as PHP reads it into $_GET or $_POST: cut at a
+ * NUL, leading spaces dropped, and " ", "." and "[" read as "_". So
+ * "rest.route" and "rest[route" arrive as rest_route, and an array field such
+ * as "rest_route[a]" starts with it.
+ */
+export function phpFieldName(name: string): string {
+  return (name.split('\0')[0] ?? '').replace(/^ +/, '').replace(/[ .[]/g, '_');
+}
+
+/** Whether a request body is JSON: PHP reads form bodies into $_POST, where WordPress also takes rest_route from. */
+export function isJsonBody(request: ApiRequest): boolean {
+  if (request.body === undefined) return true;
+  const media = (request.contentType ?? '').trim().toLowerCase().split(/[;,\s]/)[0] ?? '';
+  return media === 'application/json' || /^application\/[a-z0-9!#$&^_.-]+\+json$/.test(media);
+}
+
+/**
+ * A reply without the values of password-type settings (shipping methods,
+ * settings groups): WooCommerce returns them as stored, and they can hold
+ * other services' credentials. The value is left out rather than blanked, so
+ * an object copied from the reply into a change does not overwrite it.
+ */
+export function withoutSecrets(value: unknown, depth = 0): unknown {
+  if (typeof value !== 'object' || value === null || depth > 32) return value;
+  if (Array.isArray(value)) return value.map((item) => withoutSecrets(item, depth + 1));
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value)) out[key] = withoutSecrets(item, depth + 1);
+  if (out['type'] === 'password' && 'value' in out) {
+    delete out['value'];
+    out['value_hidden'] = true;
+  }
+  return out;
+}
+
+/** The text to search terms by: WordPress stores &, < and > in term names as entities, which a search for the name would miss. */
+export function termSearch(name: string): string | undefined {
+  const parts = name.split(/[&<>]/).map((part) => part.trim()).filter(Boolean);
+  return parts.sort((a, b) => b.length - a.length)[0];
+}
+
+/** A term name compared the way WordPress saves it: entities decoded, spaces collapsed, any case. */
+export function termKey(name: string): string {
+  return decodeEntities(name).replace(/\s+/g, ' ').trim().toLowerCase();
+}

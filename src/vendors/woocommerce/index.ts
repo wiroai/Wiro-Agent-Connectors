@@ -23,14 +23,19 @@ import {
   cutHtml,
   decodeEntities,
   hasMore,
+  isJsonBody,
   listPosition,
   pageCursors,
+  phpFieldName,
   plainText,
   refuse,
   restPath,
+  termKey,
+  termSearch,
   totalItems,
   wc,
   withHint,
+  withoutSecrets,
 } from './store.js';
 
 type JsonSchema = ToolDefinition['inputSchema'];
@@ -41,6 +46,27 @@ const ID_LIST = (what: string): JsonSchema => ({ type: 'array', items: { type: '
 const CURSOR_SCHEMA: JsonSchema = { type: 'string', description: 'nextCursor from the previous result (the other arguments then come from it).' };
 const PER_PAGE = (fallback: number): JsonSchema => ({ type: 'integer', minimum: 1, maximum: 100, default: fallback, description: `1 to 100 (default ${fallback}).` });
 const DATE: JsonSchema = { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2})?)?$', description: '2026-11-01 or 2026-11-01T00:00:00, store time.' };
+
+/**
+ * An order date filter as WooCommerce takes it: a date and time with seconds.
+ * A date alone is the start of that day for after, and its last second for
+ * before, so a range of days includes both ends.
+ */
+function orderDate(value: unknown, end: boolean): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${value}T${end ? '23:59:59' : '00:00:00'}`;
+  return /T\d{2}:\d{2}$/.test(value) ? `${value}:00` : value;
+}
+
+/** WooCommerce takes a product's categories and tags as objects: [{"id": 15}]. */
+function withTermObjects(body: Record<string, unknown>): Record<string, unknown> {
+  for (const key of ['categories', 'tags']) {
+    const ids = body[key];
+    if (Array.isArray(ids)) body[key] = ids.map((id) => ({ id }));
+  }
+  return body;
+}
+
 const IMAGE: JsonSchema = {
   type: 'object',
   properties: {
@@ -432,8 +458,8 @@ const LIST_ORDERS_SCHEMA: JsonSchema = {
     customer: { type: 'integer', minimum: 0, description: 'Customer id (0: guests).' },
     product: { type: 'integer', minimum: 1, description: 'Orders with this product id.' },
     search: { type: 'string', minLength: 1, maxLength: 200, description: 'Order number, name, email or address words.' },
-    after: { ...DATE, description: 'Created after this date.' },
-    before: { ...DATE, description: 'Created before this date.' },
+    after: { ...DATE, description: 'Created after this moment, store time: 2026-11-01 (from the start of that day) or 2026-11-01T09:30:00.' },
+    before: { ...DATE, description: 'Created before this moment, store time: 2026-11-30 (up to the end of that day) or 2026-11-30T18:00:00.' },
     orderby: { type: 'string', enum: ['date', 'modified', 'id'], default: 'date' },
     order: { type: 'string', enum: ['desc', 'asc'], default: 'desc' },
     per_page: PER_PAGE(20),
@@ -518,15 +544,20 @@ const REPORT_ROUTES: Record<string, string> = {
 
 const BLOCKED_WRITES: Record<string, string> = {
   webhooks: 'Webhooks cannot be created or changed through this connector.',
-  payment_gateways: 'Payment gateway settings cannot be changed through this connector.',
   system_status: 'System status tools cannot be run through this connector.',
 };
 
 /** Keeps the generic tools to the store's WooCommerce routes. */
 function storeGuard(request: ApiToolRequest): void {
   for (const key of Object.keys(request.query)) {
-    // WordPress lets these override the route and the HTTP method of a request.
-    if (/^(?:_method|rest_route)$/i.test(key)) refuse(`The query parameter ${key} is not allowed: give the route as the path and the method as method.`);
+    // WordPress takes a request's method from _method and its route from rest_route, under the names PHP gives fields.
+    if (/^(?:_method|rest_route)/i.test(phpFieldName(key))) {
+      refuse(`The query parameter ${JSON.stringify(key)} is not allowed: WordPress would read it as _method or rest_route, which change a request's method or route. Give the route as the path and the method as method.`);
+    }
+  }
+  // WordPress decodes the route once more, so an encoded slash would start a new segment there.
+  if (request.segments.some((segment) => /[/\\]/.test(segment))) {
+    refuse('A path segment must not hold an encoded slash or backslash (%2F, %5C): give each part of the route as its own segment.');
   }
   const [namespace, version, resource] = request.segments.map((segment) => segment.toLowerCase());
   if (namespace === 'wc-analytics') {
@@ -534,14 +565,23 @@ function storeGuard(request: ApiToolRequest): void {
     return;
   }
   if (namespace !== 'wc' || version !== 'v3') refuse('The path must start with /wc/v3/ (or /wc-analytics/ for reports).');
+  // Gateway settings come back unmasked, payment credentials included.
+  if (resource === 'payment_gateways') refuse('Payment gateways cannot be read or changed through this connector: their settings hold the store\'s payment credentials.');
   if (request.method !== 'GET' && resource && Object.hasOwn(BLOCKED_WRITES, resource)) refuse(BLOCKED_WRITES[resource] as string);
 }
 
-async function findTerm(h: ToolHelpers, route: string, name: string, slug: string | undefined): Promise<any> {
-  const { data } = await wc(h, route, { query: slug ? { slug, per_page: 10 } : { search: name, per_page: 100 } });
+/**
+ * The term WooCommerce said exists: by its slug, or by its name. A category is
+ * looked for under the parent it was to have (0, the top level, by default),
+ * since another category may have the same name under another parent.
+ */
+async function findTerm(h: ToolHelpers, route: string, name: string, slug: string | undefined, parent: number | undefined): Promise<any> {
+  const query = slug ? { slug, per_page: 10 } : { search: termSearch(name), per_page: 100 };
+  const { data } = await wc(h, route, { query: { ...query, parent } });
   const terms: any[] = Array.isArray(data) ? data : [];
-  const wanted = name.trim().toLowerCase();
-  return terms.find((term) => (slug && term?.slug === slug) || decodeEntities(String(term?.name ?? '')).trim().toLowerCase() === wanted);
+  const wanted = termKey(name);
+  return terms.find((term) => (parent === undefined || Number(term?.parent ?? 0) === parent)
+    && ((slug !== undefined && term?.slug === slug) || termKey(String(term?.name ?? '')) === wanted));
 }
 
 const connector = defineConnector({
@@ -655,7 +695,7 @@ const connector = defineConnector({
       async run(args: Record<string, any>, h) {
         const variations: any[] | undefined = args['variations'];
         if (variations?.length && args['type'] !== 'variable') refuse('variations are for type variable only.');
-        const { data: product } = await wc(h, '/products', { method: 'POST', json: productBody(args, ['variations'], CREATE_KEYS), write: true });
+        const { data: product } = await wc(h, '/products', { method: 'POST', json: withTermObjects(productBody(args, ['variations'], CREATE_KEYS)), write: true });
         const result = trimProduct(product);
         if (!variations?.length) return result;
         const id = product?.id;
@@ -720,7 +760,7 @@ const connector = defineConnector({
         } else if (args['image'] !== undefined) {
           refuse('image is for variations: a product takes images.');
         }
-        const body = productBody(args, ['id', 'variation_id', 'expected_stock_quantity'], UPDATE_KEYS);
+        const body = withTermObjects(productBody(args, ['id', 'variation_id', 'expected_stock_quantity'], UPDATE_KEYS));
         if (!Object.keys(body).length) refuse('Nothing to change: give at least one field besides id.');
 
         let previous: any;
@@ -760,8 +800,8 @@ const connector = defineConnector({
             customer: f['customer'],
             product: f['product'],
             search: f['search'],
-            after: f['after'],
-            before: f['before'],
+            after: orderDate(f['after'], false),
+            before: orderDate(f['before'], true),
             orderby: f['orderby'] ?? 'date',
             order: f['order'] ?? 'desc',
             per_page: perPage,
@@ -864,14 +904,16 @@ const connector = defineConnector({
       },
     },
     {
+      // A write, not a create: with refund_payment it sends money back through the gateway, which cannot be undone.
       name: 'create_refund',
-      kind: 'create',
+      kind: 'write',
       check: 'get_order',
       title: 'Refund a WooCommerce order',
       description:
         'Records a refund on an order: an amount, a reason, and optionally which line items (ids from get_order) and quantities. By '
         + 'default it only records the refund; refund_payment: true also sends the money back through the payment gateway, and '
-        + 'restock_items: true puts the refunded items back in stock. A refund cannot be undone.',
+        + 'restock_items: true puts the refunded items back in stock. A refund cannot be undone. Not retried: after an unclear '
+        + 'outcome, look at the order\'s refunds with get_order before trying again.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1139,7 +1181,7 @@ const connector = defineConnector({
         } catch (error) {
           if (!(error instanceof ToolFailure) || error.details.vendorCode !== 'term_exists') throw error;
         }
-        const existing = await findTerm(h, route, args.name, args.slug);
+        const existing = await findTerm(h, route, args.name, args.slug, args.taxonomy === 'categories' ? args.parent ?? 0 : undefined);
         if (!existing) throw new ToolFailure('WooCommerce says this term already exists, but it was not found by name: look for it with list_terms. Nothing was changed.');
         return { ...trimTerm(existing), existing: true };
       },
@@ -1149,12 +1191,19 @@ const connector = defineConnector({
       label: 'WooCommerce',
       description:
         'The WooCommerce REST API v3 of the connected store: paths start with /wc/v3/, such as /wc/v3/customers/12, '
-        + '/wc/v3/products/34/variations/batch or /wc/v3/settings/general (GET also reads /wc-analytics/ reports). DELETE needs '
-        + 'force=true. Webhooks, payment gateways and system status tools are out of reach. Reference: https://woocommerce.github.io/woocommerce-rest-api-docs/.',
+        + '/wc/v3/products/34/variations/batch or /wc/v3/settings/general (GET also reads /wc-analytics/ reports); bodies are '
+        + 'JSON (json, or body with a JSON content_type). DELETE moves products, orders and coupons to the trash; force=true '
+        + 'deletes for good (needed for customers, terms and others without a trash). Webhooks, payment gateways and system status '
+        + 'tools are out of reach, and password-type setting values are left out of replies. Reference: '
+        + 'https://woocommerce.github.io/woocommerce-rest-api-docs/.',
       guard: storeGuard,
       send: async (request, h) => {
+        if (!isJsonBody(request)) {
+          refuse('The body must be JSON: give it as json, or as body with a JSON content_type. A form body is refused, since WordPress could read a route from it.');
+        }
         try {
-          return await h.api({ ...request, origin: h.originOf('storeurl'), path: restPath(h, request.path) });
+          const response = await h.api({ ...request, origin: h.originOf('storeurl'), path: restPath(h, request.path) });
+          return { ...response, data: withoutSecrets(response.data) };
         } catch (error) {
           throw withHint(error);
         }
