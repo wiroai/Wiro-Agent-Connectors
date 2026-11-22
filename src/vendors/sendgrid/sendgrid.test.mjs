@@ -368,8 +368,8 @@ test('a rate limit carries retryAfter from SendGrid\'s reset header', async () =
 test('writes without a clear answer are unknown, sent once, with the read tool to check', async () => {
   const writes = [
     ['send_email', { from: { email: 'a@example.com' }, to: [{ email: 'b@example.com' }], subject: 'S', text: 'T' }, 'search_email_activity'],
-    ['upsert_contacts', { contacts: [{ email: 'b@example.com' }] }, 'get_import_status'],
-    ['delete_contacts', { ids: ['a1b2c3d4e5'] }, 'get_import_status'],
+    ['upsert_contacts', { contacts: [{ email: 'b@example.com' }] }, 'search_contacts'],
+    ['delete_contacts', { ids: ['a1b2c3d4e5'] }, 'search_contacts'],
     ['create_list', { name: 'L' }, 'list_lists'],
     ['delete_list', { list_id: LIST }, 'list_lists'],
     ['create_single_send', { name: 'S' }, 'list_single_sends'],
@@ -400,12 +400,30 @@ test('api_get and api_request reach the rest of /v3/, but not API keys, teammate
   assert.equal(fetch.calls[0].headers.authorization, `Bearer ${KEY}`);
 
   const keys = await callTool(module, 'api_get', { path: '/v3/api_keys' }, ctx);
-  assert.match(keys.payload.error, /Reading SendGrid API keys is not available here/);
+  assert.equal(keys.payload.error, 'SendGrid API keys are not available here. Nothing was sent.');
   const teammate = await callTool(module, 'api_request', { method: 'POST', path: '/v3/teammates', json: { email: 'x@example.com' } }, ctx);
-  assert.match(teammate.payload.error, /API keys, teammates, subusers or access settings is not available here/);
+  assert.match(teammate.payload.error, /^Changing SendGrid teammates, subusers, access settings, single sign-on or the account's email, username or password is not available here\. Nothing was sent\.$/);
   const segment = await callTool(module, 'api_request', { method: 'POST', path: '/v3/marketing/segments/2.0', json: { name: 'VIP', query_dsl: "email LIKE '%@example.com'" } }, ctx);
   assert.equal(segment.isError, false);
   assert.equal(fetch.calls.length, 2);
+
+  // The guard looks at the path as a server that decodes escapes would, whatever the case.
+  for (const [method, path] of [['GET', '/v3/api%5Fkeys'], ['POST', '/v3/API_KEYS'], ['POST', '/v3/marketing%2F..%2Fapi_keys'], ['DELETE', '/v3/api_keys;x/k1']]) {
+    const refused = await callTool(module, method === 'GET' ? 'api_get' : 'api_request', { ...(method === 'GET' ? {} : { method }), path }, ctx);
+    assert.equal(refused.payload.error, 'SendGrid API keys are not available here. Nothing was sent.', path);
+  }
+  for (const [method, path] of [['POST', '/v3/teammate%73'], ['POST', '/v3/Teammates'], ['DELETE', '/v3/subusers/x'], ['PATCH', '/v3/scopes/requests/r1/approve'], ['PUT', '/v3/user/email'], ['PUT', '/v3/user/%65mail'], ['PUT', '/v3/User/Password'], ['PUT', '/v3/user/username']]) {
+    const refused = await callTool(module, 'api_request', { method, path, json: {} }, ctx);
+    assert.match(refused.payload.error, /^Changing SendGrid teammates/, path);
+  }
+  const escaped = await callTool(module, 'api_request', { method: 'POST', path: '/v3/..%2Fv2/x' }, ctx);
+  assert.equal(escaped.payload.error, 'The path must stay under /v3/. Nothing was sent.');
+  assert.equal(fetch.calls.length, 2);
+  // Reading teammates and the account email works, and so do the webhook settings.
+  for (const path of ['/v3/teammates', '/v3/user/email']) assert.equal((await callTool(module, 'api_get', { path }, ctx)).isError, false, path);
+  const webhook = await callTool(module, 'api_request', { method: 'PATCH', path: '/v3/user/webhooks/event/settings', json: { enabled: true } }, ctx);
+  assert.equal(webhook.isError, false);
+  assert.equal(fetch.calls.length, 5);
 });
 
 test('logs never carry the key or a recipient', async () => {

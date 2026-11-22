@@ -145,6 +145,27 @@ async function attachmentsFor(h: ToolHelpers, attachments: Attachment[]): Promis
   return out;
 }
 
+/**
+ * A path as a server that decodes percent-escapes routes it: the decoded segments split again at "/" and "\",
+ * each cut at ";" (a path parameter), lower-cased, with empty and "." parts dropped and ".." resolved. The guard
+ * decides on these parts, so an escape (api%5Fkeys, teammate%73) or a capital letter cannot get past it.
+ */
+function routedParts(segments: readonly string[]): string[] {
+  const parts: string[] = [];
+  for (const piece of segments.join('/').split(/[\\/]/)) {
+    const part = (piece.split(';')[0] ?? '').toLowerCase();
+    if (part === '' || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  return parts;
+}
+
+/** Account administration the generic tools may read but never change (scopes: teammates' access requests). */
+const ADMIN_AREAS = new Set(['teammates', 'subusers', 'access_settings', 'sso', 'scopes']);
+/** The account's own sign-in details under /v3/user/: changing them could hand the account to someone else. */
+const SIGN_IN_DETAILS = new Set(['email', 'username', 'password']);
+
 const connector = defineConnector({
   vendor: 'sendgrid',
   label: LABEL,
@@ -371,7 +392,8 @@ const connector = defineConnector({
     {
       name: 'upsert_contacts',
       kind: 'update',
-      check: 'get_import_status',
+      // A job_id comes back only with a clear answer, so an unclear one is checked on the contacts themselves.
+      check: 'search_contacts',
       title: 'Add or update SendGrid contacts',
       description:
         'Adds contacts to Marketing Campaigns or updates those with the same email (or other identifier), optionally adding them to lists. '
@@ -436,7 +458,7 @@ const connector = defineConnector({
       title: 'Search SendGrid contacts',
       description:
         'Finds Marketing Campaigns contacts with an SGQL query, e.g. email LIKE \'ann%\' AND CONTAINS(list_ids, \'<list id>\'), '
-        + 'first_name = \'Ann\', or created_at > TIMESTAMP \'2026-01-01T00:00:00Z\'. Returns the number found and up to 50 of them.',
+        + 'first_name = \'Ann\', contact_id = \'<contact id>\', or created_at > TIMESTAMP \'2026-01-01T00:00:00Z\'. Returns the number found and up to 50 of them.',
       inputSchema: {
         type: 'object',
         properties: { query: { type: 'string', minLength: 1, maxLength: 5000, description: 'The SGQL condition.' } },
@@ -480,7 +502,7 @@ const connector = defineConnector({
     {
       name: 'delete_contacts',
       kind: 'delete',
-      check: 'get_import_status',
+      check: 'search_contacts',
       title: 'Delete SendGrid contacts',
       description: 'Deletes Marketing Campaigns contacts by id (from search_contacts), up to 100 at a time. SendGrid deletes them in the background: the result has a job_id for get_import_status.',
       inputSchema: {
@@ -1031,12 +1053,14 @@ const connector = defineConnector({
         + 'Reference: https://docs.sendgrid.com/api-reference.',
       basePath: '/v3/',
       guard(request) {
-        // API keys, teammates, subusers and access settings are account administration.
-        if (request.method !== 'GET' && /^\/v3\/(api_keys|teammates|subusers|access_settings|sso)(\/|$)/.test(request.path)) {
-          throw new ToolFailure('Changing SendGrid API keys, teammates, subusers or access settings is not available here. Nothing was sent.');
-        }
-        if (/^\/v3\/api_keys(\/|$)/.test(request.path)) {
-          throw new ToolFailure('Reading SendGrid API keys is not available here. Nothing was sent.');
+        const [base, area = '', detail = ''] = routedParts(request.segments);
+        if (base !== 'v3') throw new ToolFailure('The path must stay under /v3/. Nothing was sent.');
+        if (area === 'api_keys') throw new ToolFailure('SendGrid API keys are not available here. Nothing was sent.');
+        // Teammates, subusers, access settings and the account's sign-in details are account administration.
+        if (request.method !== 'GET' && (ADMIN_AREAS.has(area) || (area === 'user' && SIGN_IN_DETAILS.has(detail)))) {
+          throw new ToolFailure(
+            'Changing SendGrid teammates, subusers, access settings, single sign-on or the account\'s email, username or password is not available here. Nothing was sent.',
+          );
         }
       },
     }),

@@ -51,7 +51,7 @@ Quick start table:
 | `list_suppressions` | read | Bounces, blocks, spam reports, invalid emails or global unsubscribes. |
 | `delete_suppression` | delete | Removes one address from a suppression list. |
 | `api_get` | read | Any other GET under `/v3/`, such as `/v3/marketing/segments/2.0` or `/v3/marketing/contacts/count`. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE under `/v3/`. Sent once, never retried. API keys, teammates, subusers and access settings are left out. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE under `/v3/`. Sent once, never retried. API keys are left out, and so are changes to teammates and their access requests, subusers, access settings, single sign-on and the account's email, username or password. |
 
 Connection check: `get_account` with no arguments.
 
