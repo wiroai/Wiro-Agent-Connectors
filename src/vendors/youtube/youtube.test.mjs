@@ -330,13 +330,42 @@ function fileServer(file, { etag = '"v1"', whole = false } = {}) {
   server.handler = (request) => {
     server.reads.push(request.headers.range);
     const match = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range ?? '');
-    if (whole || !match) return bytesResponse(200, file, { 'content-type': 'video/mp4', etag: server.etag });
+    if (whole || !match) return bytesResponse(200, file, { 'content-type': 'video/mp4', 'content-length': String(file.length), etag: server.etag });
     const first = Number(match[1]);
     if (first >= file.length) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${file.length}` } });
     const last = Math.min(Number(match[2]), file.length - 1);
-    return bytesResponse(206, file.slice(first, last + 1), { 'content-type': 'video/mp4', 'content-range': `bytes ${first}-${last}/${file.length}`, etag: server.etag });
+    return bytesResponse(206, file.slice(first, last + 1), {
+      'content-type': 'video/mp4',
+      'content-length': String(last - first + 1),
+      'content-range': `bytes ${first}-${last}/${file.length}`,
+      etag: server.etag,
+    });
   };
   return server;
+}
+
+/**
+ * Downloads under a host's guarded fetch rules: of the module's headers only
+ * Accept and User-Agent go on, and Range as well when `passRange`; a reply
+ * over `cap` bytes is refused as too large, by its Content-Length before it
+ * is read, else while it is read.
+ */
+function hostDownloads(download, { cap, passRange }) {
+  const tooLarge = () => Object.assign(new Error(`the file is larger than ${cap} bytes`), { code: 'TOO_LARGE' });
+  return async (request) => {
+    const headers = {};
+    for (const name of ['accept', 'user-agent', ...(passRange ? ['range'] : [])]) {
+      if (request.headers[name] !== undefined) headers[name] = request.headers[name];
+    }
+    const response = await download({ ...request, headers });
+    if (Number(response.headers.get('content-length')) > cap) {
+      await response.body?.cancel();
+      throw tooLarge();
+    }
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > cap) throw tooLarge();
+    return new Response(bytes, { status: response.status, headers: response.headers });
+  };
 }
 
 const resumeIncomplete = (received) => new Response(null, { status: 308, headers: received ? { range: `bytes=0-${received - 1}` } : {} });
@@ -371,11 +400,15 @@ function uploadSession(file, { take, onPart, answer } = {}) {
   return session;
 }
 
-function bigUpload(file, { server = fileServer(file), session = uploadSession(file), accounts = LOCKED, clock = false } = {}) {
+function bigUpload(file, { server = fileServer(file), session = uploadSession(file), accounts = LOCKED, clock = false, host } = {}) {
   const { module, context } = loadModuleFor(import.meta.url);
   const advance = clock ? controlClock(context) : undefined;
-  // Through to the current handlers, so a test can hold one back.
-  const fetch = fakeFetch(youtube({ [`GET ${BIG}`]: (request) => server.handler(request), [`PUT ${API}/upload/youtube/v3/videos`]: (request) => session.handler(request) }));
+  // Through to the current handlers, so a test can hold one back. `host` puts a host's download rules in between.
+  const download = (request) => server.handler(request);
+  const fetch = fakeFetch(youtube({
+    [`GET ${BIG}`]: host ? hostDownloads(download, host) : download,
+    [`PUT ${API}/upload/youtube/v3/videos`]: (request) => session.handler(request),
+  }));
   const { ctx, logs } = makeContext({ credentials, accounts, fetch });
   return { module, fetch, ctx, logs, server, session, advance };
 }
@@ -493,6 +526,39 @@ test('a video over the host\'s download limit, with no byte ranges, is refused b
   assert.equal(isError, true);
   assert.match(payload.error, /^The host refused the download as too large for it: .*does not pass byte-range requests \(the Range header\) on.*Use a smaller video, a host that passes byte ranges on, or a smaller part_mb\. Nothing was changed\.$/);
   assert.deepEqual(pathsOf(fetch), ['GET /youtube/v3/channels', 'GET /big.mp4'], 'no upload was opened');
+});
+
+test('a video over the host\'s download limit goes up part by part when the host passes Range on, and is refused untouched when it drops it', async () => {
+  const cap = 50 * MIB;
+  const file = videoFile(60 * MIB + 123);
+  const args = { ...BIG_ARGS, part_mb: 24 };
+
+  // Range dropped: the whole file comes back, over the limit, and YouTube is not reached.
+  const dropping = bigUpload(file, { host: { cap, passRange: false } });
+  const refused = await callTool(dropping.module, 'upload_video', args, dropping.ctx);
+  assert.equal(refused.isError, true);
+  assert.match(refused.payload.error, /^The host refused the download as too large for it: .* Nothing was changed\.$/);
+  assert.deepEqual(dropping.server.reads, [undefined], 'the file server got no Range header');
+  assert.deepEqual(pathsOf(dropping.fetch), ['GET /youtube/v3/channels', 'GET /big.mp4'], 'no upload was opened');
+
+  // Range passed on: every download is one part within the limit, never the whole file, across calls.
+  let advance;
+  const session = uploadSession(file, { onPart: () => advance(12_000) });
+  const passing = bigUpload(file, { session, clock: true, host: { cap, passRange: true } });
+  advance = passing.advance;
+  // Each part takes 12 s: a second one fits 35 s (12 s + 1.5 x 12 s), a third does not (24 s + 18 s).
+  const first = await callTool(passing.module, 'upload_video', args, passing.ctx);
+  assert.equal(first.isError, false, first.payload.error);
+  assert.deepEqual([first.payload.done, first.payload.bytes_uploaded, first.payload.bytes_total], [false, 48 * MIB, file.length]);
+  const second = await callTool(passing.module, 'upload_video', { ...args, cursor: first.payload.nextCursor }, passing.ctx);
+  assert.equal(second.isError, false, second.payload.error);
+  assert.equal(second.payload.done, true);
+  assert.equal(second.payload.id, 'vid0000009z');
+  assert.equal(second.payload.bytes, file.length);
+  assert.deepEqual(passing.server.reads, ['bytes=0-25165823', 'bytes=25165824-50331647', 'bytes=50331648-62914682']);
+  assert.deepEqual(session.parts, [[0, 25165823], [25165824, 50331647], [50331648, 62914682]]);
+  assert.equal(session.asks, 1, 'the second call asked YouTube how far the upload got');
+  assert.equal(passing.fetch.calls.filter((call) => call.method === 'POST').length, 1, 'one upload, opened once');
 });
 
 test('a last part without a clear answer: YouTube is asked once, and the video comes back if it was made', async () => {
