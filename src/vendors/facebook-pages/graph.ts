@@ -64,17 +64,17 @@ export function asUser(auth: UserAuth, query: Query = {}): { headers: Record<str
 }
 
 // Page tokens, kept for a short time so a post does not need a lookup every
-// time. Keyed by a SHA-256 hash of the credential and the Page, never the
-// credential itself.
+// time, and the Page each token from an older setup belongs to. Keyed by a
+// SHA-256 hash of the credential and the Page, never the credential itself.
 const TOKEN_TTL_MS = 15 * 60 * 1000;
 const MAX_TOKENS = 256;
-const tokens = new Map<string, { value: string; expiresAt: number }>();
+const tokens = new Map<string, { value: unknown; expiresAt: number }>();
 
 export function tokenKey(...parts: string[]): Promise<string> {
   return sha256Hex(parts.join('\n'));
 }
 
-export function cachedToken(key: string): string | undefined {
+function cached(key: string): unknown {
   const hit = tokens.get(key);
   if (!hit) return undefined;
   if (hit.expiresAt > Date.now()) return hit.value;
@@ -82,7 +82,7 @@ export function cachedToken(key: string): string | undefined {
   return undefined;
 }
 
-export function rememberToken(key: string, value: string): void {
+function remember(key: string, value: unknown): void {
   const now = Date.now();
   for (const [other, item] of tokens) if (item.expiresAt <= now) tokens.delete(other);
   while (tokens.size >= MAX_TOKENS) {
@@ -91,6 +91,31 @@ export function rememberToken(key: string, value: string): void {
     tokens.delete(oldest);
   }
   tokens.set(key, { value, expiresAt: now + TOKEN_TTL_MS });
+}
+
+export function cachedToken(key: string): string | undefined {
+  const value = cached(key);
+  return typeof value === 'string' ? value : undefined;
+}
+
+export function rememberToken(key: string, value: string): void {
+  remember(key, value);
+}
+
+/** A Page: its id, name and category. */
+export interface PageIdentity {
+  id: string;
+  name?: string;
+  category?: string;
+}
+
+export function cachedPage(key: string): PageIdentity | undefined {
+  const value = cached(key);
+  return typeof value === 'object' && value !== null ? (value as PageIdentity) : undefined;
+}
+
+export function rememberPage(key: string, page: PageIdentity): void {
+  remember(key, { ...page });
 }
 
 /**
@@ -216,7 +241,11 @@ export function scheduledSeconds(value: string): number {
   return Math.floor(time / 1000);
 }
 
-/** Text that could hand out a token or an app secret is kept out of the generic tools. */
+/**
+ * Text that could hand out a token or an app secret is kept out of the generic
+ * tools: a second check, on the request as the core resolved it, after the
+ * full check of every argument (graph-rules.ts).
+ */
 export function refuseSecrets(request: ApiToolRequest, label: string): void {
   const texts = [...request.segments, ...Object.keys(request.query), ...Object.values(request.query).flat()];
   if (request.segments.includes('oauth') || texts.some((text) => /access_token|appsecret|app_secret|client_secret|debug_token/i.test(text))) {

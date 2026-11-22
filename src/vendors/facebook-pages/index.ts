@@ -11,6 +11,11 @@
 // every Page call goes out with that Page token, kept in memory for 15 minutes
 // and keyed by a hash of the credential and the Page. The app secret proof
 // goes only with the token it was made for, never with a Page token.
+//
+// A connection made with an older setup may have neither: it kept the chosen
+// Pages' own tokens, as a JSON list in `accesstoken`. They are used as they
+// are; the Page each one belongs to is read from /me once and kept in memory
+// for 15 minutes, keyed by a hash of the token.
 
 import {
   allowedAccounts,
@@ -24,6 +29,7 @@ import {
 import {
   asUser,
   bearer,
+  cachedPage,
   cachedToken,
   compact,
   DATE_PATTERN,
@@ -37,6 +43,7 @@ import {
   pickAccount,
   poll,
   refuseSecrets,
+  rememberPage,
   rememberToken,
   rowsOf,
   RUPLOAD,
@@ -44,7 +51,10 @@ import {
   tokenKey,
   userAuth,
   VERSION,
+  type ListState,
+  type PageIdentity,
 } from './graph.js';
+import { RateLimited, readGraphRequest, refuseUnsafe, withoutSecrets, withRateLimits } from './graph-rules.js';
 
 type SchemaType = ToolDefinition['inputSchema'];
 
@@ -75,8 +85,115 @@ const DEFAULT_POST_METRICS = ['post_media_view', 'post_total_media_view_unique',
 const DAY_METRICS = ['page_media_view', 'page_post_engagements', 'page_daily_follows_unique', 'page_daily_unfollows_unique', 'page_follows'];
 const METRIC_NAME: SchemaType = { type: 'string', pattern: '^[a-z0-9_]{2,80}$' };
 
+const LEGACY_TOKEN = /^[^\s"'\\<>]{10,4096}$/;
+const MAX_LEGACY_TOKENS = 100;
+const RENEW = 'This connection still uses the Page tokens of an older setup: sign in to Facebook again to renew it.';
+
+/**
+ * The Page tokens an older setup kept (`accesstoken`, a JSON list with one
+ * token per Page), when the connection has no sign-in or system user token.
+ */
+function legacyTokens(h: ToolHelpers): string[] | undefined {
+  if (h.credentials['access_token'] || h.credentials['systemusertoken']) return undefined;
+  const raw = h.credentials['accesstoken'];
+  if (!raw) return undefined;
+  let list: unknown = raw;
+  if (/^[["]/.test(raw)) {
+    try {
+      list = JSON.parse(raw);
+    } catch {
+      list = undefined;
+    }
+  }
+  const tokens = (Array.isArray(list) ? list : [list])
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => LEGACY_TOKEN.test(item));
+  if (!tokens.length) {
+    throw new ToolFailure('Facebook is not connected correctly: the Page token list from an older setup could not be read. Sign in to Facebook again. Nothing was sent.');
+  }
+  return [...new Set(tokens)].slice(0, MAX_LEGACY_TOKENS);
+}
+
+/** A token of the older setup that Facebook answers for, but not as a Page. */
+class NotAPageToken extends ToolFailure {}
+
+/** Facebook refused the token itself (expired, revoked, not a Page's): not a rate limit, an outage or a network error. */
+function refusedToken(error: unknown): error is ToolFailure {
+  if (error instanceof NotAPageToken) return true;
+  if (!(error instanceof ToolFailure) || error instanceof RateLimited) return false;
+  const { status } = error.details;
+  return status === 400 || status === 401 || status === 403;
+}
+
+/** The Page a token from an older setup belongs to (/me, for a Page token), kept for a short time. */
+async function legacyPage(h: ToolHelpers, token: string): Promise<PageIdentity> {
+  const key = await tokenKey('legacy', token);
+  const hit = cachedPage(key);
+  if (hit) return hit;
+  // category is a Page field: Facebook refuses it for a token that is not a Page's.
+  const { data } = await h.api({ path: `/${VERSION}/me`, query: { fields: 'id,name,category' }, headers: bearer(token) });
+  const id = typeof data?.id === 'string' || typeof data?.id === 'number' ? String(data.id) : '';
+  if (!/^[0-9]{1,30}$/.test(id)) throw new NotAPageToken('Facebook did not say which Page a token of the older setup belongs to.');
+  const page: PageIdentity = {
+    id,
+    ...(typeof data?.name === 'string' ? { name: data.name } : {}),
+    ...(typeof data?.category === 'string' ? { category: data.category } : {}),
+  };
+  rememberPage(key, page);
+  return page;
+}
+
+/** The Pages the older setup's tokens reach, each with its token, until `wanted` is found; and the failures of the tokens Facebook refused. */
+async function legacyPages(h: ToolHelpers, tokens: string[], wanted?: string): Promise<{ pages: Array<PageIdentity & { token: string }>; refused: ToolFailure[] }> {
+  const pages: Array<PageIdentity & { token: string }> = [];
+  const refused: ToolFailure[] = [];
+  for (const token of tokens) {
+    try {
+      const page = await legacyPage(h, token);
+      pages.push({ ...page, token });
+      if (page.id === wanted) break;
+    } catch (error) {
+      if (!refusedToken(error)) throw error;
+      refused.push(error);
+    }
+  }
+  return { pages, refused };
+}
+
+/** The token an older setup kept for the Page. */
+async function legacyPageToken(h: ToolHelpers, tokens: string[], pageId: string): Promise<string> {
+  const { pages, refused } = await legacyPages(h, tokens, pageId);
+  const match = pages.find((page) => page.id === pageId);
+  if (match) return match.token;
+  const [first] = refused;
+  if (first) throw new ToolFailure(`${first.message} ${RENEW}`, first.details);
+  throw new ToolFailure(`This connection has no token for the Page ${pageId}: its older setup kept tokens for other Pages. Sign in to Facebook again to add it. Nothing was changed.`);
+}
+
+/** list_pages for a connection that has only an older setup's Page tokens. */
+async function listLegacyPages(h: ToolHelpers, tokens: string[], state: ListState): Promise<Record<string, unknown>> {
+  const { pages, refused } = await legacyPages(h, tokens);
+  const [first] = refused;
+  if (!pages.length && first) throw new ToolFailure(`${first.message} ${RENEW}`, first.details);
+  const allowed = allowedAccounts(h.ctx.accounts, 'pages');
+  const items = pages.filter((page) => !allowed || allowed.includes(page.id)).map(trimPage);
+  const end = state.skip + state.limit;
+  return h.page({
+    key: 'pages',
+    items: items.slice(state.skip, end),
+    ...(refused.length
+      ? { extra: { note: `Facebook refused ${refused.length} of the Page tokens this connection kept from an older setup: sign in to Facebook again to bring those Pages back.` } }
+      : {}),
+    resumeAt: (index) => h.makeCursor({ o: state.skip + index, n: state.limit }),
+    ...(end < items.length ? { nextPage: h.makeCursor({ o: end, n: state.limit }) } : {}),
+  });
+}
+
 /** The Page's own access token, fetched with the sign-in token and kept for a short time. */
 async function pageAccess(h: ToolHelpers, pageId: string): Promise<string> {
+  const legacy = legacyTokens(h);
+  if (legacy) return legacyPageToken(h, legacy, pageId);
   const auth = userAuth(h.credentials);
   const key = await tokenKey('page', auth.token, pageId);
   const hit = cachedToken(key);
@@ -233,12 +350,15 @@ const generic: ToolDefinition[] = apiTools({
   description:
     'The Facebook Graph API v26.0 at https://graph.facebook.com, as one of the Pages chosen for this connection (page_id; the Page\'s own token '
     + 'is added for you): paths start with /v26.0/, such as /v26.0/<page_id>/feed, /v26.0/<post_id>/comments, /v26.0/<comment_id> '
-    + '(POST is_hidden=true hides a comment, DELETE removes it) or /v26.0/<post_id> (DELETE removes a post). '
-    + 'Reference: https://developers.facebook.com/docs/pages-api.',
+    + '(POST is_hidden=true hides a comment, DELETE removes it) or /v26.0/<post_id> (DELETE removes a post). One request per call: '
+    + 'batch and method are refused, and tokens stay out of reach. Reference: https://developers.facebook.com/docs/pages-api.',
   basePath: `/${VERSION}/`,
   methods: ['POST', 'DELETE'],
   guard: (request) => refuseSecrets(request, 'Facebook'),
-  send: (request, h) => h.api({ ...request, headers: { ...request.headers, ...bearer(pageTokens.get(h) ?? '') } }),
+  send: async (request, h) => {
+    const response = await h.api({ ...request, headers: { ...request.headers, ...bearer(pageTokens.get(h) ?? '') } });
+    return { ...response, data: withoutSecrets(response.data) };
+  },
 });
 
 /** The generic tools, with the Page they act as: its token signs the request. */
@@ -247,6 +367,8 @@ const genericTools: ToolDefinition[] = generic.map((tool) => ({
   inputSchema: { ...tool.inputSchema, properties: { page_id: PAGE_ID, ...tool.inputSchema.properties } },
   async run(args: Record<string, unknown>, h: ToolHelpers) {
     const { page_id: given, ...rest } = args;
+    // Everything Graph would read (query, json or form body, batch, method) is checked before the Page token is fetched.
+    refuseUnsafe(readGraphRequest(rest, 'Facebook'), 'Facebook');
     const pageId = pickAccount(h, 'pages', typeof given === 'string' ? given : undefined, PAGE);
     pageTokens.set(h, await pageAccess(h, pageId));
     return tool.run(rest, h);
@@ -257,12 +379,13 @@ const connector = defineConnector({
   vendor: 'facebook-pages',
   label: 'Facebook',
   origins: ['https://graph.facebook.com', RUPLOAD],
-  credentials: ['access_token', 'systemusertoken', 'appsecret_proof'],
-  requiredCredentials: [['access_token'], ['systemusertoken']],
+  credentials: ['access_token', 'systemusertoken', 'appsecret_proof', 'accesstoken'],
+  requiredCredentials: [['access_token'], ['systemusertoken'], ['accesstoken']],
   credentialLabels: {
     access_token: 'Facebook access token',
     systemusertoken: 'Facebook system user token',
     appsecret_proof: 'Facebook app secret proof',
+    accesstoken: 'Facebook Page token list from an older setup',
   },
   accountPickers: [
     {
@@ -276,7 +399,7 @@ const connector = defineConnector({
       legacyField: 'pageid',
     },
   ],
-  tools: [
+  tools: withRateLimits([
     {
       name: 'list_pages',
       kind: 'read',
@@ -294,8 +417,10 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { limit: number; cursor?: string }, h) {
-        const auth = userAuth(h.credentials);
         const state = listState(h, args.cursor, args.limit);
+        const legacy = legacyTokens(h);
+        if (legacy) return listLegacyPages(h, legacy, state);
+        const auth = userAuth(h.credentials);
         const { data } = await h.api({
           path: `/${VERSION}/me/accounts`,
           ...asUser(auth, { fields: 'id,name,category,tasks,access_token', limit: state.limit, after: state.after }),
@@ -804,7 +929,7 @@ const connector = defineConnector({
       },
     },
     ...genericTools,
-  ],
+  ], 'Facebook'),
 });
 
 export = connector;

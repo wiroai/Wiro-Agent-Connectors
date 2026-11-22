@@ -140,7 +140,89 @@ test('the account lock: a Page outside the chosen ones is refused before any req
 
   const missing = setup(router({}), { credentials: {} });
   const notConnected = await callTool(missing.module, 'list_pages', {}, missing.ctx);
-  assert.match(notConnected.payload.error, /Facebook is not connected: it needs the Facebook access token, or the Facebook system user token\./);
+  assert.match(notConnected.payload.error, /Facebook is not connected: it needs the Facebook access token, the Facebook system user token, or the Facebook Page token list from an older setup\./);
+});
+
+const LEGACY_BAKERY = 'EAALegacyPageTokenBakery01';
+const LEGACY_CAFE = 'EAALegacyPageTokenCafe0002';
+const LEGACY_EXPIRED = 'EAALegacyPageTokenExpired3';
+
+/** /me answers for each token of an older setup: the Page it belongs to, or an expired token. */
+function legacyMe(request) {
+  const token = request.headers.authorization;
+  if (token === `Bearer ${LEGACY_BAKERY}`) return jsonResponse(200, f('me-page-1001.json'));
+  if (token === `Bearer ${LEGACY_CAFE}`) return jsonResponse(200, f('me-page-1002.json'));
+  return jsonResponse(400, f('error-expired.json'));
+}
+
+test('an older setup\'s Page tokens: list_pages finds each token\'s Page once and never returns a token', async () => {
+  const { module, fetch, ctx } = setup(router({ 'GET /v26.0/me': legacyMe }), {
+    credentials: { accesstoken: JSON.stringify([LEGACY_BAKERY, LEGACY_CAFE]) },
+    accounts: null,
+  });
+  const { payload, isError, text } = await callTool(module, 'list_pages', {}, ctx);
+  assert.equal(isError, false);
+  assert.deepEqual(payload, { pages: [{ id: '1001', name: 'Example Bakery', category: 'Bakery' }, { id: '1002', name: 'Example Cafe', category: 'Cafe' }] });
+  assert.deepEqual(fetch.calls.map((call) => [call.path, call.query.fields, call.headers.authorization]), [
+    ['/v26.0/me', 'id,name,category', `Bearer ${LEGACY_BAKERY}`],
+    ['/v26.0/me', 'id,name,category', `Bearer ${LEGACY_CAFE}`],
+  ]);
+  assert.doesNotMatch(text, /EAALegacy/);
+
+  // Each token's Page is kept: the picker's next read and a post need no lookup.
+  const picker = module.accountPickers[0];
+  const again = await callTool(module, picker.tool, {}, ctx);
+  assert.deepEqual(again.payload.pages.map((page) => [page[picker.idField], page[picker.nameField]]), [['1001', 'Example Bakery'], ['1002', 'Example Cafe']]);
+  assert.equal(fetch.calls.length, 2);
+
+  const locked = setup(router({ 'GET /v26.0/me': legacyMe }), { credentials: { accesstoken: JSON.stringify([LEGACY_BAKERY, LEGACY_CAFE]) }, accounts: { pages: ['1002'] } });
+  const chosen = await callTool(locked.module, 'list_pages', {}, locked.ctx);
+  assert.deepEqual(chosen.payload.pages.map((page) => page.id), ['1002']);
+});
+
+test('an older setup\'s Page tokens: a post goes out with the chosen Page\'s own token, and a refused token says to sign in again', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me': legacyMe,
+    'POST /v26.0/1002/feed': { id: '1002_3003' },
+    'GET /v26.0/1002_3003': { permalink_url: 'https://www.facebook.com/1002/posts/3003' },
+  }), { credentials: { accesstoken: JSON.stringify([LEGACY_EXPIRED, LEGACY_BAKERY, LEGACY_CAFE]) }, accounts: { pages: ['1001', '1002'] } });
+  const { payload, isError } = await callTool(module, 'create_post', { page_id: '1002', message: 'Hello from the cafe' }, ctx);
+  assert.equal(isError, false);
+  assert.equal(payload.post_id, '1002_3003');
+  const post = fetch.calls.find((call) => call.method === 'POST');
+  assert.equal(post.headers.authorization, `Bearer ${LEGACY_CAFE}`);
+  assert.equal(post.query.appsecret_proof, undefined);
+  assert.equal(fetch.calls.some((call) => call.path === '/v26.0/me/accounts' || call.path === '/v26.0/1002'), false, 'no user token lookup');
+
+  // A list with a refused token still lists the others, and says so.
+  const listed = await callTool(module, 'list_pages', {}, ctx);
+  assert.deepEqual(listed.payload.pages.map((page) => page.id), ['1001', '1002']);
+  assert.match(listed.payload.note, /Facebook refused 1 of the Page tokens this connection kept from an older setup: sign in to Facebook again/);
+
+  // A Page whose token Facebook refused cannot be reached, and nothing is posted.
+  const expired = setup(router({ 'GET /v26.0/me': legacyMe }), { credentials: { accesstoken: JSON.stringify([LEGACY_EXPIRED]) }, accounts: { pages: ['1003'] } });
+  const refused = await callTool(expired.module, 'create_post', { message: 'x' }, expired.ctx);
+  assert.equal(refused.isError, true);
+  assert.match(refused.payload.error, /Session has expired.*sign in to Facebook again to renew it\./);
+  assert.equal(expired.fetch.calls.some((call) => call.method === 'POST'), false);
+
+  const other = setup(router({ 'GET /v26.0/me': legacyMe }), { credentials: { accesstoken: JSON.stringify([LEGACY_BAKERY]) }, accounts: { pages: ['1002'] } });
+  const missing = await callTool(other.module, 'create_post', { message: 'x' }, other.ctx);
+  assert.match(missing.payload.error, /This connection has no token for the Page 1002: its older setup kept tokens for other Pages\. Sign in to Facebook again to add it\./);
+
+  const broken = setup(router({}), { credentials: { accesstoken: '[not json' } });
+  const unreadable = await callTool(broken.module, 'list_pages', {}, broken.ctx);
+  assert.match(unreadable.payload.error, /the Page token list from an older setup could not be read/);
+  assert.equal(broken.fetch.calls.length, 0);
+});
+
+test('a sign-in or system user token comes first: an older setup\'s Page tokens are then not used', async () => {
+  const { module, fetch, ctx } = setup(router({ ...PAGE_ROUTES, 'POST /v26.0/1001/feed': f('feed-create.json'), 'GET /v26.0/1001_3003': f('permalink.json') }), {
+    credentials: { systemusertoken: SYSTEM_TOKEN, accesstoken: JSON.stringify([LEGACY_BAKERY]) },
+  });
+  await callTool(module, 'create_post', { message: 'Hello' }, ctx);
+  assert.equal(fetch.calls[0].headers.authorization, `Bearer ${SYSTEM_TOKEN}`);
+  assert.equal(fetch.calls[1].headers.authorization, `Bearer ${PAGE_TOKEN}`);
 });
 
 test('a scheduled post is sent unpublished with its time and gets no permalink; a time too soon is refused', async () => {
@@ -342,12 +424,28 @@ test('get_page_insights adds up the days, reports the follower change, and defau
   assert.match(long.payload.error, /one call covers at most 90/);
 });
 
-test('Facebook errors keep their own words, a 429 carries retryAfter, and an unclear post names its check tool after one write', async () => {
+test('Facebook errors keep their own words, its throttling reads as a rate limit, and an unclear post names its check tool after one write', async () => {
   const expired = setup(router({ 'GET /v26.0/me/accounts': () => jsonResponse(400, f('error-expired.json')) }));
   const old = await callTool(expired.module, 'list_pages', {}, expired.ctx);
   assert.match(old.payload.error, /Facebook rejected the request \(HTTP 400\): Error validating access token: Session has expired/);
 
-  const limited = setup(router({ 'GET /v26.0/me/accounts': () => jsonResponse(429, { error: { message: 'Too many calls' } }, { 'retry-after': '30' }) }));
+  // Facebook throttles with HTTP 400 and a rate limit code, and says how long in a usage header.
+  const usage = { 'x-business-use-case-usage': JSON.stringify({ 1001: [{ type: 'pages', call_count: 100, total_cputime: 12, total_time: 15, estimated_time_to_regain_access: 12 }] }) };
+  const throttled = setup(router({ ...PAGE_ROUTES, 'POST /v26.0/1001/feed': () => jsonResponse(400, f('error-rate-limit.json'), usage) }));
+  const limit = await callTool(throttled.module, 'create_post', { message: 'Hello' }, throttled.ctx);
+  assert.equal(limit.isError, true);
+  assert.equal(limit.payload.status, 400);
+  assert.match(limit.payload.error, /^Facebook rate limit reached \(HTTP 400\): \(#80001\) There have been too many calls to this Page account\..* Nothing was changed\. Wait a while before trying again/);
+  assert.equal(throttled.fetch.calls.filter((call) => call.method === 'POST').length, 1, 'never retried');
+  const pageLimit = setup(router({ 'GET /v26.0/me/accounts': () => jsonResponse(400, { error: { message: '(#32) Page request limit reached', type: 'OAuthException', code: 32 } }) }));
+  const read = await callTool(pageLimit.module, 'list_pages', {}, pageLimit.ctx);
+  assert.match(read.payload.error, /^Facebook rate limit reached \(HTTP 400\): \(#32\) Page request limit reached\. Wait a while/);
+  const lookup = setup(router({ 'GET /v26.0/1001': () => jsonResponse(403, { error: { message: '(#4) Application request limit reached', code: 4 } }) }));
+  const custom = await callTool(lookup.module, 'list_posts', {}, lookup.ctx);
+  assert.match(custom.payload.error, /^Facebook rate limit reached \(HTTP 403\): \(#4\) Application request limit reached\. Wait a while/);
+
+  // A plain HTTP 429 keeps the core's retryAfter.
+  const limited = setup(router({ 'GET /v26.0/me/accounts': () => new Response('Too Many Requests', { status: 429, headers: { 'retry-after': '30' } }) }));
   const rate = await callTool(limited.module, 'list_pages', {}, limited.ctx);
   assert.equal(rate.payload.retryAfter, 30);
 
@@ -418,6 +516,49 @@ test('api_get and api_request act as the chosen Page, keep to /v26.0/, and never
   const unknown = await callTool(broken.module, 'api_request', { method: 'DELETE', path: '/v26.0/1001_3002' }, broken.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
+});
+
+test('the generic tools refuse a batch, a method override and a token asked for in a body, before even the Page token is fetched', async () => {
+  const { module, fetch, ctx } = setup(router({ ...PAGE_ROUTES }));
+  const batch = '[{"method":"GET","relative_url":"v26.0/1001?fields=access_token"}]';
+  const attempts = [
+    // A batch in a form body, in the query (with an encoded field name) and in a JSON body.
+    { method: 'POST', path: '/v26.0/1001', content_type: 'application/x-www-form-urlencoded', body: `batch=${encodeURIComponent(batch)}` },
+    { method: 'POST', path: '/v26.0/1001', query: { batch: '[{"method":"GET","relative_url":"v26.0/1001?fields=access%5Ftoken"}]' } },
+    { method: 'POST', path: '/v26.0/1001', json: { batch: [{ method: 'GET', relative_url: 'v26.0/1001' }] } },
+    // Graph's method override, which would turn a read into a change or the other way round.
+    { method: 'POST', path: '/v26.0/1001_3002', query: { method: 'delete' } },
+    // A token asked for after a write, in JSON, encoded, or in a JSON body sent as text.
+    { method: 'POST', path: '/v26.0/1001', json: { about: 'Fresh bread', fields: 'access_token' } },
+    { method: 'POST', path: '/v26.0/1001', content_type: 'application/x-www-form-urlencoded', body: 'about=Fresh&fields=access%255Ftoken' },
+    { method: 'POST', path: '/v26.0/1001', content_type: 'application/json', body: '{"fields":"access_token"}' },
+  ];
+  for (const args of attempts) {
+    const { payload, isError } = await callTool(module, 'api_request', args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, /(not available through the generic Facebook tools).* Nothing was sent\.$/, JSON.stringify(args));
+  }
+  const read = await callTool(module, 'api_get', { path: '/v26.0/1001', query: { method: 'post', about: 'x' } }, ctx);
+  assert.match(read.payload.error, /The method parameter is not available/);
+  const multipart = await callTool(module, 'api_request', { method: 'POST', path: '/v26.0/1001/photos', content_type: 'multipart/form-data; boundary=x', body: '--x--' }, ctx);
+  assert.match(multipart.payload.error, /send parameters as a JSON object \(json\) or as a form/);
+  assert.equal(fetch.calls.length, 0, 'nothing was sent, not even the Page token lookup');
+});
+
+test('a generic reply never carries a token or an app secret proof back', async () => {
+  const leaky = {
+    id: '1001',
+    access_token: 'EAAPageTokenForBakery0001',
+    pages: [{ id: '1001', ACCESS_TOKEN: 'EAAOther' }],
+    batch: [{ code: 200, body: '{"access_token":"EAAPageTokenForBakery0001","id":"1001"}' }],
+    paging: { next: 'https://graph.facebook.com/v26.0/1001/feed?access_token=EAAPageTokenForBakery0001&appsecret_proof=abc&after=QVFI' },
+  };
+  const { module, ctx } = setup(router({ ...PAGE_ROUTES, 'GET /v26.0/1001/feed': leaky }));
+  const { payload, text } = await callTool(module, 'api_get', { path: '/v26.0/1001/feed' }, ctx);
+  assert.doesNotMatch(text, /EAAPageToken|EAAOther|appsecret_proof=abc/);
+  assert.deepEqual(payload.data.pages, [{ id: '1001' }]);
+  assert.equal(payload.data.batch[0].body, '{"access_token":"hidden","id":"1001"}');
+  assert.equal(payload.data.paging.next, 'https://graph.facebook.com/v26.0/1001/feed?access_token=hidden&appsecret_proof=hidden&after=QVFI');
 });
 
 test('log lines carry no tokens, proofs or arguments', async () => {

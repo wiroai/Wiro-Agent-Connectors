@@ -6,7 +6,7 @@ The connection's token (from a sign-in or a system user) only lists your Pages a
 
 ## Credentials
 
-The connector needs one of two credentials: `access_token` (a sign-in with your own Facebook app) or `systemusertoken` (a Meta Business system user token).
+The connector needs one of two credentials: `access_token` (a sign-in with your own Facebook app) or `systemusertoken` (a Meta Business system user token). A connection made with an older setup may have only `accesstoken` instead: see below.
 
 ### `access_token`: a sign-in with your own Facebook app
 
@@ -30,6 +30,12 @@ To revoke: remove the app in Facebook under **Settings & privacy → Settings �
 
 To revoke: in **System users**, select the system user and click **Revoke tokens**, or remove its Page assignments.
 
+### `accesstoken`: the Page tokens an older setup kept
+
+An older setup of this connection kept no user or system user token: it kept each chosen Page's own access token, as a JSON list such as `["EAA...", "EAA..."]`. When neither `access_token` nor `systemusertoken` is set, the connector uses those Page tokens as they are. It reads the Page each one belongs to from Facebook (`/me` with that token) once, keeps that in memory for 15 minutes keyed by a hash of the token, and never returns a token. `list_pages` then lists those Pages; a token Facebook refuses (expired, or revoked by a password change) is named in a note, and its Page cannot be reached until you sign in again. Nothing new is set up this way: to renew such a connection, sign in again or use a system user token.
+
+To revoke: remove the app in Facebook under **Settings & privacy → Settings → Business integrations**, which ends its Page tokens too.
+
 ### Environment variables (CLI)
 
 | Variable | Credential |
@@ -37,6 +43,7 @@ To revoke: in **System users**, select the system user and click **Revoke tokens
 | `FACEBOOK_PAGES_ACCESS_TOKEN` | A current user access token from your own app's sign-in (alternative 1). |
 | `FACEBOOK_PAGES_APPSECRET_PROOF` | Optional: the app secret proof of that token, when your app requires it. |
 | `FACEBOOK_PAGES_SYSTEMUSERTOKEN` | A system user token (alternative 2). |
+| `FACEBOOK_PAGES_ACCESSTOKEN` | The Page tokens an older setup kept, as a JSON list (alternative 3). |
 
 ## Account picker
 
@@ -70,7 +77,8 @@ Every tool takes an optional `page_id`; it may be left out when only one Page is
 - A scheduled time must be at least 10 minutes ahead; Facebook sets the furthest date it accepts.
 - Insights need `read_insights` and the ANALYZE task. Page insights cover at most 90 days per call; a missing value is returned as `null` (no data yet), never as 0. Facebook has no saves metric for Page posts, and Page insights leave out Reel interactions.
 - Writes are never retried. When a post's outcome is unclear, check `list_posts` before trying again.
-- Tokens, the app secret and `/oauth` endpoints are out of reach of `api_get` and `api_request`.
+- Facebook throttles with HTTP 400 or 403 and a rate limit code (4, 17, 32, 613, or 80001 for Page calls), not with HTTP 429. Such an error says "rate limit reached"; wait before trying again, since the limit counts calls over a rolling hour. Facebook's estimate of the wait comes in a usage header that the result does not carry yet.
+- `api_get` and `api_request` send one request per call, with parameters in `query`, or for `api_request` in `json` or a form `body` (`application/x-www-form-urlencoded`); other bodies are refused. Batch requests (`batch`) and method overrides (`method`) are refused, and so is any request that names a token or an app secret in its path, its parameters or its body, at any depth and however it is encoded, as are `/oauth` endpoints. A reply never carries a token or an app secret proof back.
 
 ## Repository README rows
 
@@ -80,4 +88,4 @@ Every tool takes an optional `page_id`; it may be left out when only one Page is
 
 | Connector | Environment variables | Where to get them |
 | --- | --- | --- |
-| `facebook-pages` | `FACEBOOK_PAGES_ACCESS_TOKEN` (with `FACEBOOK_PAGES_APPSECRET_PROOF` when your app requires it), or `FACEBOOK_PAGES_SYSTEMUSERTOKEN` | A user token from your own Meta app's sign-in, or a system user token from Meta Business Settings → Users → System users. Account key: `pages`. |
+| `facebook-pages` | `FACEBOOK_PAGES_ACCESS_TOKEN` (with `FACEBOOK_PAGES_APPSECRET_PROOF` when your app requires it), or `FACEBOOK_PAGES_SYSTEMUSERTOKEN`, or `FACEBOOK_PAGES_ACCESSTOKEN` (an older setup's Page tokens) | A user token from your own Meta app's sign-in, or a system user token from Meta Business Settings → Users → System users. Account key: `pages`. |
