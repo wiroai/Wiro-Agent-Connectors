@@ -390,7 +390,35 @@ test('a long Pin list is cut under 32 KB and continues after the last Pin return
   const shown = first.payload.pins.length;
   const second = await callTool(module, 'list_pins', { cursor: first.payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].query.bookmark, undefined, 'the same Pinterest page again');
+  assert.equal(fetch.calls[1].query.pin_metrics, 'true', 'the metrics come along on the next part');
   assert.equal(second.payload.pins[0].id, many[shown].id);
+});
+
+test('a list_pins cursor pages the board and section it came from, and refuses another board', async () => {
+  const { module, fetch, ctx } = setup({
+    'GET /v5/boards/549755885175/pins': () => jsonResponse(200, { ...fixture(import.meta.url, 'pins.json'), bookmark: 'bookmark-board-2' }),
+    'GET /v5/boards/549755885175/sections/5027629787972154693/pins': () => jsonResponse(200, { ...fixture(import.meta.url, 'pins.json'), bookmark: 'bookmark-section-2' }),
+    'GET /v5/boards/549755885175/sections': () => jsonResponse(200, { ...fixture(import.meta.url, 'sections.json'), bookmark: 'bookmark-sections-2' }),
+  });
+  const board = await callTool(module, 'list_pins', { board_id: '549755885175', include_metrics: true }, ctx);
+  const alone = await callTool(module, 'list_pins', { cursor: board.payload.nextCursor }, ctx);
+  assert.equal(alone.isError, false, alone.payload.error);
+  assert.deepEqual(fetch.calls[1].query, { page_size: '25', bookmark: 'bookmark-board-2', pin_metrics: 'true' });
+  assert.equal(fetch.calls[1].path, '/v5/boards/549755885175/pins', 'the board\'s next page, not every Pin');
+  assert.equal(alone.payload.board_id, '549755885175');
+
+  const section = await callTool(module, 'list_pins', { board_id: '549755885175', board_section_id: '5027629787972154693' }, ctx);
+  await callTool(module, 'list_pins', { board_id: '549755885175', cursor: section.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[3].path, '/v5/boards/549755885175/sections/5027629787972154693/pins');
+  assert.equal(fetch.calls[3].query.bookmark, 'bookmark-section-2');
+
+  const before = fetch.calls.length;
+  const other = await callTool(module, 'list_pins', { board_id: '1111', cursor: board.payload.nextCursor }, ctx);
+  assert.match(other.payload.error, /The cursor belongs to another list \(another board_id\)/);
+  const sections = await callTool(module, 'list_board_sections', { board_id: '549755885175' }, ctx);
+  const otherSections = await callTool(module, 'list_board_sections', { board_id: '1111', cursor: sections.payload.nextCursor }, ctx);
+  assert.match(otherSections.payload.error, /The cursor belongs to another list \(another board_id\)/);
+  assert.equal(fetch.calls.length, before + 1, 'only the first sections page was sent');
 });
 
 test('logs carry no token and no content', async () => {

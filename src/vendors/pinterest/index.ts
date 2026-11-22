@@ -140,24 +140,53 @@ function trimBoard(board: any): Record<string, unknown> {
   });
 }
 
+/** What a list cursor holds: Pinterest's bookmark, the place in its page, the page size, and the listing it pages. */
+interface PageState {
+  b?: string;
+  o: number;
+  n: number;
+  /** The listing's own arguments (a board, a section, metrics), so a cursor passed back alone pages the same list. */
+  keep: Record<string, string | number>;
+}
+
 /** One page of a Pinterest list, cut to 32 KB, with Pinterest's bookmark for the next page. */
-function bookmarkPage(h: ToolHelpers, key: string, items: unknown[], data: any, state: { b?: string; o: number; n: number }, extra?: Record<string, unknown>) {
+function bookmarkPage(h: ToolHelpers, key: string, items: unknown[], data: any, state: PageState, extra?: Record<string, unknown>) {
   return h.page({
     key,
     items: items.slice(state.o),
     ...(extra ? { extra } : {}),
-    resumeAt: (index) => h.makeCursor({ ...(state.b ? { b: state.b } : {}), o: state.o + index, n: state.n }),
-    ...(typeof data?.bookmark === 'string' && data.bookmark ? { nextPage: h.makeCursor({ b: data.bookmark, o: 0, n: state.n }) } : {}),
+    resumeAt: (index) => h.makeCursor({ ...state.keep, ...(state.b ? { b: state.b } : {}), o: state.o + index, n: state.n }),
+    ...(typeof data?.bookmark === 'string' && data.bookmark ? { nextPage: h.makeCursor({ ...state.keep, b: data.bookmark, o: 0, n: state.n }) } : {}),
   });
 }
 
-function pageState(h: ToolHelpers, cursor: string | undefined, pageSize: number): { b?: string; o: number; n: number } {
+/**
+ * The paging state of a list call: from its cursor, or a first page. `listing`
+ * names the arguments that pick the list; a cursor keeps them, and refuses a
+ * call that gives other ones.
+ */
+function pageState(h: ToolHelpers, cursor: string | undefined, pageSize: number, listing: Record<string, string | number | undefined> = {}): PageState {
   const state = h.cursor(cursor);
+  const keep: Record<string, string | number> = {};
+  for (const [name, given] of Object.entries(listing)) {
+    const carried = state ? state[`k_${name}`] : undefined;
+    if (state && given !== undefined && carried !== given) {
+      throw new ToolFailure(`The cursor belongs to another list (another ${name}). Pass the same arguments as in the previous call, or leave cursor out.`);
+    }
+    const value = state ? carried : given;
+    if (typeof value === 'string' || typeof value === 'number') keep[`k_${name}`] = value;
+  }
   return {
     ...(typeof state?.['b'] === 'string' ? { b: state['b'] } : {}),
     o: typeof state?.['o'] === 'number' ? state['o'] : 0,
     n: typeof state?.['n'] === 'number' ? state['n'] : pageSize,
+    keep,
   };
+}
+
+/** A listing argument the cursor carried, or undefined. */
+function kept(state: PageState, name: string): string | number | undefined {
+  return state.keep[`k_${name}`];
 }
 
 function day(time: number): string {
@@ -395,7 +424,7 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { board_id: string; page_size: number; cursor?: string }, h) {
-        const state = pageState(h, args.cursor, args.page_size);
+        const state = pageState(h, args.cursor, args.page_size, { board_id: args.board_id });
         const { data } = await api(h, { path: `/v5/boards/${args.board_id}/sections`, query: { page_size: state.n, bookmark: state.b }, errors: { 404: 'Pinterest found no board with that id' } });
         const items: any[] = Array.isArray(data?.items) ? data.items : [];
         return bookmarkPage(h, 'sections', items.map((section) => compact({ id: section?.id, name: section?.name })), data, state, { board_id: args.board_id });
@@ -422,14 +451,21 @@ const connector = defineConnector({
       },
       async run(args: { board_id?: string; board_section_id?: string; page_size: number; include_metrics: boolean; cursor?: string }, h) {
         if (args.board_section_id && !args.board_id) throw new ToolFailure('board_section_id needs its board_id.');
-        const state = pageState(h, args.cursor, args.page_size);
+        // A cursor pages the list it came from: its board, section and metrics come with it.
+        const state = pageState(h, args.cursor, args.page_size, {
+          board_id: args.board_id,
+          board_section_id: args.board_section_id,
+          include_metrics: args.include_metrics ? 1 : undefined,
+        });
+        const boardId = kept(state, 'board_id') as string | undefined;
+        const sectionId = kept(state, 'board_section_id') as string | undefined;
         let path = '/v5/pins';
-        if (args.board_id) path = `/v5/boards/${args.board_id}/pins`;
-        if (args.board_section_id) path = `/v5/boards/${args.board_id}/sections/${args.board_section_id}/pins`;
-        const metrics = args.include_metrics && !args.board_section_id ? true : undefined;
+        if (boardId) path = `/v5/boards/${boardId}/pins`;
+        if (boardId && sectionId) path = `/v5/boards/${boardId}/sections/${sectionId}/pins`;
+        const metrics = kept(state, 'include_metrics') === 1 && !sectionId ? true : undefined;
         const { data } = await api(h, { path, query: { page_size: state.n, bookmark: state.b, pin_metrics: metrics }, errors: { 404: 'Pinterest found no such board or section' } });
         const items: any[] = Array.isArray(data?.items) ? data.items : [];
-        return bookmarkPage(h, 'pins', items.map(trimPin), data, state, compact({ board_id: args.board_id, board_section_id: args.board_section_id }));
+        return bookmarkPage(h, 'pins', items.map(trimPin), data, state, compact({ board_id: boardId, board_section_id: sectionId }));
       },
     },
     {
