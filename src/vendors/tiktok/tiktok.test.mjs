@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bytesResponse, callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, refusal, textResponse } from '../../../tests/helpers.mjs';
+import { bytesResponse, callTool, controlClock, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, refusal, textResponse } from '../../../tests/helpers.mjs';
 
 const TOKEN = 'act.exampleTikTokToken123';
 const credentials = { access_token: TOKEN, tiktokusername: 'Acme', openid: '-000exampleOpenId0000000000000000000' };
@@ -33,11 +33,15 @@ function withJson(handler) {
 
 function setup(handler, { creds = credentials, signal } = {}) {
   const { module, context } = loadModuleFor(import.meta.url);
-  // Polling waits run at once in tests.
-  context.setTimeout = (callback) => setTimeout(callback, 0);
+  // Polling waits run at once in tests, and the module's clock moves on by the time each wait asked for.
+  const advance = controlClock(context);
+  context.setTimeout = (callback, ms) => {
+    advance(ms ?? 0);
+    return setTimeout(callback, 0);
+  };
   const fetch = fakeFetch(withJson(handler));
   const { ctx, logs } = makeContext({ credentials: creds, fetch, signal });
-  return { module, fetch, ctx, logs };
+  return { module, fetch, ctx, logs, advance };
 }
 
 /** A TikTok that answers by path; `status` is a list of status replies, the last one repeating. */
@@ -174,12 +178,12 @@ test('a post still processing when the wait ends says to check later, never to p
   assert.equal(now.isError, false);
   assert.equal(now.payload.status, 'PROCESSING_DOWNLOAD');
   assert.equal(now.payload.published, false);
-  assert.match(now.payload.note, /Call get_post_status with publish_id v_pub_url~v2-1\.7300000000000000001 later; do not post it again\./);
+  assert.match(now.payload.note, /TikTok is still processing it, which often takes a minute or more\. Call get_post_status with publish_id v_pub_url~v2-1\.7300000000000000001 \(it can wait up to 30 seconds\) to follow it; do not post it again\./);
   assert.equal(quick.fetch.calls.filter((call) => call.path === '/v2/post/publish/status/fetch/').length, 1);
 
   const controller = new AbortController();
   const cancelled = setup(tiktok({ status: [() => { controller.abort(); return jsonResponse(200, processing); }] }), { signal: controller.signal });
-  const stopped = await callTool(cancelled.module, 'post_video', { video_url: VIDEO_URL, source: 'PULL_FROM_URL', privacy_level: 'SELF_ONLY', wait_seconds: 60 }, cancelled.ctx);
+  const stopped = await callTool(cancelled.module, 'post_video', { video_url: VIDEO_URL, source: 'PULL_FROM_URL', privacy_level: 'SELF_ONLY', wait_seconds: 30 }, cancelled.ctx);
   assert.match(stopped.payload.note, /Stopped waiting because the call was cancelled\./);
   assert.equal(cancelled.fetch.calls.filter((call) => call.path === '/v2/post/publish/status/fetch/').length, 1);
 
@@ -188,6 +192,56 @@ test('a post still processing when the wait ends says to check later, never to p
   assert.equal(sent.isError, false, 'the post went out: a failed status read is no reason to post again');
   assert.equal(sent.payload.status, 'UNKNOWN');
   assert.match(sent.payload.note, /The post was sent, but its status could not be read/);
+  assert.match(sent.payload.note, /Call get_post_status with publish_id v_pub_url~v2-1\.7300000000000000001 to see whether TikTok published it; do not post it again\./);
+
+  const tooLong = await callTool(quick.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY', wait_seconds: 31 }, quick.ctx);
+  assert.match(tooLong.payload.error, /wait_seconds/, 'waits are capped at 30 seconds');
+});
+
+test('a post waits only until 35 seconds into the call, so its publish_id reaches the host before the call ends', async () => {
+  // The upload takes 21 seconds: status reads at 21, 26 and 31 seconds; the next one would start after 35.
+  const slow = setup(tiktok({
+    status: [processing],
+    overrides: {
+      'PUT https://open-upload.tiktokapis.com/video/': () => {
+        slow.advance(21_000);
+        return new Response(null, { status: 201 });
+      },
+    },
+  }));
+  const posted = await callTool(slow.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY', wait_seconds: 30 }, slow.ctx);
+  assert.equal(posted.isError, false, posted.payload.error);
+  assert.equal(slow.fetch.calls.filter((call) => call.path === '/v2/post/publish/status/fetch/').length, 3);
+  assert.equal(posted.payload.publishId, fileInit.data.publish_id);
+  assert.equal(posted.payload.status, 'PROCESSING_DOWNLOAD');
+  assert.match(posted.payload.note, /Call get_post_status with publish_id v_pub_file~v2-1\.7300000000000000000/);
+
+  // An upload that took 36 seconds returns at once with the publish_id, without a status read.
+  const slower = setup(tiktok({
+    overrides: {
+      'PUT https://open-upload.tiktokapis.com/video/': () => {
+        slower.advance(36_000);
+        return new Response(null, { status: 201 });
+      },
+    },
+  }));
+  const late = await callTool(slower.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, slower.ctx);
+  assert.equal(late.isError, false, late.payload.error);
+  assert.equal(slower.fetch.calls.some((call) => call.path === '/v2/post/publish/status/fetch/'), false);
+  assert.equal(late.payload.status, 'UNKNOWN');
+  assert.match(late.payload.note, /^Sending it took most of the call, so its status was not read\. Call get_post_status with publish_id v_pub_file~v2-1\.7300000000000000000 to see whether TikTok published it; do not post it again\.$/);
+});
+
+test('get_post_status follows a post for as long as asked, and on its own reads once', async () => {
+  const { module, fetch, ctx } = setup(tiktok({ status: [processing, processing, complete] }));
+  const once = await callTool(module, 'get_post_status', { publish_id: 'v_pub_url~v2-1.7300000000000000001' }, ctx);
+  assert.equal(once.payload.status, 'PROCESSING_DOWNLOAD');
+  assert.match(once.payload.note, /still processing it: check again in a little while; do not post it again/);
+  assert.equal(fetch.calls.length, 1);
+  const waited = await callTool(module, 'get_post_status', { publish_id: 'v_pub_url~v2-1.7300000000000000001', wait_seconds: 30 }, ctx);
+  assert.equal(waited.payload.status, 'PUBLISH_COMPLETE');
+  assert.equal(waited.payload.published, true);
+  assert.equal(fetch.calls.length, 3, 'one more processing read, then the finished one');
 });
 
 test('a failed post says why, with TikTok\'s reason', async () => {
@@ -220,6 +274,26 @@ test('MEDIA_UPLOAD sends the video to the creator\'s inbox without the direct-po
   assert.equal(payload.published, false);
 });
 
+test('MEDIA_UPLOAD refuses a caption or post settings it could not send, before anything is sent', async () => {
+  const { module, fetch, ctx } = setup(tiktok());
+  const video = await callTool(module, 'post_video', { video_url: VIDEO_URL, post_mode: 'MEDIA_UPLOAD', caption: 'Hello', is_aigc: true }, ctx);
+  assert.equal(video.isError, true);
+  assert.equal(video.payload.error, 'TikTok\'s inbox upload (MEDIA_UPLOAD) takes no caption, is_aigc: the creator sets the caption and every post setting in the TikTok app when they post the draft. Leave them out, or use DIRECT_POST. Nothing was posted.');
+  const photos = await callTool(module, 'post_photos', { image_urls: ['https://media.example.com/a.jpg'], post_mode: 'MEDIA_UPLOAD', privacy_level: 'SELF_ONLY', auto_add_music: false }, ctx);
+  assert.match(photos.payload.error, /takes no privacy_level, auto_add_music: the creator sets privacy, comments, music and the branded-content labels in the TikTok app/);
+  assert.equal(fetch.calls.length, 0);
+
+  const draft = await callTool(module, 'post_photos', { image_urls: ['https://media.example.com/a.jpg'], post_mode: 'MEDIA_UPLOAD', title: 'Draft', description: 'For the app' }, ctx);
+  assert.equal(draft.isError, false, draft.payload.error);
+  const init = fetch.calls.find((call) => call.path === '/v2/post/publish/content/init/');
+  assert.deepEqual(init.json.post_info, { title: 'Draft', description: 'For the app' }, 'title and description go to the inbox too');
+  assert.equal(init.json.post_mode, 'MEDIA_UPLOAD');
+
+  const noScope = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/inbox/video/init/': () => jsonResponse(401, fixture(import.meta.url, 'error-401-scope.json')) } }));
+  const refused = await callTool(noScope.module, 'post_video', { video_url: VIDEO_URL, source: 'PULL_FROM_URL', post_mode: 'MEDIA_UPLOAD' }, noScope.ctx);
+  assert.match(refused.payload.error, /^TikTok refused the inbox upload: MEDIA_UPLOAD needs the video\.upload permission.*\(HTTP 401\)\. TikTok said: "The user did not authorize the scope required for completing this request\."\. Nothing was changed\.$/);
+});
+
 test('post_photos posts the photo URLs for TikTok to download, with the cover and music settings', async () => {
   const { module, fetch, ctx } = setup(tiktok());
   const images = ['https://media.example.com/a.jpg', 'https://media.example.com/b.jpg'];
@@ -248,16 +322,23 @@ test('post_photos posts the photo URLs for TikTok to download, with the cover an
 });
 
 test('a write without a clear answer is unknown only once the post may have started', async () => {
-  // PULL_FROM_URL starts the post at init: an unclear init is unknown, sent once.
+  // PULL_FROM_URL starts the post at init: an unclear init is unknown, sent once, with no publish_id to follow.
   const pull = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/video/init/': () => jsonResponse(502, { error: { code: 'internal_error' } }) } }));
   const unknown = await callTool(pull.module, 'post_video', { video_url: VIDEO_URL, source: 'PULL_FROM_URL', privacy_level: 'SELF_ONLY' }, pull.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'get_post_status');
+  assert.match(unknown.payload.error, /TikTok sent back no publish_id, so get_post_status has nothing to look up: before posting again, look for the post on the creator's TikTok profile in the TikTok app/);
   assert.equal(pull.fetch.calls.filter((call) => call.path.endsWith('/init/')).length, 1);
 
   const photos = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/content/init/': () => { throw new TypeError('fetch failed'); } } }));
   const photoUnknown = await callTool(photos.module, 'post_photos', { image_urls: ['https://media.example.com/a.jpg'], privacy_level: 'SELF_ONLY' }, photos.ctx);
   assert.equal(photoUnknown.payload.outcome, 'unknown');
+  assert.match(photoUnknown.payload.error, /no publish_id.*on the creator's TikTok profile/);
+  assert.equal(photos.fetch.calls.filter((call) => call.path.endsWith('/init/')).length, 1);
+
+  const inbox = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/inbox/video/init/': () => jsonResponse(504, {}) } }));
+  const inboxUnknown = await callTool(inbox.module, 'post_video', { video_url: VIDEO_URL, source: 'PULL_FROM_URL', post_mode: 'MEDIA_UPLOAD' }, inbox.ctx);
+  assert.match(inboxUnknown.payload.error, /look for the post among the drafts TikTok sends to the creator's inbox in the TikTok app/);
 
   // A FILE_UPLOAD posts after its last chunk: a failed init or middle chunk posts nothing.
   const init = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/video/init/': () => jsonResponse(503, {}) } }));
@@ -275,10 +356,14 @@ test('a write without a clear answer is unknown only once the post may have star
   assert.equal(stoppedEarly.payload.outcome, undefined);
   assert.equal(middle.fetch.calls.filter((call) => call.method === 'PUT').length, 1);
 
+  // The last chunk is what posts a FILE_UPLOAD: its unclear answer names the publish_id to check with.
   const last = setup(tiktok({ overrides: { 'PUT https://open-upload.tiktokapis.com/video/': () => jsonResponse(503, {}) } }));
   const lastUnknown = await callTool(last.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, last.ctx);
   assert.equal(lastUnknown.payload.outcome, 'unknown');
+  assert.equal(lastUnknown.payload.check, 'get_post_status');
+  assert.equal(lastUnknown.payload.error, 'TikTok answered HTTP 503, so it is not known whether the change was made. The post\'s publish_id is v_pub_file~v2-1.7300000000000000000. Call get_post_status to see whether it was, before trying again.');
   assert.equal(last.fetch.calls.filter((call) => call.method === 'PUT').length, 1);
+  assert.equal(last.fetch.calls.some((call) => call.path === '/v2/post/publish/status/fetch/'), false);
 });
 
 test('an upload address on an unknown host, or a file that is not a video, posts nothing', async () => {
@@ -331,11 +416,56 @@ test('get_post_status and get_profile read what they say', async () => {
   assert.equal(fetch.calls[2].query.fields, 'display_name,follower_count');
 });
 
+test('list_videos reads the creator\'s public videos by POST, trims them and pages on with TikTok\'s cursor', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'video-list.json')));
+  const first = await callTool(module, 'list_videos', { max_count: 2 }, ctx);
+  assert.equal(first.isError, false, first.payload.error);
+  const [request] = fetch.calls;
+  assert.equal(request.method, 'POST');
+  assert.equal(request.url, 'https://open.tiktokapis.com/v2/video/list/?fields=id%2Ctitle%2Cvideo_description%2Ccreate_time%2Cshare_url%2Cduration%2Cview_count%2Clike_count%2Ccomment_count%2Cshare_count');
+  assert.deepEqual(request.json, { max_count: 2 });
+  assert.deepEqual(first.payload.videos[0], {
+    id: '7300000000000000099',
+    title: 'Behind the scenes',
+    videoDescription: 'Behind the scenes #studio',
+    createdAt: new Date(1795300000 * 1000).toISOString(),
+    shareUrl: 'https://www.tiktok.com/@acme.official/video/7300000000000000099',
+    duration: 21,
+    viewCount: 1520,
+    likeCount: 98,
+    commentCount: 7,
+    shareCount: 3,
+  });
+  assert.equal(first.payload.videos[1].title, undefined, 'an empty title is left out');
+
+  await callTool(module, 'list_videos', { cursor: first.payload.nextCursor }, ctx);
+  assert.deepEqual(fetch.calls[1].json, { max_count: 2, cursor: 1795200000000 });
+  assert.equal(fetch.calls[1].query.fields, request.query.fields);
+
+  const chosen = await callTool(module, 'list_videos', { fields: ['view_count'] }, ctx);
+  assert.equal(fetch.calls[2].query.fields, 'id,view_count', 'the id always comes along');
+  assert.deepEqual(chosen.payload.videos[0], { id: '7300000000000000099', viewCount: 1520 });
+});
+
+test('get_videos reads videos by id and names the ones TikTok did not return', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'video-query.json')));
+  const { payload, isError } = await callTool(module, 'get_videos', { video_ids: ['7300000000000000099', '7300000000000000777'], fields: ['title', 'view_count', 'like_count'] }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(fetch.calls[0].url, 'https://open.tiktokapis.com/v2/video/query/?fields=id%2Ctitle%2Cview_count%2Clike_count');
+  assert.deepEqual(fetch.calls[0].json, { filters: { video_ids: ['7300000000000000099', '7300000000000000777'] } });
+  assert.deepEqual(payload, { videos: [{ id: '7300000000000000099', title: 'Behind the scenes', viewCount: 1520, likeCount: 98 }], missing: ['7300000000000000777'] });
+
+  const noScope = setup(() => jsonResponse(401, fixture(import.meta.url, 'error-401-scope.json')));
+  const refused = await callTool(noScope.module, 'list_videos', {}, noScope.ctx);
+  assert.match(refused.payload.error, /^TikTok refused to read videos: the connection needs the video\.list permission, or its token is no longer valid \(HTTP 401\)/);
+  assert.doesNotMatch(refused.payload.error, /Nothing was changed/, 'a read changes nothing anyway');
+});
+
 test('api_get and api_request stay under /v2/', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, { data: { videos: [] }, error: { code: 'ok' } }));
-  const list = await callTool(module, 'api_request', { method: 'POST', path: '/v2/video/list/', query: { fields: 'id,title' }, json: { max_count: 10 } }, ctx);
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, { data: {}, error: { code: 'ok' } }));
+  const list = await callTool(module, 'api_request', { method: 'POST', path: '/v2/post/publish/inbox/video/init/', json: { source_info: { source: 'PULL_FROM_URL', video_url: VIDEO_URL } } }, ctx);
   assert.equal(list.isError, false, list.payload.error);
-  assert.equal(fetch.calls[0].url, 'https://open.tiktokapis.com/v2/video/list/?fields=id%2Ctitle');
+  assert.equal(fetch.calls[0].url, 'https://open.tiktokapis.com/v2/post/publish/inbox/video/init/');
   const outside = await callTool(module, 'api_get', { path: '/oauth/token/' }, ctx);
   assert.match(outside.payload.error, /The path must start with \/v2\//);
   assert.equal(fetch.calls.length, 1);

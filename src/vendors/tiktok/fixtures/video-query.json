@@ -1,0 +1,15 @@
+{
+  "data": {
+    "videos": [
+      {
+        "id": "7300000000000000099",
+        "title": "Behind the scenes",
+        "create_time": 1795300000,
+        "share_url": "https://www.tiktok.com/@acme.official/video/7300000000000000099",
+        "view_count": 1520,
+        "like_count": 98
+      }
+    ]
+  },
+  "error": { "code": "ok", "message": "", "log_id": "20261122000000000000000000000013" }
+}
