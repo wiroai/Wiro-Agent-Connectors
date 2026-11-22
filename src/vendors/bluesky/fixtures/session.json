@@ -1,0 +1,9 @@
+{
+  "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+  "handle": "alice.bsky.social",
+  "email": "alice@example.com",
+  "emailConfirmed": true,
+  "accessJwt": "eyJ0eXAiOiJhdCtqd3QiLCJhbGciOiJFUzI1NksifQ.eyJzY29wZSI6ImNvbS5hdHByb3RvLmFwcFBhc3MiLCJzdWIiOiJkaWQ6cGxjOno3Mmk3aGR5bm1rNnIyMnoyN2g2dHZ1ciIsImlhdCI6MTc5NTAwMDAwMCwiZXhwIjo0MTAyNDQ0ODAwLCJhdWQiOiJkaWQ6d2ViOnBkcy5leGFtcGxlLmNvbSJ9.c2lnbmF0dXJl",
+  "refreshJwt": "eyJ0eXAiOiJyZWZyZXNoK2p3dCIsImFsZyI6IkVTMjU2SyJ9.eyJzY29wZSI6ImNvbS5hdHByb3RvLnJlZnJlc2giLCJzdWIiOiJkaWQ6cGxjOno3Mmk3aGR5bm1rNnIyMnoyN2g2dHZ1ciIsImV4cCI6NDEwMjQ0NDgwMH0.c2lnbmF0dXJl",
+  "active": true
+}

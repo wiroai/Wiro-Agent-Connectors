@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_profile", "args": {} },
+  "write": {
+    "tool": "create_post",
+    "args": { "text": "Connector smoke test {{timestamp}}" },
+    "note": "Publishes a public post on the account. Use a test account, and delete the post in the Bluesky app."
+  }
+}

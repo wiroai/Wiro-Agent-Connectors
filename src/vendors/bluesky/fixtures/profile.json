@@ -1,0 +1,18 @@
+{
+  "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+  "handle": "alice.bsky.social",
+  "displayName": "Alice",
+  "description": "Writes about open protocols.",
+  "avatar": "https://cdn.bsky.app/img/avatar/plain/did:plc:z72i7hdynmk6r22z27h6tvur/bafkreiexample@jpeg",
+  "banner": "https://cdn.bsky.app/img/banner/plain/did:plc:z72i7hdynmk6r22z27h6tvur/bafkreibanner@jpeg",
+  "followersCount": 1203,
+  "followsCount": 87,
+  "postsCount": 342,
+  "associated": {
+    "lists": 0,
+    "feedgens": 0
+  },
+  "indexedAt": "2026-11-01T10:00:00.000Z",
+  "createdAt": "2023-04-12T08:30:00.000Z",
+  "labels": []
+}

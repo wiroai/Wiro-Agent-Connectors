@@ -1,0 +1,90 @@
+{
+  "feed": [
+    {
+      "post": {
+        "uri": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3lbk2nuxa7c2x",
+        "cid": "bafyreiaaa",
+        "author": {
+          "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+          "handle": "alice.bsky.social"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "Shipping a new release today https://example.com/release",
+          "createdAt": "2026-11-20T09:00:00.000Z",
+          "langs": [
+            "en"
+          ]
+        },
+        "embed": {
+          "$type": "app.bsky.embed.external#view",
+          "external": {
+            "uri": "https://example.com/release",
+            "title": "Release",
+            "description": ""
+          }
+        },
+        "replyCount": 2,
+        "repostCount": 5,
+        "likeCount": 31,
+        "quoteCount": 1,
+        "indexedAt": "2026-11-20T09:00:01.000Z"
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:otheruser/app.bsky.feed.post/3lbjzzz",
+        "cid": "bafyreibbb",
+        "author": {
+          "did": "did:plc:otheruser",
+          "handle": "bob.bsky.social"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "Someone else's post",
+          "createdAt": "2026-11-19T12:00:00.000Z"
+        },
+        "replyCount": 0,
+        "repostCount": 1,
+        "likeCount": 3,
+        "quoteCount": 0
+      },
+      "reason": {
+        "$type": "app.bsky.feed.defs#reasonRepost",
+        "by": {
+          "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+          "handle": "alice.bsky.social"
+        },
+        "indexedAt": "2026-11-19T13:00:00.000Z"
+      }
+    },
+    {
+      "post": {
+        "uri": "at://did:plc:z72i7hdynmk6r22z27h6tvur/app.bsky.feed.post/3lbhyyy",
+        "cid": "bafyreiccc",
+        "author": {
+          "did": "did:plc:z72i7hdynmk6r22z27h6tvur",
+          "handle": "alice.bsky.social"
+        },
+        "record": {
+          "$type": "app.bsky.feed.post",
+          "text": "Photo from the meetup",
+          "createdAt": "2026-11-18T18:30:00.000Z",
+          "embed": {
+            "$type": "app.bsky.embed.images",
+            "images": []
+          }
+        },
+        "embed": {
+          "$type": "app.bsky.embed.images#view",
+          "images": []
+        },
+        "replyCount": 0,
+        "repostCount": 0,
+        "likeCount": 12,
+        "quoteCount": 0
+      }
+    }
+  ],
+  "cursor": "2026-11-18T18:30:00.000Z"
+}
