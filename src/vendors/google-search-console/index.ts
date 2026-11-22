@@ -11,7 +11,7 @@
 // a Domain property is "sc-domain:example.com", a URL-prefix property its
 // address with the trailing slash, "https://www.example.com/".
 
-import { apiTools, defineConnector, requireAccounts, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
+import { allowedAccounts, apiTools, defineConnector, requireAccounts, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
 
 const LABEL = 'Google Search Console';
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -335,11 +335,13 @@ const connector = defineConnector({
       description:
         'Lists the Search Console properties the connected Google account has verified access to: the property id (sc-domain:example.com '
         + 'or https://www.example.com/), a display name, whether it is a Domain or URL-prefix property, and the permission level. '
-        + 'Unverified properties have no data and are left out.',
+        + 'Unverified properties have no data and are left out. When the connection is limited to chosen properties, those are marked '
+        + 'selected: true, and only they can be used.',
       inputSchema: { type: 'object', properties: { cursor: CURSOR }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const chosen = allowedAccounts(h.ctx.accounts, 'sites');
         const { data } = await h.api({ path: '/webmasters/v3/sites' });
         const entries: any[] = Array.isArray(data?.siteEntry) ? data.siteEntry : [];
         const sites = entries
@@ -351,6 +353,7 @@ const connector = defineConnector({
               name: domain ? entry.siteUrl.slice('sc-domain:'.length) : entry.siteUrl,
               property_type: domain ? 'domain' : 'url_prefix',
               permission_level: entry.permissionLevel,
+              selected: chosen?.includes(entry.siteUrl) ? true : undefined,
             });
           });
         const skipped = entries.length - sites.length;

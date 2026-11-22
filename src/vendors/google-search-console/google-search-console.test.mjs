@@ -63,6 +63,13 @@ test('the sites picker: list_sites leaves out unverified properties and names Do
   assert.ok(payload.sites.every((item) => typeof field(item, picker.nameField) === 'string'));
 });
 
+test('list_sites marks the properties chosen for the connection as selected, and lists the others too', async () => {
+  const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'sites.json')));
+  const { payload } = await callTool(module, 'list_sites', {}, ctx);
+  assert.deepEqual(payload.sites.map((item) => [item.id, item.selected]), [[DOMAIN, true], [PREFIX, true], ['https://shop.example.org/', undefined]]);
+  assert.match(module.tools.find((tool) => tool.name === 'list_sites').description, /marked selected: true/);
+});
+
 test('query_search_analytics posts the query with the property encoded in the path, and pages with start rows', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'query-queries.json')));
   const { payload, isError } = await callTool(module, 'query_search_analytics', {

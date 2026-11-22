@@ -44,7 +44,7 @@ A property id is `sc-domain:example.com` for a Domain property, or the address w
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `list_sites` | read | The properties the Google account has verified access to, with their permission level. The `sites` picker's list. |
+| `list_sites` | read | The properties the Google account has verified access to, with their permission level; the chosen ones are marked `selected: true`. The `sites` picker's list. |
 | `query_search_analytics` | read | Clicks, impressions, CTR and position grouped by up to six dimensions, with filters, search type (web, image, video, news, discover, googleNews), fresh or final data, and paging. Dates or `last_days`, which ends on the latest day with data. Sent by POST, changes nothing. |
 | `compare_periods` | read | Two periods of the same length side by side: totals with the change, and with a dimension the top losers and gainers by clicks or impressions. |
 | `list_sitemaps` | read | The submitted sitemaps, or those inside a sitemap index, with errors, warnings, pending state and whether Google downloaded them since the last submission. |
