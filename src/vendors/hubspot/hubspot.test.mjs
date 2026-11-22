@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { bytesResponse, callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, refusal, textBytes } from '../../../tests/helpers.mjs';
 
@@ -120,7 +121,149 @@ test('a duplicate contact is a clear 409, and a missing scope a clear 403', asyn
 
   const scopes = setup(() => jsonResponse(403, json('error-403.json')));
   const denied = await callTool(scopes.module, 'publish_marketing_email', { email_id: '12345678' }, scopes.ctx);
-  assert.match(denied.payload.error, /HubSpot refused to publish it \(it needs Marketing Hub Enterprise or the transactional email add-on, and the marketing-email scope\) \(HTTP 403\)/);
+  assert.equal(denied.payload.status, 403);
+  assert.equal(
+    denied.payload.error,
+    'HubSpot refused to publish it (publishing needs Marketing Hub Enterprise or the transactional email add-on) (HTTP 403). '
+      + 'HubSpot said: "This app hasn\'t been granted all required scopes to make this call. Read more about required scopes here: https://developers.hubspot.com/scopes.". '
+      + 'Nothing was changed. This call needs the marketing-email or transactional-email scope: connect HubSpot again and grant one of them (an app of your own must list it first).',
+  );
+});
+
+// The scopes a sign-in asks for, as the README's Scopes table lists them: a host asks for the required ones in the
+// authorize URL's `scope` and the optional ones in `optional_scope`, exactly as the HubSpot app lists them.
+const SIGN_IN_SCOPES = {
+  required: ['oauth', 'crm.objects.contacts.read', 'crm.objects.contacts.write', 'crm.lists.read', 'crm.lists.write'],
+  optional: [
+    'crm.objects.companies.read', 'crm.objects.companies.write', 'crm.objects.deals.read', 'crm.objects.deals.write',
+    'crm.objects.owners.read', 'tickets', 'content', 'marketing-email', 'transactional-email', 'files',
+  ],
+  'optional, if used': [
+    'e-commerce', 'crm.objects.quotes.read', 'crm.objects.quotes.write', 'crm.objects.leads.read', 'crm.objects.leads.write',
+    'crm.objects.custom.read', 'crm.objects.custom.write', 'sales-email-read',
+  ],
+};
+
+/** The README's Scopes table: each scope with how a sign-in asks for it. */
+function readmeScopes() {
+  const text = fs.readFileSync(new URL('./README.md', import.meta.url), 'utf8');
+  const section = text.split('\n## Scopes\n')[1]?.split('\n## ')[0] ?? '';
+  assert.ok(section.includes('| Scope | Ask as | What needs it |'), 'the README has its Scopes table');
+  const kinds = {};
+  for (const line of section.split('\n').filter((row) => row.startsWith('| `'))) {
+    const [scopes, kind] = line.split('|').slice(1, 3).map((cell) => cell.trim());
+    for (const [, scope] of scopes.matchAll(/`([^`]+)`/g)) {
+      assert.equal(kinds[scope], undefined, `${scope} is listed once`);
+      kinds[scope] = kind;
+    }
+  }
+  return kinds;
+}
+
+/** The scopes a refusal's advice names, or [] without advice. */
+function namedScopes(error) {
+  const match = /This call needs the (.+?) scopes?: connect HubSpot again and grant /.exec(error);
+  return match ? match[1].split(/, or |, | and | or /) : [];
+}
+
+const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+
+// One call per tool that needs more than every sign-in grants, and the scopes HubSpot's refusal for a missing scope then names.
+const SCOPED_CALLS = [
+  ['list_objects', { object_type: 'tickets' }, ['tickets']],
+  ['list_objects', { object_type: 'contacts', associations: ['companies', 'deals', 'notes'] }, ['crm.objects.contacts.read', 'crm.objects.companies.read', 'crm.objects.deals.read']],
+  ['list_objects', { object_type: '2-1234567' }, ['crm.objects.custom.read']],
+  ['list_objects', { object_type: 'line_items' }, ['e-commerce']],
+  ['get_object', { object_type: 'deals', id: '9001' }, ['crm.objects.deals.read']],
+  ['get_object', { object_type: '0-136', id: '7' }, ['crm.objects.leads.read']],
+  ['search_objects', { object_type: 'quotes' }, ['crm.objects.quotes.read']],
+  ['create_object', { object_type: 'notes', properties: { hs_note_body: 'Hi' }, associations: [{ to_object_type: 'deals', to_id: '9001' }] }, ['crm.objects.contacts.write', 'crm.objects.deals.read']],
+  ['create_object', { object_type: 'p1234567_cars', properties: { name: 'A' } }, ['crm.objects.custom.write']],
+  ['create_object', { object_type: 'quotes', properties: { hs_title: 'Q' } }, ['crm.objects.quotes.write']],
+  ['update_object', { object_type: 'companies', id: '201', properties: { name: 'A' } }, ['crm.objects.companies.write']],
+  ['update_object', { object_type: 'leads', id: '7', properties: { hs_lead_name: 'A' } }, ['crm.objects.leads.write']],
+  ['delete_object', { object_type: 'tickets', id: '5' }, ['tickets']],
+  ['list_properties', { object_type: 'companies' }, ['crm.objects.companies.read']],
+  ['list_pipelines', {}, ['crm.objects.deals.read']],
+  ['list_pipelines', { object_type: 'tickets' }, ['tickets']],
+  ['list_owners', {}, ['crm.objects.owners.read']],
+  ['list_associations', { object_type: 'contacts', id: '501', to_object_type: 'companies' }, ['crm.objects.contacts.read', 'crm.objects.companies.read']],
+  ['create_associations', { from_object_type: 'deals', to_object_type: 'companies', pairs: [{ from_id: '9001', to_id: '201' }] }, ['crm.objects.deals.write', 'crm.objects.companies.write']],
+  ['remove_associations', { from_object_type: 'contacts', to_object_type: 'deals', pairs: [{ from_id: '501', to_id: '9001' }] }, ['crm.objects.contacts.write', 'crm.objects.deals.write']],
+  ['search_lists', {}, ['crm.lists.read']],
+  ['list_list_members', { list_id: '123' }, ['crm.lists.read']],
+  ['list_list_members', { list_id: '123', properties: ['email'] }, ['crm.lists.read', 'crm.objects.contacts.read']],
+  ['add_to_list', { list_id: '123', record_ids: ['501'] }, ['crm.lists.write']],
+  ['remove_from_list', { list_id: '123', record_ids: ['501'] }, ['crm.lists.write']],
+  ['list_marketing_emails', {}, ['content']],
+  ['get_marketing_email', { email_id: '12345678' }, ['content']],
+  ['create_marketing_email', { name: 'March Newsletter' }, ['content']],
+  ['update_marketing_email', { email_id: '12345678', subject: 'New' }, ['content']],
+  ['publish_marketing_email', { email_id: '12345678' }, ['marketing-email', 'transactional-email']],
+  ['send_single_email', { email_id: 1, to: 'ann@example.com', send_id: 's-1' }, ['transactional-email']],
+  ['send_single_email', { type: 'marketing', email_id: 1, to: 'ann@example.com', send_id: 's-2' }, ['marketing-email', 'transactional-email']],
+  ['get_send_status', { status_id: 'a1b2c3d4' }, ['marketing-email', 'transactional-email']],
+  ['list_files', {}, ['files']],
+  ['upload_file', { url: 'https://cdn.example.com/banner.png' }, ['files']],
+];
+
+/** A HubSpot that refuses every API call with `body`, and serves the file of upload_file. */
+function refusing(body) {
+  return setup((request) => (request.origin === 'https://api.hubapi.com' ? jsonResponse(403, body) : bytesResponse(200, PNG, { 'content-type': 'image/png' })));
+}
+
+test('a refusal for a missing scope names the scopes the call needs, after HubSpot\'s words', async () => {
+  const tickets = refusing(json('error-403.json'));
+  const { payload } = await callTool(tickets.module, 'list_objects', { object_type: 'tickets' }, tickets.ctx);
+  assert.equal(payload.status, 403);
+  assert.equal(
+    payload.error,
+    'HubSpot refused the request (HTTP 403): This app hasn\'t been granted all required scopes to make this call. Read more about required scopes here: '
+      + 'https://developers.hubspot.com/scopes. This call needs the tickets scope: connect HubSpot again and grant it (an app of your own must list it first).',
+  );
+
+  const both = await callTool(tickets.module, 'create_associations', { from_object_type: 'deals', to_object_type: 'companies', pairs: [{ from_id: '9001', to_id: '201' }] }, tickets.ctx);
+  assert.match(both.payload.error, / Nothing was changed\. This call needs the crm\.objects\.deals\.write and crm\.objects\.companies\.write scopes: connect HubSpot again and grant those the connection lacks \(an app of your own must list them first\)\.$/);
+
+  for (const [tool, args, scopes] of SCOPED_CALLS) {
+    const { module, ctx } = refusing(json('error-403.json'));
+    const refused = await callTool(module, tool, args, ctx);
+    assert.equal(refused.isError, true, tool);
+    assert.equal(refused.payload.outcome, undefined, `${tool}: a refusal is no unknown outcome`);
+    assert.deepEqual(namedScopes(refused.payload.error), scopes, `${tool} ${JSON.stringify(args)}: ${refused.payload.error}`);
+  }
+});
+
+test('a record type it does not know, a 403 for another reason, and the tools every sign-in covers get HubSpot\'s words only', async () => {
+  const scopes = refusing(json('error-403.json'));
+  for (const [tool, args] of [['list_objects', { object_type: 'goals' }], ['get_account', {}], ['api_get', { path: '/crm/v3/objects/tickets' }]]) {
+    const { payload } = await callTool(scopes.module, tool, args, scopes.ctx);
+    assert.match(payload.error, /This app hasn't been granted all required scopes/, tool);
+    assert.equal(namedScopes(payload.error).length, 0, `${tool}: ${payload.error}`);
+  }
+
+  const plan = refusing({ status: 'error', message: 'This account does not have access to this feature.', category: 'FORBIDDEN' });
+  const refused = await callTool(plan.module, 'publish_marketing_email', { email_id: '12345678' }, plan.ctx);
+  assert.equal(
+    refused.payload.error,
+    'HubSpot refused to publish it (publishing needs Marketing Hub Enterprise or the transactional email add-on) (HTTP 403). HubSpot said: "This account does not have access to this feature.". Nothing was changed.',
+  );
+  const tickets = await callTool(plan.module, 'list_objects', { object_type: 'tickets' }, plan.ctx);
+  assert.equal(tickets.payload.error, 'HubSpot refused the request (HTTP 403): This account does not have access to this feature.');
+});
+
+test('the README\'s Scopes table lists what a sign-in asks for, and every scope a refusal can name', () => {
+  const kinds = readmeScopes();
+  const listed = Object.fromEntries(Object.keys(SIGN_IN_SCOPES).map((kind) => [kind, Object.keys(kinds).filter((scope) => kinds[scope] === kind).sort()]));
+  assert.deepEqual(listed, Object.fromEntries(Object.entries(SIGN_IN_SCOPES).map(([kind, scopes]) => [kind, [...scopes].sort()])));
+  assert.equal(Object.keys(kinds).length, Object.values(SIGN_IN_SCOPES).flat().length, 'no scope of another kind');
+
+  const named = new Set(SCOPED_CALLS.flatMap(([, , scopes]) => scopes));
+  for (const scope of named) assert.ok(kinds[scope], `${scope}, which a refusal names, is in the README`);
+  // Every listed scope is one a tool needs: oauth comes with every sign-in, and sales-email-read only adds details to emails records.
+  for (const scope of Object.keys(kinds)) {
+    if (scope !== 'oauth' && scope !== 'sales-email-read') assert.ok(named.has(scope), `${scope} is named by a refusal`);
+  }
 });
 
 test('update_object patches the properties given, by id or unique property; delete archives', async () => {
