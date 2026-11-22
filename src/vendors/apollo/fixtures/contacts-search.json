@@ -1,0 +1,1 @@
+{ "pagination": { "page": 1, "per_page": 25, "total_entries": 1, "total_pages": 1 }, "contacts": [ { "id": "cnt789", "first_name": "Jane", "last_name": "Doe", "email": "jane@example.com", "title": "CEO" } ], "breadcrumbs": [] }

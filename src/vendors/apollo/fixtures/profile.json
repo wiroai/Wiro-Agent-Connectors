@@ -1,0 +1,1 @@
+{ "id": "66c8db577ed7f201b25c0eef", "team_id": "6095a710bd01d100a506d4ac", "first_name": "Jane", "last_name": "Doe", "title": "Head of Sales", "email": "jane@example.com", "credit_usage": { "lead_credits": { "used": 120, "limit": 1000 }, "direct_dial_credits": { "used": 8, "limit": 100 } } }

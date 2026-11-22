@@ -1,0 +1,1 @@
+{ "contacts": [ { "id": "cnt789", "name": "Jane Doe", "email": "jane@example.com" } ], "emailer_campaign": { "id": "seq001", "name": "Outbound Q1 2026", "active": true, "num_steps": 3 }, "skipped_contact_ids": { "cnt790": "contacts_without_email" } }
