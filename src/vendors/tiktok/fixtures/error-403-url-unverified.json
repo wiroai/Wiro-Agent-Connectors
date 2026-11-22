@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "url_ownership_unverified",
+    "message": "Please review our URL ownership verification rules at https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide",
+    "log_id": "20261122000000000000000000000015"
+  }
+}

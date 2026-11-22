@@ -10,9 +10,13 @@
 //   open id, as the host wrote them after the sign-in. Only shown back.
 //
 // A video goes to TikTok either by PULL_FROM_URL (TikTok downloads it; the
-// URL's domain or prefix must be verified for the app) or by FILE_UPLOAD (this
-// module downloads it from a public https URL and sends it in chunks to the
-// upload address TikTok returns). Photos are always PULL_FROM_URL.
+// URL's domain or prefix must be verified in the app's URL properties) or by
+// FILE_UPLOAD (this module downloads it from a public https URL and sends it in
+// chunks to the upload address TikTok returns). A FILE_UPLOAD holds the whole
+// file, so it must fit the host's download limit, which is often far below
+// TikTok's own; a larger video is refused before the post is started.
+// TikTok has no upload for photos: they are always PULL_FROM_URL, so photo
+// URLs must be on a verified domain or prefix too, and TikTok refuses others.
 //
 // Hosts end a tool call after about a minute and drop a late result, so a
 // post follows TikTok's status only until 35 seconds into the call, then
@@ -21,6 +25,11 @@
 import { apiTools, cleanVendorText, defineConnector, formatNumber, OutcomeUnknown, ToolFailure, truncate, utf8Bytes, type ApiRequest, type ToolHelpers } from '../../core/index.js';
 import { chunkPlan, sniffVideo } from './media.js';
 
+/**
+ * The upload hosts TikTok's media transfer guide shows. Origins are exact, so
+ * an upload address on any other tiktokapis.com host is refused before the
+ * file is sent, and the post is not made.
+ */
 const UPLOAD_ORIGINS = ['https://open-upload.tiktokapis.com', 'https://upload.us.tiktokapis.com'];
 const PRIVACY_LEVELS = ['PUBLIC_TO_EVERYONE', 'MUTUAL_FOLLOW_FRIENDS', 'FOLLOWER_OF_CREATOR', 'SELF_ONLY'] as const;
 const MAX_UPLOAD_BYTES = 256 * 1024 * 1024;
@@ -62,11 +71,27 @@ const FAIL_REASONS: Record<string, string> = {
   spam_risk: 'TikTok flagged the post as risky',
 };
 
-const POST_REFUSED =
-  'TikTok refused the post (an app TikTok has not audited may post only with privacy_level SELF_ONLY to a private account; '
-  + 'the creator may have reached the daily post limit, be barred from posting, or not allow that privacy level; the app may have '
-  + 'reached its cap of active creators; PULL_FROM_URL and photos need the URL\'s domain or prefix verified for the app; the inbox '
-  + 'takes at most 5 pending drafts a day)';
+/** Why TikTok refuses a post with HTTP 403, whatever its source. */
+const REFUSAL_CAUSES =
+  'an app TikTok has not audited may post only with privacy_level SELF_ONLY to a private account; the creator may have reached '
+  + 'the daily post limit, be barred from posting, or not allow that privacy level; the app may have reached its cap of active '
+  + 'creators; the inbox takes at most 5 pending drafts a day';
+const POST_REFUSED = `TikTok refused the post (${REFUSAL_CAUSES})`;
+// TikTok answers HTTP 403 (url_ownership_unverified) to a URL whose host is not verified for the app, the
+// usual reason it refuses a post it would download itself, so those refusals say that first.
+const PULL_REFUSED =
+  'TikTok refused the post (with PULL_FROM_URL, TikTok downloads the video itself, only from a domain or URL prefix verified in the '
+  + 'TikTok app\'s URL properties: use a URL on such a host, or source FILE_UPLOAD, which needs no verification; other causes: '
+  + `${REFUSAL_CAUSES})`;
+const PHOTO_REFUSED =
+  'TikTok refused the photo post (TikTok downloads photos itself, only from a domain or URL prefix verified in the TikTok app\'s URL '
+  + 'properties: use photo URLs on such a host, such as the creator\'s own website, or make a video of the photos and post it with '
+  + `post_video, whose FILE_UPLOAD needs no verification; other causes: ${REFUSAL_CAUSES})`;
+const TOO_LARGE_TO_UPLOAD =
+  'The video is larger than this host can download for FILE_UPLOAD, so nothing was posted. Post it with source PULL_FROM_URL from a '
+  + 'domain or URL prefix verified in the TikTok app\'s URL properties, where TikTok downloads up to 4 GB itself, or use a smaller file.';
+/** How h.media says a download went over a size limit: the host's own ("the reply was too large") or this module's. */
+const DOWNLOAD_TOO_LARGE = /^The video (could not be downloaded \(the reply was too large\)|is larger than [0-9,]+ bytes)/;
 const INBOX_REFUSED =
   'TikTok refused the inbox upload: MEDIA_UPLOAD needs the video.upload permission, which this connection may not have '
   + '(sign in to TikTok again with it, or use DIRECT_POST), or the token is no longer valid';
@@ -327,6 +352,23 @@ function checkPostSettings(creator: CreatorInfo, privacy: PrivacyLevel | undefin
   return privacy;
 }
 
+/**
+ * Downloads a FILE_UPLOAD video from its public https URL. A video over the
+ * host's download limit (or this module's) is refused with the way around it.
+ */
+async function downloadVideo(h: ToolHelpers, url: string): Promise<{ bytes: Uint8Array; type: string }> {
+  let bytes: Uint8Array;
+  try {
+    ({ bytes } = await h.media(url, { what: 'video', maxBytes: MAX_UPLOAD_BYTES, accept: 'video/mp4,video/quicktime,video/webm' }));
+  } catch (error) {
+    if (error instanceof ToolFailure && DOWNLOAD_TOO_LARGE.test(error.message)) throw new ToolFailure(TOO_LARGE_TO_UPLOAD);
+    throw error;
+  }
+  const type = sniffVideo(bytes);
+  if (!type || bytes.length === 0) throw new ToolFailure('The video URL did not return an MP4, MOV or WebM video. Nothing was posted.');
+  return { bytes, type };
+}
+
 async function uploadChunks(h: ToolHelpers, uploadUrl: unknown, bytes: Uint8Array, type: string): Promise<void> {
   let target: URL;
   try {
@@ -480,16 +522,22 @@ const connector = defineConnector({
       check: 'get_post_status',
       title: 'Post a video to TikTok',
       description:
-        'Posts one video to the connected TikTok account from a public https URL: FILE_UPLOAD (default) downloads it here and uploads '
-        + `it in chunks (MP4, MOV or WebM, up to ${formatNumber(MAX_UPLOAD_BYTES)} bytes); PULL_FROM_URL lets TikTok download it, which `
-        + 'needs the URL\'s domain verified for the app. Checks the creator\'s posting options first, then waits a little for TikTok to finish '
-        + 'and returns the publish_id to follow with get_post_status. Caption up to 2,200 characters with #hashtags and @mentions (links are '
-        + 'not clickable). One video per post: join clips beforehand.',
+        'Posts one video to the connected TikTok account from a public https URL. FILE_UPLOAD (default) downloads it here, then uploads '
+        + 'it in chunks (MP4, MOV or WebM), so the file must fit the host\'s download limit, which is often a few tens of MB and at most '
+        + `${formatNumber(MAX_UPLOAD_BYTES)} bytes: a larger one is refused with nothing posted. PULL_FROM_URL lets TikTok download it `
+        + '(up to 4 GB), only from a domain or URL prefix verified in the TikTok app\'s URL properties. Checks the creator\'s posting '
+        + 'options first, then waits a little for TikTok to finish and returns the publish_id to follow with get_post_status. Caption up '
+        + 'to 2,200 characters with #hashtags and @mentions (links are not clickable). One video per post: join clips beforehand.',
       inputSchema: {
         type: 'object',
         properties: {
           video_url: { ...HTTPS_URL, description: 'A public https URL of the video (MP4 recommended, H.264, 23 to 60 FPS).' },
-          source: { type: 'string', enum: ['FILE_UPLOAD', 'PULL_FROM_URL'], default: 'FILE_UPLOAD', description: 'FILE_UPLOAD (default) or PULL_FROM_URL (verified domains only).' },
+          source: {
+            type: 'string',
+            enum: ['FILE_UPLOAD', 'PULL_FROM_URL'],
+            default: 'FILE_UPLOAD',
+            description: 'FILE_UPLOAD (default; the file must fit the host\'s download limit) or PULL_FROM_URL (only from a domain or URL prefix verified for the TikTok app).',
+          },
           post_mode: MODE_SCHEMA,
           caption: { type: 'string', maxLength: 2200, description: 'The caption, up to 2,200 characters, with hashtags and mentions (DIRECT_POST only).' },
           privacy_level: PRIVACY_SCHEMA,
@@ -520,13 +568,8 @@ const connector = defineConnector({
           if (creator.stitchDisabled && args.disable_stitch === false) turnedOff.push('stitches');
         }
 
-        let file: { bytes: Uint8Array; type: string } | undefined;
-        if (args.source === 'FILE_UPLOAD') {
-          const { bytes } = await h.media(args.video_url, { what: 'video', maxBytes: MAX_UPLOAD_BYTES, accept: 'video/mp4,video/quicktime,video/webm' });
-          const type = sniffVideo(bytes);
-          if (!type || bytes.length === 0) throw new ToolFailure('The video URL did not return an MP4, MOV or WebM video. Nothing was posted.');
-          file = { bytes, type };
-        }
+        const file = args.source === 'FILE_UPLOAD' ? await downloadVideo(h, args.video_url) : undefined;
+        const refused = file ? POST_REFUSED : PULL_REFUSED;
 
         const plan = file ? chunkPlan(file.bytes.length) : undefined;
         const sourceInfo = file && plan
@@ -556,7 +599,7 @@ const connector = defineConnector({
             ...jsonBody(body),
             // PULL_FROM_URL starts the post right here; a FILE_UPLOAD posts only after its last chunk.
             write: !file,
-            errors: direct ? { 403: POST_REFUSED } : { 401: INBOX_REFUSED, 403: POST_REFUSED },
+            errors: direct ? { 403: refused } : { 401: INBOX_REFUSED, 403: refused },
           });
         } catch (error) {
           if (error instanceof OutcomeUnknown) throw withoutPublishId(error, !direct);
@@ -592,14 +635,22 @@ const connector = defineConnector({
       check: 'get_post_status',
       title: 'Post photos to TikTok',
       description:
-        'Posts a photo post (a carousel of 1 to 35 photos) to the connected TikTok account. TikTok downloads the photos itself, so the '
-        + 'URLs\' domain or prefix must be verified for the app; JPEG or WebP, up to 1080p and 20 MB each. Title up to 90 characters, '
+        'Posts a photo post (a carousel of 1 to 35 photos) to the connected TikTok account. TikTok has no upload for photos: it downloads '
+        + 'them itself, only from a domain or URL prefix verified in the TikTok app\'s URL properties, and refuses photo URLs on any other '
+        + 'host. Use photo URLs on such a host, such as the creator\'s own website; without one, make a video of the photos and post it with '
+        + 'post_video, whose FILE_UPLOAD needs no verification. JPEG or WebP, up to 1080p and 20 MB each. Title up to 90 characters, '
         + 'description up to 4,000 with #hashtags (links are not clickable). Checks the creator\'s posting options first, then waits a little '
         + 'for TikTok to finish and returns the publish_id to follow with get_post_status.',
       inputSchema: {
         type: 'object',
         properties: {
-          image_urls: { type: 'array', minItems: 1, maxItems: 35, items: HTTPS_URL, description: 'Public https URLs of the photos, in order.' },
+          image_urls: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 35,
+            items: HTTPS_URL,
+            description: 'Public https URLs of the photos, in order, on a domain or URL prefix verified for the TikTok app.',
+          },
           post_mode: MODE_SCHEMA,
           title: { type: 'string', maxLength: 90, description: 'A short title, up to 90 characters.' },
           description: { type: 'string', maxLength: 4000, description: 'The post text, up to 4,000 characters, with hashtags.' },
@@ -649,7 +700,7 @@ const connector = defineConnector({
               is_aigc: args.is_aigc,
             })),
             write: true,
-            errors: direct ? { 403: POST_REFUSED } : { 401: INBOX_REFUSED, 403: POST_REFUSED },
+            errors: direct ? { 403: PHOTO_REFUSED } : { 401: INBOX_REFUSED, 403: PHOTO_REFUSED },
           });
         } catch (error) {
           if (error instanceof OutcomeUnknown) throw withoutPublishId(error, !direct);
