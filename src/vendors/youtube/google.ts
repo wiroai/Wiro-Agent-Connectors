@@ -12,7 +12,7 @@ import {
 // copy of this file, since a module imports only from src/core and its folder.
 
 /** Google wraps some words of its error messages in HTML (a link to its docs): keep the words. */
-function plain(text: string): string {
+export function plain(text: string): string {
   return text.replace(/<\/?[A-Za-z][^<>]{0,300}>/g, '');
 }
 
