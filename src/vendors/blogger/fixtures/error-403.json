@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 403,
+    "message": "We're sorry, but you don't have permission to access this resource.",
+    "errors": [{ "message": "We're sorry, but you don't have permission to access this resource.", "domain": "global", "reason": "forbidden" }]
+  }
+}

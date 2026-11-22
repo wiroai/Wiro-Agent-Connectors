@@ -1,0 +1,14 @@
+{
+  "kind": "blogger#post",
+  "id": "7706273476706534553",
+  "blog": { "id": "4967929378133675647" },
+  "published": "2026-11-21T10:30:00-08:00",
+  "updated": "2026-11-21T10:30:00-08:00",
+  "url": "http://travelnotes.example.blogspot.com/2026/11/three-days-in-lisbon.html",
+  "selfLink": "https://www.googleapis.com/blogger/v3/blogs/4967929378133675647/posts/7706273476706534553",
+  "title": "Three days in Lisbon",
+  "author": { "id": "08123456789012345678", "displayName": "Alice Example" },
+  "replies": { "totalItems": "0" },
+  "labels": ["travel", "lisbon"],
+  "status": "DRAFT"
+}

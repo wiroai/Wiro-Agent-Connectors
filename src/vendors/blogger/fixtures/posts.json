@@ -1,0 +1,38 @@
+{
+  "nextPageToken": "CgkIChjA7aGGsDMQ0r2NmIa8wokw",
+  "items": [
+    {
+      "id": "7706273476706534553",
+      "title": "Three days in Lisbon",
+      "status": "DRAFT",
+      "labels": ["travel", "lisbon"],
+      "published": "2026-11-20T09:00:00-08:00",
+      "updated": "2026-11-21T10:30:00-08:00",
+      "url": "http://travelnotes.example.blogspot.com/2026/11/three-days-in-lisbon.html",
+      "replies": { "totalItems": "0" },
+      "author": { "displayName": "Alice Example" }
+    },
+    {
+      "id": "6814405478905317482",
+      "title": "Winter in Porto",
+      "status": "SCHEDULED",
+      "labels": ["travel", "porto"],
+      "published": "2026-12-01T09:00:00-08:00",
+      "updated": "2026-11-19T18:02:00-08:00",
+      "url": "http://travelnotes.example.blogspot.com/2026/12/winter-in-porto.html",
+      "replies": { "totalItems": "0" },
+      "author": { "displayName": "Alice Example" }
+    },
+    {
+      "id": "3342298867103948312",
+      "title": "A morning in Sintra",
+      "status": "LIVE",
+      "labels": ["travel"],
+      "published": "2026-10-05T07:15:00-07:00",
+      "updated": "2026-10-05T07:15:00-07:00",
+      "url": "http://travelnotes.example.blogspot.com/2026/10/a-morning-in-sintra.html",
+      "replies": { "totalItems": "5" },
+      "author": { "displayName": "Alice Example" }
+    }
+  ]
+}

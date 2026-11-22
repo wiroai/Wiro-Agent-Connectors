@@ -1,0 +1,12 @@
+{
+  "kind": "blogger#post",
+  "id": "7706273476706534553",
+  "blog": { "id": "4967929378133675647" },
+  "published": "2036-12-01T01:00:00-08:00",
+  "updated": "2026-11-22T11:05:00-08:00",
+  "url": "http://travelnotes.example.blogspot.com/2036/12/three-days-in-lisbon.html",
+  "title": "Three days in Lisbon",
+  "replies": { "totalItems": "0" },
+  "labels": ["travel", "lisbon"],
+  "status": "SCHEDULED"
+}
