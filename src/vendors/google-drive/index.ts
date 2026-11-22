@@ -16,12 +16,16 @@
 // Modules hand results back as text, so a binary file (an image, a video, a
 // PDF export) leaves Drive by link: share_file with type anyone returns a
 // download link for the service that needs the file, and unshare_file takes
-// the link back afterwards.
+// the link back afterwards, in the same run. share_file says when that link
+// cannot work: a sharing setting forbids it, downloads are off for viewers,
+// or the file is over Google's 100 MB virus-scan limit (a download by link
+// then gets a warning page). list_files finds links still open.
 
 import {
   allowedAccounts,
   apiTools,
   defineConnector,
+  OutcomeUnknown,
   ToolFailure,
   truncate,
   utf8Bytes,
@@ -67,6 +71,13 @@ const PICKER = 'folders';
 const SIMPLE_UPLOAD_MAX = 5 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_TEXT_BYTES = 4 * 1024 * 1024;
+/**
+ * Google Drive scans files up to 100 MB for viruses. A download of a larger
+ * file by link gets Google's warning page instead of the file, so a service
+ * fetching the link gets that page. Counted in decimal megabytes, to warn
+ * rather than miss.
+ */
+const SCAN_LIMIT_BYTES = 100_000_000;
 const MAX_PARENT_LOOKUPS = 20;
 /** Folders per page of the picker's list, and the parent names looked up for one page (a few at a time). */
 const FOLDER_PAGE_SIZE = 150;
@@ -86,20 +97,60 @@ function enc(id: string): string {
 /** A 403 that is one of Google's usage limits: waiting helps, sharing does not. */
 class UsageLimit extends ToolFailure {}
 
-/** Google's words for a usage limit (rateLimitExceeded, userRateLimitExceeded, quotaExceeded) and for full storage (storageQuotaExceeded). */
+/** Google's words for a usage limit (rateLimitExceeded, userRateLimitExceeded, quotaExceeded, sharingRateLimitExceeded) and for full storage (storageQuotaExceeded). */
 const USAGE_LIMIT = /rate limit|usage limit|quota exceeded|too many requests/i;
 const STORAGE_FULL = /storage quota/i;
+/**
+ * Google's 400 invalidSharingRequest has two common causes: a sharing that
+ * was made although its notification email could not be sent, and one a
+ * sharing setting does not allow ("ACL change not allowed."). Google puts the
+ * cause after "User message:", when the reply carries it at all.
+ */
+const EMAIL_NOT_SENT = /successfully shared but (the )?emails? could not be sent/i;
+const USER_MESSAGE = /User message:/i;
 
-/** Google Drive answers 403 for missing sharing, usage limits and storage: the advice follows the reason Google gave. */
-function explainRefusal(h: ToolHelpers, error: unknown): unknown {
-  if (!(error instanceof ToolFailure) || error.details.status !== 403) return error;
+/** What the service account needs to share a file. */
+const SHARING_RIGHTS = 'in a shared drive it needs the Content manager or Manager role, elsewhere Editor access with "Editors can change permissions and share" on';
+const SHARING_SETTINGS = '(Admin console: Apps, Google Workspace, Drive and Docs, Sharing settings)';
+
+/**
+ * What to do when Google Drive refuses a new sharing: Google Workspace can
+ * forbid sharing outside the organization or by link, for the organization
+ * or one shared drive (400), and a 403 may also mean the service account
+ * may not share the file at all.
+ */
+function sharingAdvice(h: ToolHelpers, type: string, status: number): string {
+  const forbids = type === 'anyone'
+    ? 'a Google Workspace sharing setting, of the organization or of the shared drive, forbids sharing outside the organization or with '
+      + `anyone with the link: then this file cannot leave Google Drive by link until an administrator allows it ${SHARING_SETTINGS} or a `
+      + 'manager of the shared drive does in its settings.'
+    : 'a Google Workspace sharing setting, of the organization or of the shared drive, forbids sharing outside the organization: then '
+      + `only an administrator ${SHARING_SETTINGS} or a manager of the shared drive can allow it.`;
+  if (status === 400) return `Google Drive did not allow this sharing. Most likely ${forbids}`;
+  return `Google Drive may not let ${serviceAccountWords(h)} share it: ${SHARING_RIGHTS}. Or ${forbids}`;
+}
+
+/**
+ * Google Drive answers 403 for missing sharing, usage limits and storage, and
+ * 400 or 403 for a sharing it does not allow: the advice follows the reason
+ * Google gave. `sharing` is the type of a new sharing (share_file).
+ */
+function explainRefusal(h: ToolHelpers, error: unknown, sharing?: string): unknown {
+  if (!(error instanceof ToolFailure)) return error;
+  const { status } = error.details;
+  if (status !== 403 && !(sharing !== undefined && status === 400)) return error;
   const ending = error.message.endsWith(NOTHING_CHANGED) ? NOTHING_CHANGED : '';
   const text = error.message.slice(0, error.message.length - ending.length);
-  if (STORAGE_FULL.test(text)) {
+  if (status === 403 && STORAGE_FULL.test(text)) {
     return new ToolFailure(`${text} A service account has no Drive storage of its own: use a folder in a shared drive, where files belong to the drive.${ending}`, error.details);
   }
-  if (USAGE_LIMIT.test(text)) {
+  if (status === 403 && USAGE_LIMIT.test(text)) {
     return new UsageLimit(`${text} That is a Google Drive usage limit, not a sharing problem: wait a minute and try again.${ending}`, error.details);
+  }
+  if (sharing !== undefined) {
+    // The sharing was made and only its email failed: share_file reports that as done.
+    if (EMAIL_NOT_SENT.test(text)) return error;
+    return new ToolFailure(`${text} ${sharingAdvice(h, sharing, status as number)}${ending}`, error.details);
   }
   return new ToolFailure(
     `${text} Share the file or folder with ${serviceAccountWords(h)} (Editor, or Content manager in a shared drive), and check that the `
@@ -108,14 +159,15 @@ function explainRefusal(h: ToolHelpers, error: unknown): unknown {
   );
 }
 
-async function drive(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
+/** One Drive, Sheets or Docs request. `sharing`: the type of a new sharing, for the advice on a refusal. */
+async function drive(h: ToolHelpers, request: ApiRequest, sharing?: string): Promise<ApiResponse> {
   try {
     return await googleApi(h, SCOPES, {
       ...request,
       errors: { 404: `Google Drive found no such file, or it is not shared with ${serviceAccountWords(h)}`, ...request.errors },
     });
   } catch (error) {
-    throw explainRefusal(h, error);
+    throw explainRefusal(h, error, sharing);
   }
 }
 
@@ -426,6 +478,28 @@ async function reachableFolderList(h: ToolHelpers, cursor: string | undefined) {
   });
 }
 
+/**
+ * Whether people with this role may not download the file: its owner or a
+ * manager turned downloads off for viewers and commenters (or for editors
+ * too), on the file or for its whole shared drive. Google's effective
+ * restriction counts every setting; either signal is enough.
+ */
+function downloadBlocked(file: any, role: string): boolean {
+  const restrictions = file?.downloadRestrictions;
+  const restriction = restrictions?.effectiveDownloadRestrictionWithContext ?? restrictions?.itemDownloadRestriction;
+  if (restriction?.restrictedForWriters === true) return true;
+  if (role === 'writer') return false;
+  return restriction?.restrictedForReaders === true || file?.copyRequiresWriterPermission === true;
+}
+
+/** The sentence for a file over Google's virus-scan limit, or undefined. */
+function scanWarning(file: any): string | undefined {
+  const size = Number(file?.size);
+  if (!Number.isFinite(size) || size <= SCAN_LIMIT_BYTES) return undefined;
+  return 'Google Drive does not scan files over 100 MB for viruses, so a download of this one by link gets Google\'s warning page '
+    + 'instead of the file: a service that fetches the link gets that page, not the file (a person can still download it from there).';
+}
+
 /** Where a file shared with anyone downloads without signing in: the file itself, or a Google file's exports by format. */
 function downloadLinks(file: any): Record<string, unknown> {
   if (typeof file?.webContentLink === 'string' && file.webContentLink) return { downloadUrl: file.webContentLink };
@@ -634,8 +708,8 @@ const connector = defineConnector({
       description:
         'Lists the files in a folder (or, without folder_id, in the chosen folders, or everything the service account can see), newest change '
         + 'first (full-text matches by relevance): id, name, kind (folder, document, spreadsheet, presentation or file), type, size, times and '
-        + 'link. Filter by name, text, type or change time. Subfolders are listed too; list one with its id for its files. Pass nextCursor '
-        + 'back as cursor for more.',
+        + 'link. Filter by name, text, type, change time, or whether anyone with the link can open them. Subfolders are listed too; list one '
+        + 'with its id for its files. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -644,6 +718,11 @@ const connector = defineConnector({
           full_text: { type: 'string', maxLength: 200, description: 'Only files whose name or content contains this text; they come back by relevance.' },
           mime_type: { type: 'string', maxLength: 200, pattern: '^[A-Za-z0-9.+-]+/([A-Za-z0-9.+-]+|\\*)$', description: 'Only this type, e.g. image/png, or a family such as image/* or video/*.' },
           modified_after: { type: 'string', maxLength: 40, description: 'Only files changed after this time (RFC 3339), e.g. 2026-05-01T00:00:00Z.' },
+          shared_with_anyone: {
+            type: 'boolean',
+            description: 'true: only files anyone with the link can open (shared with anyone, as share_file does for a service), to find links '
+              + 'still open and remove them with unshare_file; false: only files that are not.',
+          },
           include_folders: { type: 'boolean', default: true, description: 'List subfolders too (default true).' },
           order_by: {
             type: 'string',
@@ -658,7 +737,7 @@ const connector = defineConnector({
       },
       async run(args: {
         folder_id?: string; name_contains?: string; full_text?: string; mime_type?: string; modified_after?: string;
-        include_folders: boolean; order_by?: string; query?: string; page_size: number; cursor?: string;
+        shared_with_anyone?: boolean; include_folders: boolean; order_by?: string; query?: string; page_size: number; cursor?: string;
       }, h) {
         // Google Drive refuses a sort order for a query with a fullText term: those come back by relevance.
         const fullText = Boolean(args.full_text) || (args.query !== undefined && /\bfullText\s+contains\b/i.test(args.query));
@@ -682,6 +761,9 @@ const connector = defineConnector({
             : `mimeType = ${queryLiteral(args.mime_type)}`);
         }
         if (!args.include_folders) clauses.push(`mimeType != '${FOLDER_TYPE}'`);
+        // A link for anyone is "anyoneWithLink"; "anyoneCanFind" is one that also shows in search.
+        if (args.shared_with_anyone === true) clauses.push(`(visibility = 'anyoneWithLink' or visibility = 'anyoneCanFind')`);
+        if (args.shared_with_anyone === false) clauses.push(`visibility != 'anyoneWithLink' and visibility != 'anyoneCanFind'`);
         if (args.modified_after !== undefined) {
           const time = Date.parse(args.modified_after);
           if (!Number.isFinite(time)) throw new ToolFailure('modified_after is not a time such as 2026-05-01T00:00:00Z.');
@@ -733,9 +815,10 @@ const connector = defineConnector({
       description:
         'Returns the text of a file, in pages of about 25 KB: a Google Doc as Markdown (or plain text or HTML), a Google Sheet\'s first sheet '
         + 'as CSV (read_sheet reads any sheet and range), a Slides file as plain text, and text files (TXT, CSV, JSON, HTML, XML and similar) '
-        + 'as they are, up to 4 MB. A binary file (an image, a video, a PDF) is not read: its details and links come back instead. To hand '
-        + 'a file, or a PDF, Word, Excel or PowerPoint export of a Google file, to a service that downloads by URL, use share_file (type '
-        + 'anyone) and unshare_file afterwards. Pass nextCursor back as cursor for the next page.',
+        + 'as they are, up to 4 MB. A binary file (an image, a video, a PDF) is not read: a connector returns text, not files, so its '
+        + 'details and links come back instead. To hand a file, or a PDF, Word, Excel or PowerPoint export of a Google file, to a service '
+        + 'that downloads by URL, use share_file (type anyone), then unshare_file in the same run. Pass nextCursor back as cursor for the '
+        + 'next page.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -775,9 +858,10 @@ const connector = defineConnector({
           return compact({
             ...trimFile(file),
             binary: true,
-            note: 'This is a binary file, so it is not returned as text. Open it with webViewLink. For a service that downloads files by URL, '
-              + 'share_file with type anyone and role reader returns its downloadUrl; once the service has the file, unshare_file with '
-              + 'permission_id anyoneWithLink takes the link back.',
+            note: 'This is a binary file, and a connector returns text, not files. Open it with webViewLink. For a service that downloads files '
+              + 'by URL, share_file with type anyone and role reader returns its downloadUrl; in the same run, once the service has the file '
+              + '(or has failed), unshare_file with permission_id anyoneWithLink takes the link back.',
+            warning: scanWarning(file),
           });
         }
         const { data } = await drive(h, request);
@@ -803,9 +887,10 @@ const connector = defineConnector({
       title: 'Upload a file to Google Drive',
       description:
         'Uploads a file into a folder: from a public https URL (images, videos, PDFs and any other file, up to 50 MB) or from text given here '
-        + '(CSV, Markdown, JSON, HTML or plain text). The type comes from the file itself unless mime_type says otherwise; convert_to turns '
-        + 'it into a Google Doc, Sheet or Slides file. Returns the new file with its id and link. A service account owns no storage of its '
-        + 'own: upload into a shared drive, or Google may answer storageQuotaExceeded.',
+        + '(CSV, Markdown, JSON, HTML or plain text). A connector reads no local files: a file on a computer or in a workspace must first be '
+        + 'reachable at a public https URL. The type comes from the file itself unless mime_type says otherwise; convert_to turns it into a '
+        + 'Google Doc, Sheet or Slides file. Returns the new file with its id and link. A service account owns no storage of its own: upload '
+        + 'into a shared drive, or Google may answer storageQuotaExceeded.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -967,8 +1052,10 @@ const connector = defineConnector({
         'Gives a person, a group, a whole domain or anyone with the link access to a file or folder, as reader, commenter or writer (Editor; '
         + 'Content manager in a shared drive). Files the service account creates belong to it: share them with the people who need to edit them. '
         + 'type anyone with role reader is how a file reaches a service that downloads by URL: the result then has downloadUrl (the file '
-        + 'itself) or, for a Google Doc, Sheet or Slides file, exportUrls by format (pdf, docx, xlsx, pptx and more). Anyone with the link '
-        + 'can open the file until unshare_file removes permission anyoneWithLink: do that once the service has the file.',
+        + 'itself) or, for a Google Doc, Sheet or Slides file, exportUrls by format (pdf, docx, xlsx, pptx and more), and a warning when a '
+        + 'service cannot fetch it (downloads off for viewers; over 100 MB, Google answers with a virus-scan page). Anyone with the link can '
+        + 'open the file until unshare_file removes permission anyoneWithLink: do that in the same run, once the service has the file. A '
+        + 'sharing setting of the organization or the shared drive can forbid links for anyone; the error then says so.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -988,31 +1075,78 @@ const connector = defineConnector({
         if (person && !args.email) throw new ToolFailure(`email is required for type ${args.type}. Nothing was changed.`);
         if (args.type === 'domain' && !args.domain) throw new ToolFailure('domain is required for type domain. Nothing was changed.');
         if (!person && (args.email || args.notify !== undefined || args.message)) throw new ToolFailure('email, notify and message go with type user or group only. Nothing was changed.');
-        // The links are read before the change, so nothing after it can fail.
-        const file = await getChecked(h, args.file_id, 'id,webViewLink,webContentLink,exportLinks');
-        const { data } = await drive(h, {
-          method: 'POST',
-          path: `/drive/v3/files/${enc(args.file_id)}/permissions`,
-          query: {
-            supportsAllDrives: true,
-            fields: 'id,type,role,emailAddress,domain',
-            sendNotificationEmail: person ? args.notify : undefined,
-            emailMessage: args.message,
-          },
-          json: compact({ role: args.role, type: args.type, emailAddress: args.email, domain: args.domain }),
-          write: true,
-        });
+        // The file (links, size, download settings, the right to share) is read before the change, so nothing after it can fail.
+        const file = await getChecked(h, args.file_id, [
+          'id,name,mimeType,size,webViewLink,webContentLink,exportLinks',
+          'copyRequiresWriterPermission,downloadRestrictions,capabilities(canShare)',
+        ].join(','));
+        if (file?.capabilities?.canShare === false) {
+          throw new ToolFailure(
+            `Google Drive does not let ${serviceAccountWords(h)} change who can open this ${kindOf(file?.mimeType) === 'folder' ? 'folder' : 'file'}: `
+              + `${SHARING_RIGHTS}, unless a sharing setting of the organization or of the shared drive stops it anyway. Nothing was changed.`,
+          );
+        }
+        const details = trimFile(file);
+        const about = { fileId: args.file_id, name: details['name'], mimeType: details['mimeType'], size: details['size'] };
+        let data: any;
+        try {
+          ({ data } = await drive(h, {
+            method: 'POST',
+            path: `/drive/v3/files/${enc(args.file_id)}/permissions`,
+            query: {
+              supportsAllDrives: true,
+              fields: 'id,type,role,emailAddress,domain',
+              sendNotificationEmail: person ? args.notify : undefined,
+              emailMessage: args.message,
+            },
+            json: compact({ role: args.role, type: args.type, emailAddress: args.email, domain: args.domain }),
+            write: true,
+          }, args.type));
+        } catch (error) {
+          if (!(error instanceof ToolFailure) || error.details.status !== 400) throw error;
+          // Google made the sharing and only its email failed: it is done.
+          if (EMAIL_NOT_SENT.test(error.message)) {
+            return compact({
+              ...about,
+              type: args.type,
+              role: args.role,
+              email: args.email,
+              webViewLink: file?.webViewLink,
+              warning: 'Google Drive made the sharing but could not send its notification email: check the address. get_file lists the sharing with its permission id.',
+            });
+          }
+          // A 400 that gives no cause may be that same case, when an email was to be sent.
+          if (person && args.notify !== false && !USER_MESSAGE.test(error.message)) {
+            throw new OutcomeUnknown(
+              'Google Drive answered HTTP 400 without a cause, as it does both when a sharing setting forbids the sharing and when it made '
+                + 'the sharing but could not send the notification email, so it is not known whether the sharing was made.',
+            );
+          }
+          throw error;
+        }
         const anyone = args.type === 'anyone';
+        let links: Record<string, unknown> = {};
+        let warning: string | undefined;
+        if (anyone && downloadBlocked(file, args.role)) {
+          warning = `Downloads are turned off for ${args.role === 'writer' ? 'editors' : 'viewers'} of this file (on the file, or in its shared drive), `
+            + 'so the link opens it in Google Drive but gives no file to download: a service cannot fetch it.';
+        } else if (anyone) {
+          links = downloadLinks(file);
+          if (links['downloadUrl']) warning = scanWarning(file);
+        }
         return compact({
-          fileId: args.file_id,
+          ...about,
           permissionId: data?.id,
           type: data?.type,
           role: data?.role,
           email: data?.emailAddress,
           domain: data?.domain,
           webViewLink: file?.webViewLink,
-          ...(anyone ? downloadLinks(file) : {}),
-          note: anyone ? `Anyone with these links can open the file until unshare_file removes permission ${String(data?.id ?? 'anyoneWithLink')}.` : undefined,
+          ...links,
+          warning,
+          note: anyone
+            ? `Anyone with the link can open the file until unshare_file removes permission ${String(data?.id ?? 'anyoneWithLink')}: do that in the same run, once the service has the file.`
+            : undefined,
         });
       },
     },
@@ -1023,8 +1157,9 @@ const connector = defineConnector({
       title: 'Remove a sharing from a Google Drive file',
       description:
         'Removes one sharing from a file or folder by its permission id: the permissionId share_file returned, or an id from get_file\'s '
-        + 'sharedWith. anyoneWithLink takes back a link shared with anyone, once the service that needed the file has it. Sharing inherited '
-        + 'from a folder is removed on the folder, and the owner\'s cannot be removed.',
+        + 'sharedWith. anyoneWithLink takes back a link shared with anyone: call it in the same run, once the service that needed the file '
+        + 'has it or has failed (list_files with shared_with_anyone finds links still open). Sharing inherited from a folder is removed on '
+        + 'the folder, and the owner\'s cannot be removed.',
       inputSchema: {
         type: 'object',
         properties: {

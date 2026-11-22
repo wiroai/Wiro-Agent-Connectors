@@ -281,7 +281,8 @@ test('read_file reads text files as they are, a Sheet as CSV, and returns links 
   assert.equal(image.isError, false);
   assert.equal(image.payload.binary, true);
   assert.equal(image.payload.webContentLink, 'https://drive.google.com/uc?id=4UploadedBannerImage00000000000&export=download');
-  assert.match(image.payload.note, /share_file with type anyone and role reader returns its downloadUrl; .* unshare_file with permission_id anyoneWithLink/);
+  assert.match(image.payload.note, /share_file with type anyone and role reader returns its downloadUrl; in the same run, .* unshare_file with permission_id anyoneWithLink/);
+  assert.equal(image.payload.warning, undefined, 'a small file downloads by link');
 });
 
 test('upload_file sends a small file from a URL as one multipart request, typed from its bytes', async () => {
@@ -464,17 +465,24 @@ test('share_file adds one permission and, shared with anyone, returns the downlo
   const posts = () => apiCalls().filter((call) => call.method === 'POST');
   const { payload } = await callTool(module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone' }, ctx);
   assert.deepEqual(apiCalls().map((call) => call.method), ['GET', 'POST'], 'the links are read before the change');
-  assert.match(apiCalls()[0].query.fields, /webContentLink,exportLinks/);
+  // Links, size, download settings and the right to share, all read before the change.
+  assert.equal(
+    apiCalls()[0].query.fields,
+    'id,name,mimeType,size,webViewLink,webContentLink,exportLinks,copyRequiresWriterPermission,downloadRestrictions,capabilities(canShare)',
+  );
   assert.deepEqual(posts()[0].json, { role: 'reader', type: 'anyone' });
   assert.equal(posts()[0].query.sendNotificationEmail, undefined);
   assert.deepEqual(payload, {
     fileId: 'file1',
+    name: 'banner.png',
+    mimeType: 'image/png',
+    size: 2048,
     permissionId: 'anyoneWithLink',
     type: 'anyone',
     role: 'reader',
     webViewLink: uploaded.webViewLink,
     downloadUrl: uploaded.webContentLink,
-    note: 'Anyone with these links can open the file until unshare_file removes permission anyoneWithLink.',
+    note: 'Anyone with the link can open the file until unshare_file removes permission anyoneWithLink: do that in the same run, once the service has the file.',
   });
 
   const person = await callTool(module, 'share_file', { file_id: 'file1', role: 'writer', type: 'user', email: 'jane@example.com', notify: false }, ctx);
@@ -502,6 +510,191 @@ test('a Google Doc shared with anyone comes with its export links by format, for
     txt: `https://docs.google.com/feeds/download/documents/export/Export?id=${DOC}&exportFormat=txt`,
   });
   assert.equal(payload.downloadUrl, undefined);
+});
+
+test('a link a service could not use says so: over 100 MB Google answers with a virus-scan page, and with downloads off for viewers there is no download link', async () => {
+  const video = fixture(import.meta.url, 'file-video-large.json');
+  const large = setup({
+    [`GET /drive/v3/files/${video.id}`]: jsonResponse(200, video),
+    [`POST /drive/v3/files/${video.id}/permissions`]: jsonResponse(200, fixture(import.meta.url, 'permission.json')),
+  });
+  const shared = await callTool(large.module, 'share_file', { file_id: video.id, role: 'reader', type: 'anyone' }, large.ctx);
+  assert.equal(shared.isError, false, shared.payload.error);
+  assert.equal(shared.payload.size, 734003200);
+  assert.equal(shared.payload.downloadUrl, video.webContentLink, 'a person can still download it from the warning page');
+  assert.equal(
+    shared.payload.warning,
+    'Google Drive does not scan files over 100 MB for viruses, so a download of this one by link gets Google\'s warning page instead of the '
+      + 'file: a service that fetches the link gets that page, not the file (a person can still download it from there).',
+  );
+  const read = await callTool(large.module, 'read_file', { file_id: video.id }, large.ctx);
+  assert.equal(read.payload.binary, true);
+  assert.equal(read.payload.warning, shared.payload.warning);
+
+  // 100 MB itself is still scanned.
+  const edge = setup({
+    'GET /drive/v3/files/edge1': jsonResponse(200, { ...video, id: 'edge1', size: '100000000' }),
+    'POST /drive/v3/files/edge1/permissions': jsonResponse(200, fixture(import.meta.url, 'permission.json')),
+  });
+  const scanned = await callTool(edge.module, 'share_file', { file_id: 'edge1', role: 'reader', type: 'anyone' }, edge.ctx);
+  assert.equal(scanned.payload.warning, undefined);
+  assert.equal(scanned.payload.downloadUrl, video.webContentLink);
+
+  // Downloads off for viewers: the sharing is made (people can view it), but no link a service could fetch comes back.
+  const doc = fixture(import.meta.url, 'file.json');
+  const viewOnly = {
+    ...doc,
+    downloadRestrictions: { effectiveDownloadRestrictionWithContext: { restrictedForReaders: true, restrictedForWriters: false } },
+  };
+  const blocked = setup({
+    'GET /drive/v3/files/view1': jsonResponse(200, { ...video, id: 'view1', size: '2048', copyRequiresWriterPermission: true, downloadRestrictions: undefined }),
+    'POST /drive/v3/files/view1/permissions': jsonResponse(200, fixture(import.meta.url, 'permission.json')),
+    [`GET /drive/v3/files/${DOC}`]: jsonResponse(200, viewOnly),
+    [`POST /drive/v3/files/${DOC}/permissions`]: (request) => jsonResponse(200, { id: 'anyoneWithLink', type: 'anyone', role: request.json.role }),
+  });
+  const file = await callTool(blocked.module, 'share_file', { file_id: 'view1', role: 'reader', type: 'anyone' }, blocked.ctx);
+  assert.equal(file.isError, false, file.payload.error);
+  assert.equal(file.payload.downloadUrl, undefined);
+  assert.equal(file.payload.permissionId, 'anyoneWithLink');
+  assert.equal(
+    file.payload.warning,
+    'Downloads are turned off for viewers of this file (on the file, or in its shared drive), so the link opens it in Google Drive but gives '
+      + 'no file to download: a service cannot fetch it.',
+  );
+  const exports = await callTool(blocked.module, 'share_file', { file_id: DOC, role: 'commenter', type: 'anyone' }, blocked.ctx);
+  assert.equal(exports.payload.exportUrls, undefined, 'no export link either');
+  assert.match(exports.payload.warning, /^Downloads are turned off for viewers/);
+  // Editors may still download when only viewers are restricted.
+  const editors = await callTool(blocked.module, 'share_file', { file_id: DOC, role: 'writer', type: 'anyone' }, blocked.ctx);
+  assert.equal(editors.payload.warning, undefined);
+  assert.ok(editors.payload.exportUrls.pdf);
+  assert.equal(blocked.apiCalls().filter((call) => call.method === 'POST').length, 3, 'each sharing is made once');
+
+  const locked = setup({
+    [`GET /drive/v3/files/${DOC}`]: jsonResponse(200, { ...doc, downloadRestrictions: { itemDownloadRestriction: { restrictedForReaders: true, restrictedForWriters: true } } }),
+    [`POST /drive/v3/files/${DOC}/permissions`]: jsonResponse(200, { id: 'anyoneWithLink', type: 'anyone', role: 'writer' }),
+  });
+  const writers = await callTool(locked.module, 'share_file', { file_id: DOC, role: 'writer', type: 'anyone' }, locked.ctx);
+  assert.equal(writers.payload.exportUrls, undefined);
+  assert.match(writers.payload.warning, /^Downloads are turned off for editors of this file/);
+});
+
+test('a sharing Google Drive does not allow is refused with what to do: a sharing setting keeps the file from leaving by link, and nothing is resent', async () => {
+  const acl = fixture(import.meta.url, 'error-acl-change-not-allowed.json');
+  const route = 'POST /drive/v3/files/file1/permissions';
+  const policy = 'Most likely a Google Workspace sharing setting, of the organization or of the shared drive, forbids sharing outside the '
+    + 'organization or with anyone with the link: then this file cannot leave Google Drive by link until an administrator allows it (Admin '
+    + 'console: Apps, Google Workspace, Drive and Docs, Sharing settings) or a manager of the shared drive does in its settings.';
+
+  // Google's own sample: the cause is in errors[0], the top message is only "Bad Request".
+  const bare = setup({ 'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')), [route]: jsonResponse(400, acl) });
+  const refused = await callTool(bare.module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone' }, bare.ctx);
+  assert.equal(refused.isError, true);
+  assert.equal(refused.payload.status, 400);
+  assert.equal(refused.payload.error, `Google Drive rejected the request (HTTP 400): Bad Request. Google Drive did not allow this sharing. ${policy} Nothing was changed.`);
+  assert.equal(bare.apiCalls().filter((call) => call.method === 'POST').length, 1, 'sent once, never retried');
+
+  // The same refusal with Google's words in the top message, for a domain.
+  const worded = { error: { ...acl.error, message: acl.error.errors[0].message } };
+  const domain = setup({ 'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')), [route]: jsonResponse(400, worded) });
+  const outside = await callTool(domain.module, 'share_file', { file_id: 'file1', role: 'reader', type: 'domain', domain: 'example.org' }, domain.ctx);
+  assert.equal(
+    outside.payload.error,
+    'Google Drive rejected the request (HTTP 400): Bad Request. User message: "ACL change not allowed.". Google Drive did not allow this sharing. '
+      + 'Most likely a Google Workspace sharing setting, of the organization or of the shared drive, forbids sharing outside the organization: '
+      + 'then only an administrator (Admin console: Apps, Google Workspace, Drive and Docs, Sharing settings) or a manager of the shared drive '
+      + 'can allow it. Nothing was changed.',
+  );
+
+  // A 403 may also be the service account's own role.
+  const denied = setup({
+    'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')),
+    [route]: jsonResponse(403, fixture(import.meta.url, 'error-insufficient-permissions.json')),
+  });
+  const role = await callTool(denied.module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone' }, denied.ctx);
+  assert.equal(
+    role.payload.error,
+    'Google Drive refused the request (HTTP 403): The user does not have sufficient permissions for file 4UploadedBannerImage00000000000. Google '
+      + `Drive may not let the service account ${KEY.client_email} share it: in a shared drive it needs the Content manager or Manager role, `
+      + 'elsewhere Editor access with "Editors can change permissions and share" on. Or a Google Workspace sharing setting, of the organization '
+      + 'or of the shared drive, forbids sharing outside the organization or with anyone with the link: then this file cannot leave Google '
+      + 'Drive by link until an administrator allows it (Admin console: Apps, Google Workspace, Drive and Docs, Sharing settings) or a manager '
+      + 'of the shared drive does in its settings. Nothing was changed.',
+  );
+  assert.doesNotMatch(role.payload.error, /Share the file or folder with/);
+
+  // Google's sharing rate limit is waited out.
+  const busy = setup({
+    'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')),
+    [route]: jsonResponse(403, fixture(import.meta.url, 'error-sharing-rate-limit.json')),
+  });
+  const limit = await callTool(busy.module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone' }, busy.ctx);
+  assert.equal(limit.payload.error, 'Google Drive refused the request (HTTP 403): Rate Limit Exceeded. That is a Google Drive usage limit, not a sharing problem: wait a minute and try again. Nothing was changed.');
+
+  // When Google Drive says the service account may not share the file, nothing is sent.
+  const viewer = setup({ 'GET /drive/v3/files/file1': jsonResponse(200, { ...fixture(import.meta.url, 'uploaded.json'), capabilities: { canShare: false } }) });
+  const early = await callTool(viewer.module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone' }, viewer.ctx);
+  assert.equal(
+    early.payload.error,
+    `Google Drive does not let the service account ${KEY.client_email} change who can open this file: in a shared drive it needs the Content `
+      + 'manager or Manager role, elsewhere Editor access with "Editors can change permissions and share" on, unless a sharing setting of the '
+      + 'organization or of the shared drive stops it anyway. Nothing was changed.',
+  );
+  assert.deepEqual(viewer.apiCalls().map((call) => call.method), ['GET']);
+});
+
+test('Google\'s 400 for a sharing made without its email is a sharing made; a 400 that gives no cause, when an email was due, is an unknown outcome', async () => {
+  const route = 'POST /drive/v3/files/file1/permissions';
+  const notSent = fixture(import.meta.url, 'error-email-not-sent.json');
+  const made = setup({ 'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')), [route]: jsonResponse(400, notSent) });
+  const done = await callTool(made.module, 'share_file', { file_id: 'file1', role: 'writer', type: 'user', email: 'jane@example.com' }, made.ctx);
+  assert.equal(done.isError, false, done.payload.error);
+  assert.deepEqual(done.payload, {
+    fileId: 'file1',
+    name: 'banner.png',
+    mimeType: 'image/png',
+    size: 2048,
+    type: 'user',
+    role: 'writer',
+    email: 'jane@example.com',
+    webViewLink: fixture(import.meta.url, 'uploaded.json').webViewLink,
+    warning: 'Google Drive made the sharing but could not send its notification email: check the address. get_file lists the sharing with its permission id.',
+  });
+  assert.equal(made.apiCalls().filter((call) => call.method === 'POST').length, 1);
+
+  // Google's own sample carries the cause in errors[0] only: with an email due, the sharing may have been made.
+  const bareNotSent = { error: { ...notSent.error, message: 'Bad Request' } };
+  const unclear = setup({ 'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')), [route]: jsonResponse(400, bareNotSent) });
+  const unknown = await callTool(unclear.module, 'share_file', { file_id: 'file1', role: 'writer', type: 'user', email: 'jane@example.com' }, unclear.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'get_file');
+  assert.match(unknown.payload.error, /^Google Drive answered HTTP 400 without a cause, .* so it is not known whether the sharing was made\. Call get_file/);
+  assert.equal(unclear.apiCalls().filter((call) => call.method === 'POST').length, 1, 'nothing is resent');
+
+  // No email was due (notify false): the same answer is a plain refusal.
+  const quiet = setup({
+    'GET /drive/v3/files/file1': jsonResponse(200, fixture(import.meta.url, 'uploaded.json')),
+    [route]: jsonResponse(400, fixture(import.meta.url, 'error-acl-change-not-allowed.json')),
+  });
+  const refused = await callTool(quiet.module, 'share_file', { file_id: 'file1', role: 'reader', type: 'user', email: 'jane@example.com', notify: false }, quiet.ctx);
+  assert.equal(refused.payload.outcome, undefined);
+  assert.match(refused.payload.error, /^Google Drive rejected the request \(HTTP 400\): Bad Request\. Google Drive did not allow this sharing\. Most likely .* forbids sharing outside the organization: .* Nothing was changed\.$/);
+});
+
+test('list_files finds the files anyone with the link can open, or those no one can, inside the chosen folders too', async () => {
+  const { module, ctx, apiCalls } = setup({ 'GET /drive/v3/files': jsonResponse(200, fixture(import.meta.url, 'files.json')) });
+  const open = await callTool(module, 'list_files', { shared_with_anyone: true }, ctx);
+  assert.equal(open.isError, false, open.payload.error);
+  assert.equal(apiCalls()[0].query.q, "trashed=false and (visibility = 'anyoneWithLink' or visibility = 'anyoneCanFind')");
+  await callTool(module, 'list_files', { folder_id: CREATIVES, shared_with_anyone: false, include_folders: false }, ctx);
+  assert.equal(
+    apiCalls()[1].query.q,
+    `trashed=false and '${CREATIVES}' in parents and mimeType != 'application/vnd.google-apps.folder' and visibility != 'anyoneWithLink' and visibility != 'anyoneCanFind'`,
+  );
+
+  const lock = setup({ 'GET /drive/v3/files': jsonResponse(200, { files: [] }) }, { accounts: { folders: [CREATIVES] } });
+  await callTool(lock.module, 'list_files', { shared_with_anyone: true }, lock.ctx);
+  assert.equal(lock.apiCalls()[0].query.q, `trashed=false and ('${CREATIVES}' in parents) and (visibility = 'anyoneWithLink' or visibility = 'anyoneCanFind')`);
 });
 
 test('unshare_file removes one sharing, once; a sharing already gone says so', async () => {
