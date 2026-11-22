@@ -1,0 +1,36 @@
+{
+  "aggregateProductStatuses": [
+    {
+      "name": "accounts/5550001/aggregateProductStatuses/SHOPPING_ADS~US",
+      "reportingContext": "SHOPPING_ADS",
+      "country": "US",
+      "stats": { "activeCount": "1520", "pendingCount": "12", "disapprovedCount": "41", "expiringCount": "3" },
+      "itemLevelIssues": [
+        {
+          "code": "missing_gtin",
+          "severity": "DISAPPROVED",
+          "resolution": "MERCHANT_ACTION",
+          "attribute": "gtin",
+          "description": "Missing value [gtin]",
+          "detail": "Add a GTIN for branded products.",
+          "documentationUri": "https://support.google.com/merchants/answer/6324461",
+          "productCount": "29"
+        },
+        {
+          "code": "image_link_broken",
+          "severity": "DISAPPROVED",
+          "resolution": "MERCHANT_ACTION",
+          "attribute": "image link",
+          "description": "Invalid image [image link]",
+          "productCount": "12"
+        }
+      ]
+    },
+    {
+      "name": "accounts/5550001/aggregateProductStatuses/FREE_LISTINGS~US",
+      "reportingContext": "FREE_LISTINGS",
+      "country": "US",
+      "stats": { "activeCount": "1561", "disapprovedCount": "12" }
+    }
+  ]
+}

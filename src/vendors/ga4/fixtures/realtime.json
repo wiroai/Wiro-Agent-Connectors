@@ -1,0 +1,10 @@
+{
+  "dimensionHeaders": [{ "name": "country" }, { "name": "deviceCategory" }],
+  "metricHeaders": [{ "name": "activeUsers", "type": "TYPE_INTEGER" }],
+  "rows": [
+    { "dimensionValues": [{ "value": "United States" }, { "value": "mobile" }], "metricValues": [{ "value": "42" }] },
+    { "dimensionValues": [{ "value": "Germany" }, { "value": "desktop" }], "metricValues": [{ "value": "7" }] }
+  ],
+  "rowCount": 2,
+  "kind": "analyticsData#runRealtimeReport"
+}

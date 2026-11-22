@@ -1,0 +1,35 @@
+{
+  "dimensionHeaders": [{ "name": "sessionSource" }, { "name": "sessionMedium" }],
+  "metricHeaders": [
+    { "name": "sessions", "type": "TYPE_INTEGER" },
+    { "name": "keyEvents", "type": "TYPE_FLOAT" },
+    { "name": "totalRevenue", "type": "TYPE_CURRENCY" }
+  ],
+  "rows": [
+    {
+      "dimensionValues": [{ "value": "google" }, { "value": "cpc" }],
+      "metricValues": [{ "value": "1520" }, { "value": "41" }, { "value": "2310.5" }]
+    },
+    {
+      "dimensionValues": [{ "value": "google" }, { "value": "organic" }],
+      "metricValues": [{ "value": "980" }, { "value": "17" }, { "value": "802.25" }]
+    },
+    {
+      "dimensionValues": [{ "value": "(direct)" }, { "value": "(none)" }],
+      "metricValues": [{ "value": "455" }, { "value": "9" }, { "value": "0" }]
+    }
+  ],
+  "totals": [
+    {
+      "dimensionValues": [{ "value": "RESERVED_TOTAL" }, { "value": "RESERVED_TOTAL" }],
+      "metricValues": [{ "value": "2955" }, { "value": "67" }, { "value": "3112.75" }]
+    }
+  ],
+  "rowCount": 7,
+  "metadata": {
+    "currencyCode": "USD",
+    "timeZone": "America/Los_Angeles",
+    "subjectToThresholding": true
+  },
+  "kind": "analyticsData#runReport"
+}

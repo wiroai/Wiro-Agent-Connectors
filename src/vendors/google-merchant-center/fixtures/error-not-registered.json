@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 401,
+    "message": "GCP project with id 123456789012 and number 123456789012 is not registered with the merchant account. Please follow these steps https://developers.google.com/merchant/api/guides/quickstart#register_as_a_developer to register the GCP project with the merchant account then try calling the API again in 5 minutes.",
+    "status": "UNAUTHENTICATED"
+  }
+}

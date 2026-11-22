@@ -1,0 +1,42 @@
+{
+  "accountSummaries": [
+    {
+      "name": "accountSummaries/200100100",
+      "account": "accounts/200100100",
+      "displayName": "Example Store",
+      "propertySummaries": [
+        {
+          "property": "properties/300100100",
+          "displayName": "example.com - GA4",
+          "propertyType": "PROPERTY_TYPE_ORDINARY",
+          "parent": "accounts/200100100"
+        },
+        {
+          "property": "properties/300100200",
+          "displayName": "Example App",
+          "propertyType": "PROPERTY_TYPE_ORDINARY",
+          "parent": "accounts/200100100"
+        }
+      ]
+    },
+    {
+      "name": "accountSummaries/200200200",
+      "account": "accounts/200200200",
+      "displayName": "Example Blog",
+      "propertySummaries": [
+        {
+          "property": "properties/300200100",
+          "displayName": "blog.example.org",
+          "propertyType": "PROPERTY_TYPE_ORDINARY",
+          "parent": "accounts/200200200"
+        }
+      ]
+    },
+    {
+      "name": "accountSummaries/200300300",
+      "account": "accounts/200300300",
+      "displayName": "Empty Account"
+    }
+  ],
+  "nextPageToken": "next-page-token-1"
+}

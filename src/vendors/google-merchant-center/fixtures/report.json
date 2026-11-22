@@ -1,0 +1,25 @@
+{
+  "results": [
+    {
+      "productPerformanceView": {
+        "offerId": "SKU123",
+        "title": "Trail Running Shoes",
+        "clicks": "421",
+        "impressions": "18230",
+        "clickThroughRate": 0.0231,
+        "marketingMethod": "ADS"
+      }
+    },
+    {
+      "productPerformanceView": {
+        "offerId": "SKU456",
+        "title": "Hiking Socks (3 pairs)",
+        "clicks": "88",
+        "impressions": "9021",
+        "clickThroughRate": 0.0098,
+        "marketingMethod": "ORGANIC"
+      }
+    }
+  ],
+  "nextPageToken": "report-page-2"
+}

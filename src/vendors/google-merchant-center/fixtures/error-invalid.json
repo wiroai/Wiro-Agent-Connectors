@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 400,
+    "message": "[productAttributes.availability] Invalid value: \"in stock\". Use one of IN_STOCK, OUT_OF_STOCK, PREORDER, BACKORDER.",
+    "status": "INVALID_ARGUMENT"
+  }
+}

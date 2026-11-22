@@ -1,0 +1,19 @@
+{
+  "reports": [
+    {
+      "metricHeaders": [{ "name": "sessions", "type": "TYPE_INTEGER" }],
+      "rows": [{ "metricValues": [{ "value": "3120" }] }],
+      "rowCount": 1,
+      "metadata": { "currencyCode": "USD", "timeZone": "America/Los_Angeles" },
+      "kind": "analyticsData#runReport"
+    },
+    {
+      "metricHeaders": [{ "name": "totalRevenue", "type": "TYPE_CURRENCY" }],
+      "rows": [{ "metricValues": [{ "value": "15210.4" }] }],
+      "rowCount": 1,
+      "metadata": { "currencyCode": "USD", "timeZone": "America/Los_Angeles" },
+      "kind": "analyticsData#runReport"
+    }
+  ],
+  "kind": "analyticsData#batchRunReports"
+}

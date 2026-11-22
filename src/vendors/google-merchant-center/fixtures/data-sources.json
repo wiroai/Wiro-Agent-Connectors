@@ -1,0 +1,26 @@
+{
+  "dataSources": [
+    {
+      "name": "accounts/5550001/dataSources/9990001",
+      "dataSourceId": "9990001",
+      "displayName": "Agent API feed",
+      "primaryProductDataSource": { "feedLabel": "US", "contentLanguage": "en", "countries": ["US"] },
+      "input": "API"
+    },
+    {
+      "name": "accounts/5550001/dataSources/9990002",
+      "dataSourceId": "9990002",
+      "displayName": "Nightly file",
+      "primaryProductDataSource": {},
+      "input": "FILE",
+      "fileInput": { "fileName": "products.xml", "fetchSettings": { "enabled": true, "fetchUri": "https://shop.example.com/feeds/products.xml" } }
+    },
+    {
+      "name": "accounts/5550001/dataSources/9990003",
+      "dataSourceId": "9990003",
+      "displayName": "Black Friday promotions",
+      "promotionDataSource": { "targetCountry": "US", "contentLanguage": "en" },
+      "input": "API"
+    }
+  ]
+}

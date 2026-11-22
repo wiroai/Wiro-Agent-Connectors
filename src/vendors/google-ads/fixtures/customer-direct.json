@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "customer": {
+        "resourceName": "customers/1112223333",
+        "id": "1112223333",
+        "descriptiveName": "Example Store",
+        "currencyCode": "USD",
+        "timeZone": "America/Los_Angeles",
+        "status": "ENABLED",
+        "manager": false,
+        "testAccount": false
+      }
+    }
+  ],
+  "fieldMask": "customer.id,customer.descriptiveName,customer.manager,customer.status,customer.currencyCode,customer.timeZone,customer.testAccount"
+}

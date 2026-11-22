@@ -1,0 +1,57 @@
+{
+  "results": [
+    {
+      "customerClient": {
+        "resourceName": "customers/4445556666/customerClients/4445556666",
+        "id": "4445556666",
+        "descriptiveName": "Example Agency MCC",
+        "manager": true,
+        "level": "0",
+        "status": "ENABLED",
+        "currencyCode": "USD",
+        "timeZone": "America/New_York",
+        "testAccount": false
+      }
+    },
+    {
+      "customerClient": {
+        "resourceName": "customers/4445556666/customerClients/1231231234",
+        "id": "1231231234",
+        "descriptiveName": "Client Bakery",
+        "manager": false,
+        "level": "1",
+        "status": "ENABLED",
+        "currencyCode": "EUR",
+        "timeZone": "Europe/Berlin",
+        "testAccount": false
+      }
+    },
+    {
+      "customerClient": {
+        "resourceName": "customers/4445556666/customerClients/1112223333",
+        "id": "1112223333",
+        "descriptiveName": "Example Store",
+        "manager": false,
+        "level": "1",
+        "status": "ENABLED",
+        "currencyCode": "USD",
+        "timeZone": "America/Los_Angeles",
+        "testAccount": false
+      }
+    },
+    {
+      "customerClient": {
+        "resourceName": "customers/4445556666/customerClients/9876543210",
+        "id": "9876543210",
+        "descriptiveName": "Client Florist",
+        "manager": false,
+        "level": "2",
+        "status": "SUSPENDED",
+        "currencyCode": "GBP",
+        "timeZone": "Europe/London",
+        "testAccount": false
+      }
+    }
+  ],
+  "fieldMask": "customerClient.id,customerClient.descriptiveName,customerClient.manager,customerClient.level,customerClient.status,customerClient.currencyCode,customerClient.timeZone,customerClient.testAccount"
+}

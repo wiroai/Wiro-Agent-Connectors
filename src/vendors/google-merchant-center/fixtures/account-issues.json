@@ -1,0 +1,14 @@
+{
+  "accountIssues": [
+    {
+      "name": "accounts/5550001/issues/home_page_not_claimed",
+      "title": "Unclaimed website",
+      "severity": "CRITICAL",
+      "impactedDestinations": [
+        { "reportingContext": "SHOPPING_ADS", "impacts": [{ "regionCode": "US", "severity": "CRITICAL" }] }
+      ],
+      "detail": "Your website is not claimed. Verify and claim your website to show products.",
+      "documentationUri": "https://support.google.com/merchants/answer/7527436"
+    }
+  ]
+}
