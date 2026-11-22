@@ -47,6 +47,9 @@ test('the module declares the access token as required and the developer token a
   assert.deepEqual(plain(request.inputSchema.properties.method.enum), ['POST']);
   assert.ok(request.inputSchema.properties.login_customer_id);
   assert.match(request.description, /check with search \(GAQL\)/);
+  // JSON bodies only: a body sent as text would pass the account lock unread.
+  assert.deepEqual(Object.keys(request.inputSchema.properties).sort(), ['json', 'login_customer_id', 'method', 'path', 'query']);
+  assert.doesNotMatch(request.description, /content_type/);
   for (const tool of module.tools) assert.ok(tool.description.length <= 1024, tool.name);
 });
 
@@ -65,7 +68,7 @@ test('the customers picker lists direct accounts, the clients of manager account
   assert.equal(isError, false);
   assert.equal(fetch.calls[0].url, `${ORIGIN}/v26/customers:listAccessibleCustomers`);
   assert.equal(fetch.calls[0].headers.authorization, `Bearer ${TOKEN}`);
-  assert.equal(fetch.calls[0].headers['developer-token'], DEV);
+  assert.ok(fetch.calls.every((call) => call.headers['developer-token'] === undefined), 'an old developer token is never sent: Google ignores it and will refuse it');
   const detail = fetch.calls.find((call) => call.path === `/v26/customers/${CUSTOMER}/googleAds:search`);
   assert.equal(detail.method, 'POST');
   assert.equal(detail.headers['login-customer-id'], CUSTOMER, 'each account is read as itself');
@@ -80,6 +83,27 @@ test('the customers picker lists direct accounts, the clients of manager account
   assert.equal(payload.accessible_accounts, 3);
   assert.ok(payload.customers.every((item) => /^[0-9]{10}$/.test(field(item, picker.idField)) && typeof field(item, picker.nameField) === 'string'));
   assert.equal(payload.nextCursor, undefined);
+});
+
+test('list_customers marks the accounts chosen for the connection as selected, client accounts included', async () => {
+  const { module, ctx } = setup((request) => {
+    if (request.path === '/v26/customers:listAccessibleCustomers') return jsonResponse(200, fixture(import.meta.url, 'accessible-customers.json'));
+    const customer = request.path.split('/')[3];
+    if (customer === '7778889999') return jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json'));
+    if (customer === MANAGER) {
+      return jsonResponse(200, fixture(import.meta.url, request.json.query.includes('FROM customer_client') ? 'customer-clients.json' : 'customer-manager.json'));
+    }
+    return jsonResponse(200, fixture(import.meta.url, 'customer-direct.json'));
+  }, { accounts: { customers: [CUSTOMER, '9876543210', '7778889999'] } });
+  const { payload } = await callTool(module, 'list_customers', {}, ctx);
+  assert.deepEqual(payload.customers.map((item) => [item.id, item.selected]), [
+    ['1112223333', true],
+    ['4445556666', undefined],
+    ['1231231234', undefined],
+    ['9876543210', true],
+    ['7778889999', true],
+  ]);
+  assert.match(module.tools.find((tool) => tool.name === 'list_customers').description, /marked selected: true/);
 });
 
 test('list_customers reads accounts ten at a time and continues with the cursor', async () => {
@@ -133,6 +157,26 @@ test('search posts GAQL for a chosen account and returns flat rows named like th
   assert.equal(fetch.calls.length, 2);
 });
 
+test('search reads a full 10,000-row page over 4 MB and returns its first rows with a cursor', async () => {
+  const row = (index) => ({
+    keywordView: { resourceName: `customers/${CUSTOMER}/keywordViews/40001~${70000000 + index}` },
+    adGroupCriterion: { keyword: { text: `example keyword number ${index} with a few more words`, matchType: 'PHRASE' }, criterionId: String(70000000 + index) },
+    metrics: { clicks: String(index), impressions: String(index * 20), costMicros: String(index * 1000), conversions: 0.5 },
+    segments: { date: '2026-11-01' },
+  });
+  // Google's replies are indented, about 1 KB a row for a keyword report.
+  const body = JSON.stringify({ results: Array.from({ length: 10000 }, (_, index) => row(index)), nextPageToken: 'page-2', fieldMask: 'keywordView.resourceName' }, null, 2);
+  assert.ok(Buffer.byteLength(body) > 4 * 1024 * 1024 && Buffer.byteLength(body) < 8 * 1024 * 1024, `${Buffer.byteLength(body)} bytes`);
+  const { module, ctx } = setup(() => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } }));
+  const { result, payload, isError } = await callTool(module, 'search', { customer_id: CUSTOMER, query: 'SELECT keyword_view.resource_name FROM keyword_view WHERE segments.date DURING LAST_30_DAYS' }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.ok(Buffer.byteLength(result.content[0].text) <= 32 * 1024);
+  assert.equal(payload.truncated, true);
+  assert.ok(payload.rows.length > 10 && payload.nextCursor);
+  assert.equal(payload.rows[0]['ad_group_criterion.keyword.text'], 'example keyword number 0 with a few more words');
+  assert.match(module.tools.find((tool) => tool.name === 'search').description, /bound a query that can match more than a few thousand rows/);
+});
+
 test('search keeps lists such as responsive search ad headlines whole, with snake_case keys', async () => {
   const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'search-ads.json')));
   const { payload } = await callTool(module, 'search', { customer_id: CUSTOMER, query: 'SELECT ad_group_ad.ad.responsive_search_ad.headlines FROM ad_group_ad' }, ctx);
@@ -162,10 +206,19 @@ test('mutate sends the operations once and names each created resource; another 
 
   const cross = await callTool(module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: { update: { resourceName: 'customers/9998887777/campaigns/1', status: 'PAUSED' }, updateMask: 'status' } }] }, ctx);
   assert.match(cross.payload.error, /The Google Ads account 9998887777 is not among the Google Ads accounts chosen/);
+  const padded = await callTool(module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: { update: { resourceName: `customers/0${CUSTOMER}/campaigns/1`, status: 'PAUSED' }, updateMask: 'status' } }] }, ctx);
+  assert.match(padded.payload.error, /The Google Ads account 01112223333 is not among the Google Ads accounts chosen/);
   const open = setup(() => jsonResponse(200, {}), { accounts: null });
   const crossOpen = await callTool(open.module, 'mutate', { customer_id: CUSTOMER, operations: [{ campaignOperation: { update: { resourceName: 'customers/9998887777/campaigns/1', status: 'PAUSED' }, updateMask: 'status' } }] }, open.ctx);
   assert.match(crossOpen.payload.error, /name another account \(9998887777\) than 1112223333/);
   assert.equal(fetch.calls.length + open.fetch.calls.length, 1);
+
+  // A final URL whose path holds "/customers/<digits>" names no account.
+  const shop = setup(() => jsonResponse(200, { mutateOperationResponses: [{ adGroupAdResult: { resourceName: `customers/${CUSTOMER}/adGroupAds/40003~50004` } }] }));
+  const ad = { adGroupAdOperation: { create: { adGroup: `customers/${CUSTOMER}/adGroups/40003`, ad: { finalUrls: ['https://shop.example.com/customers/9998887777/welcome'] } } } };
+  const sent = await callTool(shop.module, 'mutate', { customer_id: CUSTOMER, operations: [ad] }, shop.ctx);
+  assert.equal(sent.isError, false, sent.payload.error);
+  assert.equal(shop.fetch.calls.length, 1);
 });
 
 test('a mutate with many operations still returns a result that fits, listing the first resources and the total', async () => {
@@ -231,6 +284,12 @@ test('upload_image_asset downloads the image, checks its type and creates the as
   assert.equal(fetch.calls[1].headers['login-customer-id'], MANAGER);
   assert.deepEqual(fetch.calls[1].json, { operations: [{ create: { name: 'Spring sale - square', type: 'IMAGE', imageAsset: { data: Buffer.from(PNG).toString('base64') } } }] });
   assert.deepEqual(payload, { customer_id: CUSTOMER, resource_name: 'customers/1112223333/assets/70001', mime_type: 'image/png', bytes: PNG.length });
+
+  // Google Ads wants a unique name for an image asset: one left out becomes the file name and the time.
+  await callTool(module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/img/spring%20banner.png?v=2' }, ctx);
+  assert.match(fetch.calls[3].json.operations[0].create.name, /^spring banner\.png [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/);
+  await callTool(module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/' }, ctx);
+  assert.match(fetch.calls[5].json.operations[0].create.name, /^Image [0-9]{4}-/);
 
   const text = setup(() => textResponse(200, 'not an image'));
   const refused = await callTool(text.module, 'upload_image_asset', { customer_id: CUSTOMER, image_url: 'https://cdn.example.com/x.png' }, text.ctx);
@@ -359,6 +418,16 @@ test('api_get and api_request: login_customer_id, the account lock, free metadat
   assert.match(elsewhere.payload.error, /The Google Ads account 9998887777 is not among/);
   const inBody = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/campaigns:mutate`, json: { operations: [{ update: { resourceName: 'customers/9998887777/campaigns/1' } }] } }, ctx);
   assert.match(inBody.payload.error, /The Google Ads account 9998887777 is not among/);
+  // The same body sent as text is refused before anything is read or sent.
+  const raw = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/productLinks:create`, body: '{"productLink":{"googleAds":{"customer":"customers/9998887777"}}}', content_type: 'application/json' }, ctx);
+  assert.match(raw.payload.error, /Invalid arguments for api_request: unknown arguments "body", "content_type"/);
+  // A zero-padded ID is no chosen ID, in the body or in the path.
+  const padded = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/productLinks:create`, json: { productLink: { googleAds: { customer: 'customers/09998887777' } } } }, ctx);
+  assert.match(padded.payload.error, /The Google Ads account 09998887777 is not among/);
+  const paddedPath = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/0${CUSTOMER}/campaigns:mutate`, json: { operations: [] } }, ctx);
+  assert.match(paddedPath.payload.error, /The Google Ads account 01112223333 is not among/);
+  const inQuery = await callTool(module, 'api_get', { path: `/v26/customers/${CUSTOMER}/operations/1`, query: { filter: 'customers/9998887777' } }, ctx);
+  assert.match(inQuery.payload.error, /The Google Ads account 9998887777 is not among/);
   const unnamed = await callTool(module, 'api_request', { method: 'POST', path: '/v26/googleAdsFields:search', json: { query: 'SELECT name' } }, ctx);
   assert.match(unnamed.payload.error, /names none of the Google Ads accounts chosen/);
   const access = await callTool(module, 'api_request', { method: 'POST', path: `/v26/customers/${CUSTOMER}/customerUserAccesses:mutate`, json: { operation: {} } }, ctx);
@@ -373,6 +442,7 @@ test('errors: the module\'s sentences, the vendor\'s words, 429 retryAfter, a mi
   const bad = await callTool(invalid.module, 'search', { customer_id: CUSTOMER, query: 'SELECT campaign.nme FROM campaign' }, invalid.ctx);
   assert.equal(bad.payload.status, 400);
   assert.match(bad.payload.error, /did not accept the query: check the GAQL syntax/);
+  assert.match(bad.payload.error, /api_get \/v26\/googleAdsFields\/<field> tells whether a field exists/);
   assert.match(bad.payload.error, /Request contains an invalid argument/);
 
   const denied = setup(() => jsonResponse(403, fixture(import.meta.url, 'error-not-enabled.json')));

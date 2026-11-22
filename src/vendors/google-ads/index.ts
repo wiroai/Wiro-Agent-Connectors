@@ -9,8 +9,9 @@
 //   https://www.googleapis.com/auth/adwords, from an OAuth client in the user's
 //   own Google Cloud project, whose Google Ads API access level applies. The
 //   host signs in, refreshes it and passes the current one on every call.
-// - `developertoken` (optional): Google sunset developer tokens on 2026-09-09
-//   and ignores them since; an older setup's value is still sent, harmlessly.
+// - `developertoken` (optional): Google sunset developer tokens on 2026-09-09,
+//   ignores them since and will refuse them in a later major API version. It
+//   stays declared so an older setup's value still loads, but it is not sent.
 // - `managercustomerid` (optional): a manager account (MCC) sent as
 //   login-customer-id on every request, for accounts reached through it.
 //
@@ -38,6 +39,8 @@ const VERSION = 'v26';
 const LABEL = 'Google Ads';
 const ACCOUNT = 'Google Ads account';
 const MAX_IMAGE_BYTES = 5_120 * 1024;
+/** Google Ads search pages hold 10,000 rows, with no smaller page size: read up to the hosts' usual 8 MB reply cap. */
+const MAX_SEARCH_BYTES = 8 * 1024 * 1024;
 const PICKER_BATCH = 10;
 const MAX_MATCH_IDENTIFIERS = 10_000;
 
@@ -58,7 +61,7 @@ const ERRORS = {
 };
 const SEARCH_ERRORS = {
   ...ERRORS,
-  400: 'Google Ads did not accept the query: check the GAQL syntax, the field names (snake_case, e.g. metrics.cost_micros) and that the fields can be selected together FROM that resource',
+  400: `Google Ads did not accept the query: check the GAQL syntax, the field names (snake_case, e.g. metrics.cost_micros) and that the fields can be selected together FROM that resource (api_get /${VERSION}/googleAdsFields/<field> tells whether a field exists and what it can be selected with)`,
 };
 const MUTATE_ERRORS = {
   ...ERRORS,
@@ -85,10 +88,19 @@ function chosenCustomer(h: ToolHelpers, value: string): string {
   return id;
 }
 
-/** The customer IDs of every "customers/<id>" inside a JSON value. */
+/**
+ * "customers/<id>" as a resource name: at the start of a value, or after a
+ * quote or a space, never inside a URL's path (an ad's final URL may hold
+ * "/customers/..."). Any number of digits, so a zero-padded ID is caught too
+ * and refused, as it is no chosen 10-digit ID.
+ */
+const CUSTOMER_NAME = /(?<![A-Za-z0-9_./-])customers\/([0-9]+)/g;
+
+/** The customer IDs of every "customers/<id>" inside a JSON value or a text. */
 function customersIn(value: unknown): string[] {
   if (value === undefined) return [];
-  return [...new Set([...JSON.stringify(value).matchAll(/customers\/([0-9]{10})(?![0-9])/g)].map((match) => match[1] as string))];
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return [...new Set([...text.matchAll(CUSTOMER_NAME)].map((match) => match[1] as string))];
 }
 
 /** The login-customer-id header for a request: the argument, else the connection's manager account (sent by authHeaders). */
@@ -125,9 +137,22 @@ async function searchPage(h: ToolHelpers, customer: string, query: string, login
     headers: loginHeaders(login),
     json: compact({ query, pageToken }),
     safe: true,
+    maxBytes: MAX_SEARCH_BYTES,
     errors: SEARCH_ERRORS,
   });
   return data;
+}
+
+/** A name for an image asset left unnamed: Google Ads wants unique names for image assets (it adds a suffix to a repeated one). */
+function defaultAssetName(url: string): string {
+  let file = '';
+  try {
+    file = decodeURIComponent(new URL(url).pathname.split('/').pop() ?? '');
+  } catch {
+    // a broken escape: the name goes without the file part
+  }
+  const base = truncate(file.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim() || 'Image', 80);
+  return `${base} ${new Date().toISOString().replace(/\.[0-9]{3}Z$/, 'Z')}`;
 }
 
 /** Google's partial failure details: which operation failed and why. */
@@ -237,7 +262,8 @@ const IDENTIFIER_LISTS = {
 function guardRequest(request: ApiToolRequest, h: ToolHelpers): void {
   const allowed = allowedAccounts(h.ctx.accounts, 'customers');
   if (allowed !== null) {
-    const ids = new Set<string>(customersIn(request.json));
+    // The JSON body is the only body api_request sends, so nothing goes out unread.
+    const ids = new Set<string>([...customersIn(request.json), ...Object.values(request.query).flat().flatMap((value) => customersIn(value))]);
     request.segments.forEach((segment, index) => {
       const next = request.segments[index + 1];
       if (segment === 'customers' && next) ids.add(next.split(':')[0] as string);
@@ -257,7 +283,12 @@ function guardRequest(request: ApiToolRequest, h: ToolHelpers): void {
   }
 }
 
-/** The generic tools, with a login_customer_id argument and search as the way to check a change. */
+/**
+ * The generic tools, with a login_customer_id argument and search as the way
+ * to check a change. api_request sends a JSON body only: Google Ads takes
+ * nothing else, and a body sent as text would go out without the account
+ * check reading it.
+ */
 function genericTools(): ToolDefinition[] {
   return apiTools({
     label: LABEL,
@@ -269,19 +300,28 @@ function genericTools(): ToolDefinition[] {
     basePath: `/${VERSION}/`,
     methods: ['POST'],
     guard: guardRequest,
-  }).map((tool) => ({
-    ...tool,
-    ...(tool.name === 'api_request'
-      ? { check: 'search', description: tool.description.replace('check with api_get', 'check with search (GAQL)') }
-      : {}),
-    inputSchema: { ...tool.inputSchema, properties: { ...tool.inputSchema.properties, login_customer_id: LOGIN_CUSTOMER_ID } },
-    run: (args: Record<string, unknown>, h: ToolHelpers) => {
-      const { login_customer_id: login, ...rest } = args;
-      if (typeof login !== 'string') return tool.run(rest, h);
-      const api = (request: ApiRequest) => h.api({ ...request, headers: { ...request.headers, ...loginHeaders(login) } });
-      return tool.run(rest, { ...h, api });
-    },
-  }));
+  }).map((tool) => {
+    const properties: NonNullable<ToolDefinition['inputSchema']['properties']> = { ...tool.inputSchema.properties, login_customer_id: LOGIN_CUSTOMER_ID };
+    let description = tool.description;
+    if (tool.name === 'api_request') {
+      delete properties['body'];
+      delete properties['content_type'];
+      properties['json'] = { type: 'object', description: 'A JSON object to send as the body.' };
+      description = description.replace(' or another body (body and content_type)', '').replace('check with api_get', 'check with search (GAQL)');
+    }
+    return {
+      ...tool,
+      ...(tool.name === 'api_request' ? { check: 'search' } : {}),
+      description,
+      inputSchema: { ...tool.inputSchema, properties },
+      run: (args: Record<string, unknown>, h: ToolHelpers) => {
+        const { login_customer_id: login, ...rest } = args;
+        if (typeof login !== 'string') return tool.run(rest, h);
+        const api = (request: ApiRequest) => h.api({ ...request, headers: { ...request.headers, ...loginHeaders(login) } });
+        return tool.run(rest, { ...h, api });
+      },
+    };
+  });
 }
 
 interface MutateArgs {
@@ -348,9 +388,9 @@ const connector = defineConnector({
     else delete credentials['managercustomerid'];
     return credentials;
   },
+  // No developer-token header: Google ignores it since 2026-09-09 and will refuse it in a later major version.
   authHeaders: (credentials) => ({
     authorization: `Bearer ${credentials['access_token']}`,
-    ...(credentials['developertoken'] ? { 'developer-token': credentials['developertoken'] } : {}),
     ...(credentials['managercustomerid'] ? { 'login-customer-id': credentials['managercustomerid'] } : {}),
   }),
   tools: [
@@ -361,12 +401,15 @@ const connector = defineConnector({
       description:
         'Lists the Google Ads accounts the connected Google account can open: those it has direct access to, and the client accounts (two '
         + 'levels deep) of each manager account among them. Each has its ID, name, status, currency, time zone, whether it is a manager, and '
-        + 'for a client account the login_customer_id to act through. Pass nextCursor back as cursor for more.',
+        + 'for a client account the login_customer_id to act through. When the connection is limited to chosen accounts, those are marked '
+        + 'selected: true, and only they can be used. Pass nextCursor back as cursor for more.',
       inputSchema: { type: 'object', properties: { cursor: CURSOR }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const start = typeof state?.['i'] === 'number' ? state['i'] : 0;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const chosen = allowedAccounts(h.ctx.accounts, 'customers');
+        const selected = (id: string) => (chosen?.includes(id) ? true : undefined);
         const { data } = await h.api({ path: `/${VERSION}/customers:listAccessibleCustomers`, errors: ERRORS });
         const accessible = [...new Set((Array.isArray(data?.resourceNames) ? data.resourceNames : [])
           .map((name: unknown) => /^customers\/([0-9]+)$/.exec(String(name))?.[1])
@@ -387,7 +430,7 @@ const connector = defineConnector({
         for (const id of accessible.slice(start, start + PICKER_BATCH)) {
           const rows = await tryRead(id, CUSTOMER_QUERY, id);
           if (typeof rows === 'string') {
-            customers.push({ id, name: id, status: 'NOT_ACCESSIBLE', note: `Google Ads answered ${rows} for this account.` });
+            customers.push(compact({ id, name: id, status: 'NOT_ACCESSIBLE', note: `Google Ads answered ${rows} for this account.`, selected: selected(id) }));
             continue;
           }
           const customer = rows[0]?.customer ?? {};
@@ -399,6 +442,7 @@ const connector = defineConnector({
             currency_code: customer.currencyCode,
             time_zone: customer.timeZone,
             test_account: customer.testAccount === true ? true : undefined,
+            selected: selected(id),
           }));
           if (customer.manager !== true) continue;
           const clients = await tryRead(id, CLIENTS_QUERY, id);
@@ -418,6 +462,7 @@ const connector = defineConnector({
               test_account: client.testAccount === true ? true : undefined,
               level: client.level !== undefined ? Number(client.level) : undefined,
               login_customer_id: id,
+              selected: selected(clientId),
             }));
           }
         }
@@ -437,8 +482,10 @@ const connector = defineConnector({
       description:
         'Runs a Google Ads Query Language query on one account, e.g. "SELECT campaign.id, campaign.name, metrics.clicks, metrics.cost_micros '
         + 'FROM campaign WHERE segments.date DURING LAST_7_DAYS AND campaign.status != REMOVED ORDER BY metrics.cost_micros DESC LIMIT 50". '
-        + 'Rows come back flat, named like the query\'s fields; money is in micros (1 unit = 1000000) and counts are text. Use LIMIT: '
-        + 'Google pages by 10,000 rows. Pass nextCursor back as cursor with the same query for more. It changes nothing.',
+        + 'Rows come back flat, named like the query\'s fields; money is in micros (1 unit = 1000000) and counts are text. Google sends '
+        + 'pages of 10,000 rows and a page over 8 MB cannot be read, so bound a query that can match more than a few thousand rows '
+        + '(keywords, search terms, daily segments) with ORDER BY and LIMIT, or split it by segments.date or campaign.id. Pass nextCursor '
+        + 'back as cursor with the same query for more. It changes nothing.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -543,7 +590,7 @@ const connector = defineConnector({
           customer_id: CUSTOMER_ID,
           login_customer_id: LOGIN_CUSTOMER_ID,
           image_url: { type: 'string', format: 'uri', maxLength: 2048, pattern: '^https://', description: 'A public https URL of the image.' },
-          name: { type: 'string', minLength: 1, maxLength: 128, description: 'A name for the asset, unique in the account, e.g. "Spring sale - landscape".' },
+          name: { type: 'string', minLength: 1, maxLength: 128, description: 'A name for the asset, unique in the account, e.g. "Spring sale - landscape" (default: the image\'s file name and the time).' },
         },
         required: ['customer_id', 'image_url'],
         additionalProperties: false,
@@ -557,7 +604,7 @@ const connector = defineConnector({
           method: 'POST',
           path: `/${VERSION}/customers/${id}/assets:mutate`,
           headers: loginHeaders(args.login_customer_id),
-          json: { operations: [{ create: compact({ name: args.name, type: 'IMAGE', imageAsset: { data: base64(media.bytes) } }) }] },
+          json: { operations: [{ create: { name: args.name ?? defaultAssetName(args.image_url), type: 'IMAGE', imageAsset: { data: base64(media.bytes) } } }] },
           write: true,
           errors: MUTATE_ERRORS,
         });
