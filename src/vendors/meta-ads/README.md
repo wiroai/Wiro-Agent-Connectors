@@ -6,7 +6,7 @@ Campaigns, ad sets and ads are always created paused, so nothing spends until `u
 
 ## Credentials
 
-The connector needs one of two credentials: `access_token` (a sign-in with your own Meta app) or `systemusertoken` (a Meta Business system user token).
+The connector needs one of two credentials: `access_token` (a sign-in with your own Meta app) or `systemusertoken` (a Meta Business system user token). A connection has one way in: when both are given, the system user token is used and no app secret proof is sent.
 
 ### `access_token`: a sign-in with your own Meta app
 

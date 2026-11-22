@@ -7,6 +7,7 @@
 //   the app secret, which the host computes) when the host has one;
 // - `systemusertoken`: a token of a Meta Business Manager system user that has
 //   the ad accounts (and the Pages for ad creatives) assigned, used unchanged.
+// When a host passes both, the system user token is used (without the proof).
 // `pagemappings` is the Page choice an older setup made per ad account (JSON
 // text); the `pages` account picker replaces it.
 //
