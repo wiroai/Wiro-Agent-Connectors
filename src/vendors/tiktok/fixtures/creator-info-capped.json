@@ -1,0 +1,8 @@
+{
+  "data": {},
+  "error": {
+    "code": "spam_risk_too_many_posts",
+    "message": "The user has reached the maximum number of posts allowed in a day.",
+    "log_id": "20261122000000000000000000000002"
+  }
+}

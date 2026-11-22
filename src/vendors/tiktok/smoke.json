@@ -1,0 +1,13 @@
+{
+  "read": { "tool": "get_creator_info", "args": {} },
+  "write": {
+    "tool": "post_video",
+    "args": {
+      "video_url": "https://example.com/replace-with-your-own-test-video.mp4",
+      "caption": "Connector smoke test {{timestamp}}",
+      "privacy_level": "SELF_ONLY",
+      "wait_seconds": 20
+    },
+    "note": "Replace video_url with a public MP4 you own (5 to 60 seconds, 23 to 60 FPS) before running it. It posts a private (SELF_ONLY) video and returns its publish_id: follow it with get_post_status if it is still processing, then delete the video in the TikTok app, as the API cannot delete posts."
+  }
+}

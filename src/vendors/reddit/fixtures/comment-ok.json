@@ -1,0 +1,10 @@
+{
+  "json": {
+    "errors": [],
+    "data": {
+      "things": [
+        { "kind": "t1", "data": { "name": "t1_kxyz12", "id": "kxyz12", "permalink": "/r/test/comments/1abcde/connector_smoke_test/kxyz12/", "link_id": "t3_1abcde", "parent_id": "t3_1abcde", "author": "acme_social", "body": "Thanks for testing!", "subreddit": "test", "created_utc": 1795300000.0 } }
+      ]
+    }
+  }
+}

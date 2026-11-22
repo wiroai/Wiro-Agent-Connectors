@@ -1,0 +1,4 @@
+{
+  "data": { "status": "FAILED", "fail_reason": "frame_rate_check_failed" },
+  "error": { "code": "ok", "message": "", "log_id": "20261122000000000000000000000008" }
+}

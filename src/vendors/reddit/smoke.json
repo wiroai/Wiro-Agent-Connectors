@@ -1,0 +1,15 @@
+{
+  "read": { "tool": "get_me", "args": {} },
+  "write": {
+    "tool": "submit_post",
+    "args": {
+      "subreddit": "test",
+      "kind": "self",
+      "title": "Connector smoke test {{timestamp}}",
+      "text": "A text post from the connector smoke test.",
+      "nsfw": false,
+      "spoiler": false
+    },
+    "note": "Submits a public text post to r/test, the community Reddit keeps for testing. Remove it with delete_item and the id the result gives."
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t5_2qh1i",
+    "dist": 2,
+    "children": [
+      { "kind": "t5", "data": { "display_name": "test", "display_name_prefixed": "r/test", "title": "Testing", "subscribers": 15000, "subreddit_type": "public", "submission_type": "any", "over18": false, "url": "/r/test/", "public_description": "A place to test." } },
+      { "kind": "t5", "data": { "display_name": "boxes", "display_name_prefixed": "r/boxes", "title": "All about boxes", "subscribers": 3200, "subreddit_type": "restricted", "submission_type": "self", "over18": false, "url": "/r/boxes/" } }
+    ]
+  }
+}

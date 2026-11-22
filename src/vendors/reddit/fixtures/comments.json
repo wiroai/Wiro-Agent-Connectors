@@ -1,0 +1,10 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": null,
+    "dist": 1,
+    "children": [
+      { "kind": "t1", "data": { "name": "t1_kxyz12", "id": "kxyz12", "author": "acme_social", "subreddit": "test", "body": "Thanks for testing!", "link_id": "t3_1abcde", "link_title": "Connector smoke test", "parent_id": "t3_1abcde", "permalink": "/r/test/comments/1abcde/connector_smoke_test/kxyz12/", "score": 2, "created_utc": 1795300000.0, "edited": 1795300100.0 } }
+    ]
+  }
+}

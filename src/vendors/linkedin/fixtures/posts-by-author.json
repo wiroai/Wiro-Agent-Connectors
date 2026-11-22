@@ -1,0 +1,46 @@
+{
+  "paging": {
+    "start": 0,
+    "count": 2,
+    "links": [
+      { "type": "application/json", "rel": "next", "href": "/rest/posts?author=urn%3Ali%3Aorganization%3A12345678&count=2&q=author&sortBy=LAST_MODIFIED&start=2" }
+    ]
+  },
+  "elements": [
+    {
+      "lifecycleState": "PUBLISHED",
+      "lastModifiedAt": 1795300000000,
+      "visibility": "PUBLIC",
+      "publishedAt": 1795299990000,
+      "author": "urn:li:organization:12345678",
+      "distribution": { "feedDistribution": "MAIN_FEED", "thirdPartyDistributionChannels": [] },
+      "content": { "media": { "taggedEntities": [], "id": "urn:li:image:C4E22AQEexample1" } },
+      "lifecycleStateInfo": { "isEditedByAuthor": false },
+      "isReshareDisabledByAuthor": false,
+      "createdAt": 1795299990000,
+      "id": "urn:li:share:7300000000000000001",
+      "commentary": "Our new release is out \\(finally\\) {hashtag|\\#|launch}"
+    },
+    {
+      "lifecycleState": "PUBLISHED",
+      "lastModifiedAt": 1795200000000,
+      "visibility": "PUBLIC",
+      "publishedAt": 1795200000000,
+      "author": "urn:li:organization:12345678",
+      "distribution": { "feedDistribution": "MAIN_FEED", "thirdPartyDistributionChannels": [] },
+      "content": {
+        "article": {
+          "source": "https://blog.example.com/release-notes",
+          "title": "Release notes",
+          "description": "Everything that changed this month.",
+          "thumbnail": "urn:li:image:C4E22AQEexample2"
+        }
+      },
+      "lifecycleStateInfo": { "isEditedByAuthor": true },
+      "isReshareDisabledByAuthor": false,
+      "createdAt": 1795200000000,
+      "id": "urn:li:ugcPost:7300000000000000002",
+      "commentary": "Read what changed"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "sub": "782bbtaQ",
+  "email_verified": true,
+  "name": "Alex Example",
+  "locale": { "country": "US", "language": "en" },
+  "given_name": "Alex",
+  "family_name": "Example",
+  "email": "alex@example.com",
+  "picture": "https://media.licdn.com/dms/image/v2/C4E03AQexample/profile-displayphoto-shrink_100_100/0/1600000000000?e=1800000000&v=beta&t=example"
+}

@@ -1,0 +1,8 @@
+{
+  "rules": [
+    { "kind": "link", "description": "No self-promotion more than once a week.", "short_name": "Limit self-promotion", "violation_reason": "Self-promotion", "created_utc": 1600000000.0, "priority": 0, "description_html": "<p>No self-promotion more than once a week.</p>" },
+    { "kind": "all", "description": "Be kind.", "short_name": "Be civil", "violation_reason": "Be civil", "created_utc": 1600000001.0, "priority": 1, "description_html": "<p>Be kind.</p>" }
+  ],
+  "site_rules": ["Spam", "Personal and confidential information", "Threatening, harassing, or inciting violence"],
+  "site_rules_flow": [{ "reasonTextToShow": "This is spam", "reasonText": "This is spam" }]
+}

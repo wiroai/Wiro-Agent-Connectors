@@ -1,0 +1,33 @@
+{
+  "data": {
+    "videos": [
+      {
+        "id": "7300000000000000099",
+        "title": "Behind the scenes",
+        "video_description": "Behind the scenes #studio",
+        "create_time": 1795300000,
+        "share_url": "https://www.tiktok.com/@acme.official/video/7300000000000000099",
+        "duration": 21,
+        "view_count": 1520,
+        "like_count": 98,
+        "comment_count": 7,
+        "share_count": 3
+      },
+      {
+        "id": "7300000000000000042",
+        "title": "",
+        "video_description": "Unboxing the new box",
+        "create_time": 1795200000,
+        "share_url": "https://www.tiktok.com/@acme.official/video/7300000000000000042",
+        "duration": 34,
+        "view_count": 880,
+        "like_count": 41,
+        "comment_count": 2,
+        "share_count": 0
+      }
+    ],
+    "cursor": 1795200000000,
+    "has_more": true
+  },
+  "error": { "code": "ok", "message": "", "log_id": "20261122000000000000000000000012" }
+}
