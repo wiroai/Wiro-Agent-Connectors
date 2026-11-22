@@ -169,11 +169,16 @@ test('create_draft_post saves a draft, then reads it back while beehiiv finishes
 });
 
 test('a post beehiiv could not finish is reported as not saved; a cancelled wait stops reading', async () => {
-  const failed = setup((request) => (request.method === 'POST' ? json('created.json', 201) : json('error-404-creation.json', 404)));
-  const gone = await callTool(failed.module, 'create_draft_post', DRAFT, failed.ctx);
-  assert.equal(gone.isError, true);
-  assert.equal(gone.payload.outcome, undefined);
-  assert.match(gone.payload.error, /could not finish creating it \(POST_CREATION_FAILED\), so no draft exists/);
+  // beehiiv names the failure only by its error code: any 404 for the ID it just gave means the creation failed.
+  for (const reply of ['error-404-creation.json', 'error-404-plain.json']) {
+    const failed = setup((request) => (request.method === 'POST' ? json('created.json', 201) : json(reply, 404)));
+    const gone = await callTool(failed.module, 'create_draft_post', DRAFT, failed.ctx);
+    assert.equal(gone.isError, true, reply);
+    assert.equal(gone.payload.outcome, undefined);
+    assert.equal(gone.payload.status, 404);
+    assert.match(gone.payload.error, /creating it failed in the background \(POST_CREATION_FAILED\), and such a post never appears, so no draft exists/);
+    assert.equal(failed.fetch.calls.length, 2, 'one read after the create');
+  }
 
   const controller = new AbortController();
   const slow = setup((request) => {
@@ -196,8 +201,17 @@ test('creating posts without the Send API, and a create without a clear answer',
   const down = setup(() => jsonResponse(502, { status: 502, statusText: 'Bad Gateway', errors: [{ message: 'Bad gateway' }] }));
   const unknown = await callTool(down.module, 'create_draft_post', DRAFT, down.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
-  assert.equal(unknown.payload.check, 'list_posts');
+  assert.equal(unknown.payload.check, 'list_drafts', 'the check tool lists drafts, where a saved draft shows up');
   assert.equal(down.fetch.calls.length, 1);
+});
+
+test('list_drafts lists the newest drafts first, where create_draft_post checks', async () => {
+  const { module, fetch, ctx } = setup(() => json('posts.json'));
+  const { payload, isError } = await callTool(module, 'list_drafts', {}, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(fetch.calls[0].url, `https://api.beehiiv.com/v2/publications/${PUB}/posts?status=draft&order_by=created&direction=desc&limit=10&page=1`);
+  assert.equal(payload.publication_id, PUB);
+  assert.ok(Array.isArray(payload.posts));
 });
 
 test('update_draft_post reads the post first and changes drafts only', async () => {
@@ -209,12 +223,31 @@ test('update_draft_post reads the post first and changes drafts only', async () 
 
   const sent = setup(() => json('post.json'));
   const refused = await callTool(sent.module, 'update_draft_post', { post_id: 'post_00000000-0000-0000-0000-000000000001', title: 'x' }, sent.ctx);
-  assert.match(refused.payload.error, /This post is confirmed, and update_draft_post changes drafts only/);
+  assert.match(refused.payload.error, /This post is confirmed: it is already sent or scheduled, and update_draft_post acts on drafts only/);
   assert.deepEqual(sent.fetch.calls.map((call) => call.method), ['GET']);
 
   const nothing = await callTool(module, 'update_draft_post', { post_id: POST }, ctx);
   assert.match(nothing.payload.error, /Nothing to change/);
   assert.equal(fetch.calls.length, 2);
+});
+
+test('update_draft_post changes nothing while beehiiv is still creating the post (202), and says when to ask again', async () => {
+  const creating = setup(() => json('pending.json', 202, { 'retry-after': '3' }));
+  const early = await callTool(creating.module, 'update_draft_post', { post_id: POST, title: 'x' }, creating.ctx);
+  assert.equal(early.isError, true);
+  assert.match(early.payload.error, /still creating this post in the background \(HTTP 202\).*nothing was changed\. Call update_draft_post again after 3 seconds\./);
+  assert.deepEqual(creating.fetch.calls.map((call) => call.method), ['GET'], 'no change is sent');
+
+  // The PATCH itself answers 202: beehiiv did not apply it.
+  const late = setup((request) => (request.method === 'GET' ? json('draft.json') : json('pending.json', 202, { 'retry-after': '4' })));
+  const { payload, isError } = await callTool(late.module, 'update_draft_post', { post_id: POST, title: 'x' }, late.ctx);
+  assert.equal(isError, true);
+  assert.equal(payload.outcome, undefined);
+  assert.equal(payload.status, 202);
+  assert.equal(payload.retryAfter, 4);
+  assert.match(payload.error, /takes no change until it is done: nothing was changed\. Call update_draft_post again after 4 seconds\./);
+  assert.doesNotMatch(payload.error, /took the change/);
+  assert.deepEqual(late.fetch.calls.map((call) => call.method), ['GET', 'PATCH']);
 });
 
 test('send_test_email sends to the given addresses and says how many tests are left', async () => {
@@ -228,18 +261,55 @@ test('send_test_email sends to the given addresses and says how many tests are l
   assert.match((await callTool(capped.module, 'send_test_email', { post_id: POST, recipient_emails: ['me@example.com'] }, capped.ctx)).payload.error, /daily test send cap may be reached/);
 });
 
-test('send_post confirms a draft now or at a scheduled time', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, { data: { id: POST, title: 'November product notes', status: 'confirmed', publish_date: 1795600000 } }));
+test('send_post reads the draft, then confirms it now or at a scheduled time', async () => {
+  const { module, fetch, ctx } = setup((request) => (request.method === 'GET'
+    ? json('draft.json')
+    : jsonResponse(200, { data: { id: POST, title: 'November product notes', status: 'confirmed', publish_date: 1795600000 } })));
   const scheduled = await callTool(module, 'send_post', { post_id: POST, scheduled_at: '2026-11-24T14:00:00Z' }, ctx);
-  assert.equal(fetch.calls[0].method, 'PATCH');
-  assert.deepEqual(fetch.calls[0].json, { status: 'confirmed', scheduled_at: '2026-11-24T14:00:00Z' });
+  assert.deepEqual(fetch.calls.map((call) => call.method), ['GET', 'PATCH']);
+  assert.equal(fetch.calls[0].url, `https://api.beehiiv.com/v2/publications/${PUB}/posts/${POST}`);
+  assert.deepEqual(fetch.calls[1].json, { status: 'confirmed', scheduled_at: '2026-11-24T14:00:00Z' });
   assert.match(scheduled.payload.note, /Scheduled for 2026-11-24T14:00:00Z\. To stop it, unschedule it in beehiiv itself\./);
   const now = await callTool(module, 'send_post', { post_id: POST }, ctx);
-  assert.deepEqual(fetch.calls[1].json, { status: 'confirmed' });
+  assert.deepEqual(fetch.calls[3].json, { status: 'confirmed' });
   assert.match(now.payload.note, /^Sent/);
+  assert.equal(now.payload.status, 'confirmed');
   const badTime = await callTool(module, 'send_post', { post_id: POST, scheduled_at: 'next Tuesday' }, ctx);
   assert.match(badTime.payload.error, /`scheduled_at` does not have the expected format/);
-  assert.equal(fetch.calls.length, 2);
+  assert.equal(fetch.calls.length, 4);
+});
+
+test('send_post never reports a send that did not happen', async () => {
+  // beehiiv is still creating the post: the read answers 202, and nothing is sent.
+  const creating = setup(() => json('pending.json', 202, { 'retry-after': '2' }));
+  const early = await callTool(creating.module, 'send_post', { post_id: POST }, creating.ctx);
+  assert.equal(early.isError, true);
+  assert.match(early.payload.error, /still creating this post in the background \(HTTP 202\).*nothing was sent\. Call send_post again after 2 seconds\./);
+  assert.equal(early.payload.note, undefined);
+  assert.deepEqual(creating.fetch.calls.map((call) => call.method), ['GET']);
+
+  // A read that says pending in its body counts the same.
+  const pendingBody = setup(() => json('pending.json'));
+  assert.match((await callTool(pendingBody.module, 'send_post', { post_id: POST }, pendingBody.ctx)).payload.error, /nothing was sent/);
+  assert.equal(pendingBody.fetch.calls.length, 1);
+
+  // An already sent or scheduled post is not sent again.
+  const sent = setup(() => json('post.json'));
+  const twice = await callTool(sent.module, 'send_post', { post_id: 'post_00000000-0000-0000-0000-000000000001' }, sent.ctx);
+  assert.match(twice.payload.error, /This post is confirmed: it is already sent or scheduled, and send_post acts on drafts only .* Nothing was sent\./);
+  assert.deepEqual(sent.fetch.calls.map((call) => call.method), ['GET']);
+
+  // The PATCH answers 202: beehiiv did not take it, so the result is an error without a "Sent" note.
+  const late = setup((request) => (request.method === 'GET' ? json('draft.json') : json('pending.json', 202, { 'retry-after': '5' })));
+  const { payload, isError } = await callTool(late.module, 'send_post', { post_id: POST }, late.ctx);
+  assert.equal(isError, true);
+  assert.equal(payload.outcome, undefined);
+  assert.equal(payload.note, undefined);
+  assert.equal(payload.status, 202);
+  assert.equal(payload.retryAfter, 5);
+  assert.match(payload.error, /takes no change until it is done: nothing was sent\. Call send_post again after 5 seconds\./);
+  assert.doesNotMatch(payload.error, /Sent|Scheduled for/);
+  assert.deepEqual(late.fetch.calls.map((call) => call.method), ['GET', 'PATCH']);
 });
 
 test('subscriptions: a lookup by email with cursor paging, one by ID with tags', async () => {
@@ -323,6 +393,29 @@ test('enroll_in_automation starts a journey for one subscriber', async () => {
   assert.equal(fetch.calls.length, 1);
 });
 
+test('list_automation_journeys shows who an automation was started for, with cursor paging', async () => {
+  const { module, fetch, ctx } = setup(() => json('journeys.json'));
+  const first = await callTool(module, 'list_automation_journeys', { automation_id: 'aut_00000000-0000-0000-0000-000000000001', status: 'in_progress' }, ctx);
+  assert.equal(first.isError, false, first.payload.error);
+  assert.equal(fetch.calls[0].url, `https://api.beehiiv.com/v2/publications/${PUB}/automations/aut_00000000-0000-0000-0000-000000000001/journeys?status=in_progress&limit=100`);
+  assert.equal(fetch.calls[0].method, 'GET');
+  assert.deepEqual(first.payload.journeys, [
+    { id: 'aj_00000000-0000-0000-0000-000000000001', status: 'in_progress', subscription_id: SUB, email: 'jane@example.com', started: '2026-11-23T02:15:00.000Z' },
+    {
+      id: 'aj_00000000-0000-0000-0000-000000000002',
+      status: 'completed',
+      subscription_id: 'sub_00000000-0000-0000-0000-000000000002',
+      email: 'sam@example.com',
+      started: '2026-11-18T11:06:40.000Z',
+      completed: '2026-11-21T22:26:40.000Z',
+    },
+  ]);
+  assert.equal(first.payload.automation_id, 'aut_00000000-0000-0000-0000-000000000001');
+  await callTool(module, 'list_automation_journeys', { automation_id: 'aut_00000000-0000-0000-0000-000000000001', status: 'in_progress', cursor: first.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[1].query.cursor, 'eyJpZCI6ImFqXzAwMDAwMDAyIn0');
+  assert.equal(fetch.calls[1].query.page, undefined);
+});
+
 test('writes without a clear answer are unknown and sent once', async () => {
   const fail = () => jsonResponse(503, { status: 503, statusText: 'Service Unavailable', errors: [{ message: 'Try again' }] });
   const cases = [
@@ -331,14 +424,16 @@ test('writes without a clear answer are unknown and sent once', async () => {
     ['create_subscription', { email: 'sam@example.com' }, 'list_subscriptions'],
     ['add_subscription_tags', { subscription_id: SUB, tags: ['x'] }, 'get_subscription'],
     ['update_subscription', { subscription_id: SUB, unsubscribe: true }, 'get_subscription'],
-    ['enroll_in_automation', { automation_id: 'aut_00000000-0000-0000-0000-000000000001', email: 'jane@example.com' }, 'get_subscription'],
+    ['update_draft_post', { post_id: POST, title: 'x' }, 'get_post'],
+    ['enroll_in_automation', { automation_id: 'aut_00000000-0000-0000-0000-000000000001', email: 'jane@example.com' }, 'list_automation_journeys'],
   ];
   for (const [tool, args, check] of cases) {
-    const { module, fetch, ctx } = setup(fail);
+    // A tool that reads the post first finds a draft; the change itself gets no clear answer.
+    const { module, fetch, ctx } = setup((request) => (request.method === 'GET' ? json('draft.json') : fail()));
     const { payload } = await callTool(module, tool, args, ctx);
     assert.equal(payload.outcome, 'unknown', `${tool}: ${payload.error}`);
     assert.equal(payload.check, check);
-    assert.equal(fetch.calls.length, 1);
+    assert.equal(fetch.calls.filter((call) => call.method !== 'GET').length, 1, `${tool}: the change is sent once`);
   }
 });
 
@@ -347,11 +442,27 @@ test('api_get and api_request reach the rest of the API, without webhooks or del
   const read = await callTool(module, 'api_get', { path: `/v2/publications/${PUB}/referral_program`, query: { 'expand[]': ['rewards'] } }, ctx);
   assert.deepEqual(read.payload, { status: 200, data: { data: { enabled: true } } });
   assert.equal(fetch.calls[0].url, `https://api.beehiiv.com/v2/publications/${PUB}/referral_program?expand%5B%5D=rewards`);
-  const hook = await callTool(module, 'api_request', { method: 'POST', path: `/v2/publications/${PUB}/webhooks`, json: { url: 'https://hooks.example.com' } }, ctx);
-  assert.match(hook.payload.error, /Webhooks are not offered here/);
-  for (const path of [`/v2/publications/${PUB}/posts/${POST}`, `/v2/publications/${PUB}/subscriptions/${SUB}`]) {
+  // beehiiv's router takes a format suffix and a trailing slash: each of these reaches the webhooks.
+  for (const path of [
+    `/v2/publications/${PUB}/webhooks`,
+    `/v2/publications/${PUB}/webhooks.json`,
+    `/v2/publications/${PUB}/webhooks/`,
+    `/v2/publications/${PUB}/Webhooks`,
+    `/v2/publications/${PUB}/%77ebhooks`,
+    `/v2/publications/${PUB}/webhooks/ep_00000000-0000-0000-0000-000000000001.json`,
+  ]) {
+    const hook = await callTool(module, 'api_request', { method: 'POST', path, json: { url: 'https://hooks.example.com', event_types: ['subscription.created'] } }, ctx);
+    assert.match(hook.payload.error, /Webhooks are not offered here/, path);
+  }
+  for (const path of [
+    `/v2/publications/${PUB}/posts/${POST}`,
+    `/v2/publications/${PUB}/subscriptions/${SUB}`,
+    `/v2/publications/${PUB}/posts/${POST}.json`,
+    `/v2/publications/${PUB}/subscriptions.json/${SUB}`,
+    `/v2/publications/${PUB}/Subscriptions/${SUB}/`,
+  ]) {
     const removed = await callTool(module, 'api_request', { method: 'DELETE', path }, ctx);
-    assert.match(removed.payload.error, /deletes posts and subscriptions for good/);
+    assert.match(removed.payload.error, /deletes posts and subscriptions for good/, path);
   }
   assert.equal(fetch.calls.length, 1);
   const untag = await callTool(module, 'api_request', { method: 'DELETE', path: `/v2/publications/${PUB}/subscriptions/${SUB}/tags`, json: { tags: ['old'] } }, ctx);

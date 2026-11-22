@@ -9,8 +9,8 @@
 // as drafts; only send_post emails subscribers. Posts and subscriptions are
 // never deleted here: beehiiv deletes them for good.
 
-import { apiTools, defineConnector, OutcomeUnknown, ToolFailure, type ToolHelpers } from '../../core/index.js';
-import { compact, isoDate, postStats, TEXT_WINDOW_BYTES, textWindow, topLinks, trimPost, trimResource, trimSubscription } from './format.js';
+import { apiTools, defineConnector, OutcomeUnknown, retryAfterSeconds, ToolFailure, type ToolHelpers } from '../../core/index.js';
+import { compact, isoDate, postStats, TEXT_WINDOW_BYTES, textWindow, topLinks, trimJourney, trimPost, trimResource, trimSubscription } from './format.js';
 
 const V2 = '/v2';
 /** A post with its body: read up to the 8 MiB a host allows for an API reply. */
@@ -164,19 +164,97 @@ async function settle(h: ToolHelpers, publication: string, id: string): Promise<
     try {
       response = await h.api({ path: `${V2}/publications/${publication}/posts/${id}` });
     } catch (error) {
-      if (error instanceof ToolFailure && error.details.status === 404 && /creation fail|POST_CREATION_FAILED/i.test(error.message)) {
+      // beehiiv keeps the ID it returned for the post it is creating: while it works, the post answers 202. A 404 for
+      // that ID means the creation failed (POST_CREATION_FAILED, a code the error reply keeps out of reach here).
+      if (error instanceof ToolFailure && error.details.status === 404) {
         throw new ToolFailure(
-          'beehiiv accepted the post but could not finish creating it (POST_CREATION_FAILED), so no draft exists: check the request '
-            + '(the body and the recipients) and create it once more.',
+          'beehiiv accepted the post, then answered that no post has the ID it gave (HTTP 404): creating it failed in the background '
+            + '(POST_CREATION_FAILED), and such a post never appears, so no draft exists. Check the request (the body and the '
+            + 'recipients) and create it once more.',
           error.details,
         );
       }
       return { state: 'pending', note: 'beehiiv saved the post; reading it back did not work: check it with get_post.' };
     }
-    if (response.status !== 202) return { state: 'ready', post: response.data?.data };
+    if (response.status !== 202 && response.data?.data?.state !== 'pending') return { state: 'ready', post: response.data?.data };
     if (attempt < 2 && !(await pause(waitSeconds(response.headers) * 1000, h.ctx.signal))) break;
   }
   return { state: 'pending', note: 'beehiiv is still finishing the post in the background: read it with get_post in a moment.' };
+}
+
+/**
+ * beehiiv answered 202: it is still creating the post (made through its Send
+ * API), and it takes no change until it is done. The caller asks again after
+ * the Retry-After seconds.
+ */
+function stillCreating(headers: Headers, tool: string, nothing: string): ToolFailure {
+  const seconds = retryAfterSeconds(headers);
+  return new ToolFailure(
+    `beehiiv is still creating this post in the background (HTTP 202), and it takes no change until it is done: ${nothing}. `
+      + `Call ${tool} again ${seconds !== undefined ? `after ${seconds} seconds` : 'in a moment'}.`,
+    { status: 202, ...(seconds !== undefined ? { retryAfter: seconds } : {}) },
+  );
+}
+
+/** Reads a post before changing it: it must be a finished draft. */
+async function readDraft(h: ToolHelpers, publication: string, postId: string, tool: string, nothing: string): Promise<any> {
+  const response = await h.api({
+    path: `${V2}/publications/${publication}/posts/${postId}`,
+    errors: { 404: 'beehiiv found no such post, or creating it failed in the background (POST_CREATION_FAILED: create it once more)' },
+  });
+  const post = response.data?.data ?? {};
+  if (response.status === 202 || post.state === 'pending') throw stillCreating(response.headers, tool, nothing);
+  if (post.status !== 'draft') {
+    const what = post.status === 'confirmed' ? 'confirmed: it is already sent or scheduled' : String(post.status ?? 'not a draft');
+    throw new ToolFailure(
+      `This post is ${what}, and ${tool} acts on drafts only (beehiiv cannot move a sent or scheduled post back, nor send a post twice). `
+        + `${nothing.charAt(0).toUpperCase()}${nothing.slice(1)}.`,
+    );
+  }
+  return post;
+}
+
+/**
+ * A path segment as beehiiv's router may read it: case aside, and only up to
+ * a format suffix or any other mark (/webhooks.json routes like /webhooks).
+ */
+function routeName(segment: string): string {
+  return /^[a-z0-9_-]*/.exec(segment.toLowerCase())?.[0] ?? '';
+}
+
+interface ListPostsArgs {
+  publication_id?: string;
+  status: string;
+  platform?: string;
+  audience?: string;
+  content_tags?: string[];
+  hidden_from_feed?: string;
+  order_by: string;
+  direction: string;
+  limit: number;
+  cursor?: string;
+}
+
+async function listPosts(h: ToolHelpers, args: ListPostsArgs, withStats: boolean): Promise<Record<string, unknown>> {
+  const id = publicationOf(h, args.publication_id);
+  const at = pageState(h, args.cursor);
+  const { data } = await h.api({
+    path: `${V2}/publications/${id}/posts`,
+    query: {
+      'expand[]': withStats ? ['stats'] : undefined,
+      status: args.status,
+      platform: args.platform,
+      audience: args.audience,
+      'content_tags[]': args.content_tags,
+      hidden_from_feed: args.hidden_from_feed,
+      order_by: args.order_by,
+      direction: args.direction,
+      limit: args.limit,
+      ...pageQuery(at),
+    },
+  });
+  const posts = (Array.isArray(data?.data) ? data.data : []).map(trimPost);
+  return beehiivPage(h, 'posts', data, posts, at, { publication_id: id });
 }
 
 const connector = defineConnector({
@@ -247,26 +325,28 @@ const connector = defineConnector({
         },
         additionalProperties: false,
       },
-      async run(args: { publication_id?: string; status: string; platform?: string; audience?: string; content_tags?: string[]; hidden_from_feed?: string; order_by: string; direction: string; limit: number; cursor?: string }, h) {
-        const id = publicationOf(h, args.publication_id);
-        const at = pageState(h, args.cursor);
-        const { data } = await h.api({
-          path: `${V2}/publications/${id}/posts`,
-          query: {
-            'expand[]': ['stats'],
-            status: args.status,
-            platform: args.platform,
-            audience: args.audience,
-            'content_tags[]': args.content_tags,
-            hidden_from_feed: args.hidden_from_feed,
-            order_by: args.order_by,
-            direction: args.direction,
-            limit: args.limit,
-            ...pageQuery(at),
-          },
-        });
-        const posts = (Array.isArray(data?.data) ? data.data : []).map(trimPost);
-        return beehiivPage(h, 'posts', data, posts, at, { publication_id: id });
+      async run(args: ListPostsArgs, h) {
+        return listPosts(h, args, true);
+      },
+    },
+    {
+      name: 'list_drafts',
+      kind: 'read',
+      title: 'List beehiiv draft posts',
+      description:
+        'The draft posts of a publication, newest created first, with their ID, title, audience, platform and creation date: where a draft '
+        + 'create_draft_post saved shows up. Pass nextCursor back as cursor for more.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          publication_id: PUBLICATION_ID,
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 10, description: 'Drafts per page, 1 to 100 (default 10).' },
+          cursor: CURSOR_SCHEMA,
+        },
+        additionalProperties: false,
+      },
+      async run(args: { publication_id?: string; limit: number; cursor?: string }, h) {
+        return listPosts(h, { ...args, status: 'draft', order_by: 'created', direction: 'desc' }, false);
       },
     },
     {
@@ -344,7 +424,7 @@ const connector = defineConnector({
     {
       name: 'create_draft_post',
       kind: 'create',
-      check: 'list_posts',
+      check: 'list_drafts',
       title: 'Save a beehiiv draft post',
       description:
         'Saves a post as a draft: it reaches no one. beehiiv finishes the post in the background, so the tool reads it back for a few seconds. '
@@ -399,14 +479,10 @@ const connector = defineConnector({
         const id = publicationOf(h, args.publication_id);
         const body = postBody(args);
         if (!Object.keys(body).length) throw new ToolFailure('Nothing to change: give at least one field besides post_id. Nothing was changed.');
-        const current = await h.api({ path: `${V2}/publications/${id}/posts/${args.post_id}`, errors: { 404: 'beehiiv found no such post' } });
-        const status = current.data?.data?.status;
-        if (current.status === 202) throw new ToolFailure('beehiiv is still creating this post: try again in a moment. Nothing was changed.');
-        if (status !== 'draft') {
-          throw new ToolFailure(`This post is ${String(status ?? 'not a draft')}, and update_draft_post changes drafts only (beehiiv cannot move a sent or scheduled post back). Nothing was changed.`);
-        }
+        await readDraft(h, id, args.post_id, 'update_draft_post', 'nothing was changed');
         const response = await h.api({ method: 'PATCH', path: `${V2}/publications/${id}/posts/${args.post_id}`, json: body, write: true, errors: { 403: SEND_API } });
-        if (response.status === 202) return { id: args.post_id, state: 'pending', note: 'beehiiv took the change and is still processing it: read the post with get_post in a moment.' };
+        // 202: beehiiv is still creating the post and did not apply the change.
+        if (response.status === 202) throw stillCreating(response.headers, 'update_draft_post', 'nothing was changed');
         return compact({ ...trimPost(response.data?.data ?? {}), updated: true });
       },
     },
@@ -447,8 +523,8 @@ const connector = defineConnector({
       title: 'Send or schedule a beehiiv post',
       description:
         'Publishes a draft and emails it to its recipients now, or at scheduled_at (UTC, ISO 8601). This is the one call that reaches '
-        + 'subscribers. It cannot be undone through the API: a sent post cannot go back to draft, and a scheduled one is unscheduled in beehiiv '
-        + 'itself. Needs the Pro or Enterprise plan.',
+        + 'subscribers. The tool reads the post first and sends finished drafts only. It cannot be undone through the API: a sent post cannot '
+        + 'go back to draft, and a scheduled one is unscheduled in beehiiv itself. Needs the Pro or Enterprise plan.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -465,6 +541,7 @@ const connector = defineConnector({
       },
       async run(args: { publication_id?: string; post_id: string; scheduled_at?: string }, h) {
         const id = publicationOf(h, args.publication_id);
+        await readDraft(h, id, args.post_id, 'send_post', 'nothing was sent');
         const response = await h.api({
           method: 'PATCH',
           path: `${V2}/publications/${id}/posts/${args.post_id}`,
@@ -472,11 +549,12 @@ const connector = defineConnector({
           write: true,
           errors: { 403: SEND_API },
         });
+        // 202: beehiiv is still creating the post and did not send or schedule it.
+        if (response.status === 202) throw stillCreating(response.headers, 'send_post', 'nothing was sent');
         const post = response.data?.data ?? {};
         return compact({
           ...trimPost(post),
           id: post.id ?? args.post_id,
-          state: response.status === 202 ? 'pending' : undefined,
           note: args.scheduled_at
             ? `Scheduled for ${args.scheduled_at}. To stop it, unschedule it in beehiiv itself.`
             : 'Sent: it is published and emailed to its recipients.',
@@ -695,13 +773,45 @@ const connector = defineConnector({
       },
     },
     {
+      name: 'list_automation_journeys',
+      kind: 'read',
+      title: 'List a beehiiv automation\'s journeys',
+      description:
+        'Who an automation was started for: each journey with its subscription ID, email, status (in_progress, completed, exited_early or '
+        + 'manually_removed) and start and end dates (UTC). It tells whether someone is already enrolled. Pass nextCursor back as cursor for more.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          publication_id: PUBLICATION_ID,
+          automation_id: { type: 'string', pattern: '^aut_[0-9A-Za-z-]{8,64}$', description: 'The automation ID (aut_...).' },
+          status: { type: 'string', enum: ['in_progress', 'completed', 'exited_early', 'all'], description: 'Only journeys in this status (default all).' },
+          limit: { type: 'integer', minimum: 1, maximum: 100, default: 100, description: 'Journeys per page, 1 to 100 (default 100).' },
+          cursor: CURSOR_SCHEMA,
+        },
+        required: ['automation_id'],
+        additionalProperties: false,
+      },
+      async run(args: { publication_id?: string; automation_id: string; status?: string; limit: number; cursor?: string }, h) {
+        const id = publicationOf(h, args.publication_id);
+        const at = pageState(h, args.cursor);
+        const { data } = await h.api({
+          path: `${V2}/publications/${id}/automations/${args.automation_id}/journeys`,
+          query: { status: args.status, limit: args.limit, ...(at.cursor ? { cursor: at.cursor } : at.page > 1 ? { page: at.page } : {}) },
+          errors: { 404: 'beehiiv found no such automation' },
+        });
+        const journeys = (Array.isArray(data?.data) ? data.data : []).map(trimJourney);
+        return beehiivPage(h, 'journeys', data, journeys, at, { automation_id: args.automation_id });
+      },
+    },
+    {
       name: 'enroll_in_automation',
       kind: 'create',
-      check: 'get_subscription',
+      check: 'list_automation_journeys',
       title: 'Enroll a beehiiv subscriber in an automation',
       description:
-        'Starts an automation for an existing subscriber, by subscription ID or email; the automation emails them. It needs an active Add by '
-        + 'API trigger (list_resources with kind automations shows it).',
+        'Starts an automation for an existing subscriber, by subscription ID or email; the automation emails them, and enrolling someone twice '
+        + 'can send its emails twice (list_automation_journeys shows who is enrolled). It needs an active Add by API trigger (list_resources '
+        + 'with kind automations shows it).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -736,11 +846,13 @@ const connector = defineConnector({
         + 'and deleting posts or subscriptions are not offered. Reference: https://developers.beehiiv.com/api-reference.',
       basePath: '/v2/',
       guard(request) {
-        if (request.method !== 'GET' && request.segments.includes('webhooks')) {
+        // Read each segment as beehiiv's router may: /Webhooks, /webhooks.json and /webhooks/ all reach the webhooks.
+        const names = request.segments.map(routeName);
+        if (request.method !== 'GET' && names.includes('webhooks')) {
           throw new ToolFailure('Webhooks are not offered here: a webhook would send subscriber events to another address. Nothing was sent.');
         }
-        const [, , , kind, item, rest] = request.segments;
-        if (request.method === 'DELETE' && (kind === 'posts' || kind === 'subscriptions') && item && rest === undefined) {
+        const kind = names[3];
+        if (request.method === 'DELETE' && names.length === 5 && (kind === 'posts' || kind === 'subscriptions')) {
           throw new ToolFailure('beehiiv deletes posts and subscriptions for good, so that is not offered here: delete it in beehiiv itself. Nothing was sent.');
         }
       },

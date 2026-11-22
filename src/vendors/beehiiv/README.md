@@ -42,10 +42,11 @@ Open the same **API** page, click the three dots next to the key and choose **De
 | `list_posts` | read | Posts (sent or scheduled by default, or drafts, archived, all) with email numbers, unique opens and clicks as a share of delivered emails, and web views. |
 | `get_post` | read | One post with its numbers, its ten best links, and one version of its body (free or premium, web, email or RSS) in windows with a cursor. |
 | `get_posts_aggregate_stats` | read | Email and web totals over all posts that match the filters. |
+| `list_drafts` | read | Draft posts, newest created first: where a draft `create_draft_post` saved shows up. |
 | `create_draft_post` | create | Saves a post as a draft that reaches no one, then reads it back while beehiiv finishes it; returns a preview link. |
-| `update_draft_post` | update | Changes a draft's fields or body; it reads the post first and changes drafts only. |
+| `update_draft_post` | update | Changes a draft's fields or body; it reads the post first and changes finished drafts only. |
 | `send_test_email` | create | Sends a test of a post to the given addresses only; says how many tests are left today. |
-| `send_post` | update | Sends a draft to its recipients now, or schedules it. The one tool that reaches subscribers; it cannot be undone through the API. |
+| `send_post` | update | Sends a draft to its recipients now, or schedules it. The one tool that reaches subscribers; it reads the post first, sends finished drafts only, and cannot be undone through the API. |
 | `list_subscriptions` | read | Finds a subscriber by email, or lists subscribers by status and tier, with custom fields and email numbers. |
 | `get_subscription` | read | One subscription with its tags, custom fields, tier and email numbers. |
 | `create_subscription` | create | Adds a subscriber who agreed to receive the newsletter; no welcome email, reactivation, premium tier or automation unless asked. |
@@ -53,14 +54,15 @@ Open the same **API** page, click the three dots next to the key and choose **De
 | `update_subscription` | update | Sets or removes custom field values, changes the tier, or unsubscribes. |
 | `list_resources` | read | Segments, automations (with their Add by API trigger), custom fields, tiers or post templates. |
 | `list_segment_members` | read | The subscriptions in a segment. |
+| `list_automation_journeys` | read | Who an automation was started for, with each journey's status and dates: whether someone is already enrolled. |
 | `enroll_in_automation` | create | Starts an automation for an existing subscriber (the automation emails them). |
 | `api_get` | read | Any other GET of the beehiiv API under `/v2/`, such as the referral program or authors. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE to the beehiiv API under `/v2/`. Sent once, never retried. Webhooks and deleting posts or subscriptions are not offered. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE to the beehiiv API under `/v2/`. Sent once, never retried. Webhooks (in any spelling of the path, such as `/webhooks.json`) and deleting posts or subscriptions are not offered. |
 
 ## Limits
 
 - Plans: every plan, Free included, can read posts, stats and subscribers and add subscribers. Creating or changing posts (beehiiv's Send API: `create_draft_post`, `update_draft_post`, `send_post`) needs the Pro or Enterprise plan and is not part of a Pro trial. Automations start on the Lite plan; Free keeps 3 segments, Lite 10.
 - beehiiv allows 30 requests a minute on Free, 180 on Lite, 500 on Pro and 800 on Enterprise. A `429` comes back with `retryAfter`; nothing is retried, and a write without a clear answer is reported as unknown, with the read tool to check.
-- beehiiv finishes a new post in the background: `create_draft_post` reads it back up to three times, honoring `Retry-After`, then says it is still pending. Drafts cannot be scheduled; `send_post` with `scheduled_at` confirms and schedules in one step, and a scheduled post is unscheduled in beehiiv itself.
+- beehiiv finishes a new post in the background: `create_draft_post` reads it back up to three times, honoring `Retry-After`, then says it is still pending. Until it is done, beehiiv answers `202` and takes no change: `update_draft_post` and `send_post` then report that nothing was changed or sent, with `retryAfter`, and are called again later. A `404` for the ID beehiiv just gave means the creation failed (`POST_CREATION_FAILED`): no draft exists. Drafts cannot be scheduled; `send_post` with `scheduled_at` confirms and schedules in one step, and a scheduled post is unscheduled in beehiiv itself.
 - Post bodies are HTML with inline styles only: beehiiv removes `<style>` and `<link>` tags, and the publication's email template adds the layout and the footer. Test sends are capped per publication per day.
 - Posts and subscriptions are never deleted through the connector: beehiiv deletes them for good, so that stays in beehiiv itself.

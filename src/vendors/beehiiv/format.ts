@@ -112,6 +112,18 @@ export function trimSubscription(subscription: any): Record<string, unknown> {
   });
 }
 
+/** An automation journey: who an automation was started for, and where they are in it. */
+export function trimJourney(journey: any): Record<string, unknown> {
+  return compact({
+    id: journey?.id,
+    status: journey?.status,
+    subscription_id: journey?.subscription_id,
+    email: journey?.email,
+    started: isoDate(journey?.started_at),
+    completed: isoDate(journey?.completed_at),
+  });
+}
+
 /** One item of a smaller list, by what the list holds. */
 export function trimResource(kind: string, item: any): Record<string, unknown> {
   switch (kind) {
