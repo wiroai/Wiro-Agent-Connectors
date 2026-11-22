@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "type": "subscriptionGroups", "id": "21000001", "attributes": { "referenceName": "Acme Pro" }, "links": { "self": "https://api.appstoreconnect.apple.com/v1/subscriptionGroups/21000001" } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567890/subscriptionGroups" },
+  "meta": { "paging": { "total": 1, "limit": 50 } }
+}

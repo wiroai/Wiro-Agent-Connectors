@@ -1,0 +1,24 @@
+{
+  "data": [
+    {
+      "type": "appInfos",
+      "id": "a1b2c3d4-0000-4000-8000-00000000live",
+      "attributes": { "appStoreState": "READY_FOR_SALE", "state": "READY_FOR_DISTRIBUTION", "appStoreAgeRating": "FOUR_PLUS" },
+      "relationships": {
+        "appInfoLocalizations": { "data": [
+          { "type": "appInfoLocalizations", "id": "loc-live-en" },
+          { "type": "appInfoLocalizations", "id": "loc-live-tr" }
+        ] },
+        "primaryCategory": { "data": { "type": "appCategories", "id": "PHOTO_AND_VIDEO" } },
+        "secondaryCategory": { "data": null }
+      }
+    }
+  ],
+  "included": [
+    { "type": "appInfoLocalizations", "id": "loc-live-en", "attributes": { "locale": "en-US", "name": "Acme Photo", "subtitle": "Film filters and frames", "privacyPolicyUrl": "https://example.com/privacy" } },
+    { "type": "appInfoLocalizations", "id": "loc-live-tr", "attributes": { "locale": "tr", "name": "Acme Foto", "subtitle": "Film filtreleri", "privacyPolicyUrl": "https://example.com/privacy" } },
+    { "type": "appCategories", "id": "PHOTO_AND_VIDEO", "attributes": { "platforms": ["IOS"] } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567890/appInfos" },
+  "meta": { "paging": { "total": 1, "limit": 5 } }
+}

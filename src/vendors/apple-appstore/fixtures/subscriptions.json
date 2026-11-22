@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "type": "subscriptions",
+      "id": "6400000001",
+      "attributes": { "name": "Pro Weekly", "productId": "com.example.photo.pro.weekly", "familySharable": false, "state": "APPROVED", "subscriptionPeriod": "ONE_WEEK", "groupLevel": 2 },
+      "relationships": { "introductoryOffers": { "data": [
+        { "type": "subscriptionIntroductoryOffers", "id": "io-1" },
+        { "type": "subscriptionIntroductoryOffers", "id": "io-2" },
+        { "type": "subscriptionIntroductoryOffers", "id": "io-3" }
+      ] } }
+    },
+    {
+      "type": "subscriptions",
+      "id": "6400000002",
+      "attributes": { "name": "Pro Yearly", "productId": "com.example.photo.pro.yearly", "familySharable": true, "state": "APPROVED", "subscriptionPeriod": "ONE_YEAR", "groupLevel": 1 },
+      "relationships": { "introductoryOffers": { "data": [] } }
+    }
+  ],
+  "included": [
+    { "type": "subscriptionIntroductoryOffers", "id": "io-1", "attributes": { "duration": "THREE_DAYS", "offerMode": "FREE_TRIAL", "numberOfPeriods": 1 } },
+    { "type": "subscriptionIntroductoryOffers", "id": "io-2", "attributes": { "duration": "THREE_DAYS", "offerMode": "FREE_TRIAL", "numberOfPeriods": 1 } },
+    { "type": "subscriptionIntroductoryOffers", "id": "io-3", "attributes": { "duration": "ONE_WEEK", "offerMode": "PAY_AS_YOU_GO", "numberOfPeriods": 1 } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/subscriptionGroups/21000001/subscriptions" },
+  "meta": { "paging": { "total": 2, "limit": 50 } }
+}

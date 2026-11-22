@@ -1,0 +1,12 @@
+{
+  "errors": [
+    {
+      "id": "0c0f7e26-4b7c-4b6a-9b4e-000000000000",
+      "status": "409",
+      "code": "ENTITY_ERROR.ATTRIBUTE.INVALID.DUPLICATE",
+      "title": "The provided entity includes an attribute with a value that has already been used",
+      "detail": "The referenceName 'spring-challenge-2027' is already used by another event.",
+      "source": { "pointer": "/data/attributes/referenceName" }
+    }
+  ]
+}

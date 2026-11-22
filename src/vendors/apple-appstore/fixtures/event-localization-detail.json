@@ -1,0 +1,13 @@
+{
+  "data": {
+    "type": "appEventLocalizations",
+    "id": "7b2e3c4d-2222-4ccc-8ddd-000000000001",
+    "attributes": { "locale": "en-US" },
+    "relationships": { "appEvent": { "data": { "type": "appEvents", "id": "6a1d2b3c-1111-4aaa-8bbb-000000000001" } } },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations/7b2e3c4d-2222-4ccc-8ddd-000000000001" }
+  },
+  "included": [
+    { "type": "appEvents", "id": "6a1d2b3c-1111-4aaa-8bbb-000000000001", "attributes": { "referenceName": "lunar-new-year-2027" } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations/7b2e3c4d-2222-4ccc-8ddd-000000000001" }
+}

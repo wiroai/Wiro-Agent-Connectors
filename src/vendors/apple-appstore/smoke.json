@@ -1,0 +1,18 @@
+{
+  "read": { "tool": "list_apps", "args": { "limit": 5 } },
+  "write": {
+    "tool": "create_app_event",
+    "args": {
+      "app_id": "1234567890",
+      "reference_name": "connector-smoke-{{timestamp}}",
+      "badge": "SPECIAL_EVENT",
+      "purchase_requirement": "NO_COST_ASSOCIATED",
+      "priority": "NORMAL",
+      "purpose": "APPROPRIATE_FOR_ALL_USERS",
+      "territory_schedules": [
+        { "territories": ["USA"], "publish_start": "2027-06-01T00:00:00Z", "event_start": "2027-06-08T00:00:00Z", "event_end": "2027-06-09T00:00:00Z" }
+      ]
+    },
+    "note": "Set app_id to a test app's Apple ID (and the dates to ones ahead) first. Creates a draft in-app event, which is never shown without App Review: delete it with delete_app_event or in App Store Connect."
+  }
+}
