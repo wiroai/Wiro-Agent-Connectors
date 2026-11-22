@@ -372,6 +372,21 @@ test('an upload address on an unknown host, or a file that is not a video, posts
   assert.match(host.payload.error, /uploaded to uploads\.example\.net, an address this connector does not send files to\. Nothing was posted\./);
   assert.equal(elsewhere.fetch.calls.some((call) => call.method === 'PUT'), false);
 
+  // Origins are exact: another tiktokapis.com host is refused too, and the US upload host TikTok documents is taken.
+  const sibling = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/video/init/': () => jsonResponse(200, { data: { publish_id: 'x2', upload_url: 'https://open-upload-eu.tiktokapis.com/video/?upload_id=2' }, error: { code: 'ok' } }) } }));
+  const other = await callTool(sibling.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, sibling.ctx);
+  assert.match(other.payload.error, /uploaded to open-upload-eu\.tiktokapis\.com, an address this connector does not send files to\. Nothing was posted\./);
+  assert.equal(sibling.fetch.calls.some((call) => call.method === 'PUT'), false);
+  const us = setup(tiktok({
+    overrides: {
+      'POST https://open.tiktokapis.com/v2/post/publish/video/init/': () => jsonResponse(200, { data: { publish_id: 'x3', upload_url: 'https://upload.us.tiktokapis.com/video/?upload_id=3&upload_token=example' }, error: { code: 'ok' } }),
+      'PUT https://upload.us.tiktokapis.com/video/': () => new Response(null, { status: 201 }),
+    },
+  }));
+  const usPosted = await callTool(us.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, us.ctx);
+  assert.equal(usPosted.isError, false, usPosted.payload.error);
+  assert.equal(us.fetch.calls.find((call) => call.method === 'PUT').url, 'https://upload.us.tiktokapis.com/video/?upload_id=3&upload_token=example');
+
   const notVideo = setup(tiktok({ video: new TextEncoder().encode('<html>not a video</html>') }));
   const refused = await callTool(notVideo.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, notVideo.ctx);
   assert.match(refused.payload.error, /did not return an MP4, MOV or WebM video\. Nothing was posted\./);
@@ -397,6 +412,108 @@ test('TikTok\'s refusals keep its words: an unaudited app, a bad token, a rate l
   const limited = setup(() => textResponse(429, 'rate limited', { 'retry-after': '60' }));
   const rate = await callTool(limited.module, 'get_post_status', { publish_id: 'v_pub_url~v2-1.1' }, limited.ctx);
   assert.equal(rate.payload.retryAfter, 60);
+});
+
+const UNVERIFIED = () => jsonResponse(403, fixture(import.meta.url, 'error-403-url-unverified.json'));
+const TIKTOK_SAID = 'TikTok said: "Please review our URL ownership verification rules at https://developers.tiktok.com/doc/content-posting-api-media-transfer-guide". Nothing was changed.';
+
+test('a photo post refused for photo URLs on an unverified host says how to post them, and sends nothing more', async () => {
+  const images = ['https://media.example.com/a.jpg', 'https://media.example.com/b.jpg'];
+  const { module, fetch, ctx } = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/content/init/': UNVERIFIED } }));
+  const { payload, isError } = await callTool(module, 'post_photos', { image_urls: images, privacy_level: 'SELF_ONLY' }, ctx);
+  assert.equal(isError, true);
+  assert.equal(payload.status, 403);
+  assert.equal(payload.outcome, undefined, 'a 403 is a clear no');
+  assert.ok(payload.error.startsWith(
+    'TikTok refused the photo post (TikTok downloads photos itself, only from a domain or URL prefix verified in the TikTok app\'s URL '
+      + 'properties: use photo URLs on such a host, such as the creator\'s own website, or make a video of the photos and post it with '
+      + 'post_video, whose FILE_UPLOAD needs no verification; other causes: an app TikTok has not audited may post only with privacy_level '
+      + 'SELF_ONLY to a private account;',
+  ), payload.error);
+  assert.ok(payload.error.endsWith(`the inbox takes at most 5 pending drafts a day) (HTTP 403). ${TIKTOK_SAID}`), payload.error);
+  assert.deepEqual(fetch.calls.map((call) => call.path), ['/v2/post/publish/creator_info/query/', '/v2/post/publish/content/init/']);
+
+  // The inbox takes photos by URL too, with the same rule.
+  const inbox = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/content/init/': UNVERIFIED } }));
+  const draft = await callTool(inbox.module, 'post_photos', { image_urls: images, post_mode: 'MEDIA_UPLOAD' }, inbox.ctx);
+  assert.match(draft.payload.error, /^TikTok refused the photo post \(TikTok downloads photos itself, only from a domain or URL prefix verified/);
+  assert.equal(inbox.fetch.calls.length, 1);
+});
+
+test('a video TikTok would pull from an unverified host is refused with the way around it; a file upload\'s refusal does not blame the URL', async () => {
+  const pull = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/video/init/': UNVERIFIED } }));
+  const refused = await callTool(pull.module, 'post_video', { video_url: VIDEO_URL, source: 'PULL_FROM_URL', privacy_level: 'SELF_ONLY' }, pull.ctx);
+  assert.equal(refused.isError, true);
+  assert.equal(refused.payload.outcome, undefined);
+  assert.ok(refused.payload.error.startsWith(
+    'TikTok refused the post (with PULL_FROM_URL, TikTok downloads the video itself, only from a domain or URL prefix verified in the '
+      + 'TikTok app\'s URL properties: use a URL on such a host, or source FILE_UPLOAD, which needs no verification; other causes: an app '
+      + 'TikTok has not audited may post only with privacy_level SELF_ONLY to a private account;',
+  ), refused.payload.error);
+  assert.ok(refused.payload.error.endsWith(`(HTTP 403). ${TIKTOK_SAID}`), refused.payload.error);
+  assert.equal(pull.fetch.calls.filter((call) => call.path.endsWith('/init/')).length, 1);
+
+  const file = setup(tiktok({ overrides: { 'POST https://open.tiktokapis.com/v2/post/publish/video/init/': () => jsonResponse(403, fixture(import.meta.url, 'error-403-unaudited.json')) } }));
+  const unaudited = await callTool(file.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'PUBLIC_TO_EVERYONE' }, file.ctx);
+  assert.match(unaudited.payload.error, /^TikTok refused the post \(an app TikTok has not audited may post only with privacy_level SELF_ONLY to a private account;/);
+  assert.doesNotMatch(unaudited.payload.error, /URL prefix|PULL_FROM_URL/, 'TikTok downloads nothing in a file upload');
+  assert.equal(file.fetch.calls.some((call) => call.method === 'PUT'), false);
+});
+
+test('a FILE_UPLOAD video over the host\'s download limit is refused with the way around it, before the post is started', async () => {
+  const TOO_LARGE = 'The video is larger than this host can download for FILE_UPLOAD, so nothing was posted. Post it with source PULL_FROM_URL '
+    + 'from a domain or URL prefix verified in the TikTok app\'s URL properties, where TikTok downloads up to 4 GB itself, or use a smaller file.';
+  const overLimit = () => Object.assign(new Error('the file is larger than 52428800 bytes'), { code: 'TOO_LARGE' });
+
+  // A host that knows the size up front refuses the download itself.
+  const declared = setup(tiktok({ overrides: {} }));
+  declared.ctx.fetch = fakeFetch(withJson((request) => {
+    if (request.url === VIDEO_URL) throw overLimit();
+    return tiktok()(request);
+  }));
+  const refused = await callTool(declared.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, declared.ctx);
+  assert.equal(refused.isError, true);
+  assert.equal(refused.payload.error, TOO_LARGE);
+  assert.deepEqual(declared.ctx.fetch.calls.map((call) => call.path), ['/v2/post/publish/creator_info/query/', '/clip.mp4']);
+
+  // A host that counts the bytes as they come stops the body part way.
+  const streamed = setup(tiktok({ overrides: {} }));
+  streamed.ctx.fetch = fakeFetch(withJson((request) => {
+    if (request.url !== VIDEO_URL) return tiktok()(request);
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(mp4(64 * 1024));
+        controller.error(overLimit());
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'video/mp4' } });
+  }));
+  const stopped = await callTool(streamed.module, 'post_video', { video_url: VIDEO_URL, post_mode: 'MEDIA_UPLOAD' }, streamed.ctx);
+  assert.equal(stopped.payload.error, TOO_LARGE);
+  assert.deepEqual(streamed.ctx.fetch.calls.map((call) => call.path), ['/clip.mp4'], 'an inbox upload checks no creator, and nothing reached TikTok');
+
+  // Any other download failure keeps its own words.
+  const broken = setup(tiktok({ overrides: {} }));
+  broken.ctx.fetch = fakeFetch(withJson((request) => {
+    if (request.url === VIDEO_URL) throw new TypeError('fetch failed');
+    return tiktok()(request);
+  }));
+  const failed = await callTool(broken.module, 'post_video', { video_url: VIDEO_URL, privacy_level: 'SELF_ONLY' }, broken.ctx);
+  assert.equal(failed.payload.error, 'The video could not be downloaded (fetch failed). Nothing was changed.');
+});
+
+test('the posting tools say what TikTok downloads itself, what must be verified, and that a file upload has the host\'s size limit', () => {
+  const { module } = loadModuleFor(import.meta.url);
+  const tool = (name) => module.tools.find((candidate) => candidate.name === name);
+  const video = tool('post_video');
+  assert.match(video.description, /FILE_UPLOAD \(default\) downloads it here, then uploads it in chunks \(MP4, MOV or WebM\), so the file must fit the host's download limit/);
+  assert.match(video.description, /a larger one is refused with nothing posted\. PULL_FROM_URL lets TikTok download it \(up to 4 GB\), only from a domain or URL prefix verified in the TikTok app's URL properties\./);
+  assert.match(video.inputSchema.properties.source.description, /the file must fit the host's download limit.*only from a domain or URL prefix verified for the TikTok app/);
+  const photos = tool('post_photos');
+  assert.match(photos.description, /TikTok has no upload for photos: it downloads them itself, only from a domain or URL prefix verified in the TikTok app's URL properties, and refuses photo URLs on any other host\./);
+  assert.match(photos.description, /without one, make a video of the photos and post it with post_video, whose FILE_UPLOAD needs no verification\./);
+  assert.match(photos.inputSchema.properties.image_urls.description, /on a domain or URL prefix verified for the TikTok app/);
+  for (const described of [video, photos]) assert.ok(described.description.length <= 1024);
 });
 
 test('get_post_status and get_profile read what they say', async () => {
