@@ -178,6 +178,22 @@ async function sendTransactional(h: ToolHelpers, body: Record<string, unknown>) 
   });
 }
 
+/**
+ * A path as a server that decodes percent-escapes routes it: the decoded segments split again at "/" and "\",
+ * each cut at ";" (a path parameter), lower-cased, with empty and "." parts dropped and ".." resolved. The guard
+ * decides on these parts, so an escape (%63orporate, corporate%2Fkey) or a capital letter cannot get past it.
+ */
+function routedParts(segments: readonly string[]): string[] {
+  const parts: string[] = [];
+  for (const piece of segments.join('/').split(/[\\/]/)) {
+    const part = (piece.split(';')[0] ?? '').toLowerCase();
+    if (part === '' || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  return parts;
+}
+
 const connector = defineConnector({
   vendor: 'brevo',
   label: LABEL,
@@ -1094,8 +1110,10 @@ const connector = defineConnector({
         + 'Reference: https://developers.brevo.com/reference.',
       basePath: '/v3/',
       guard(request) {
-        // Users, invitations and sub-accounts are account administration, not the agent's job.
-        if (request.method !== 'GET' && /^\/v3\/(organization|corporate)(\/|$)/.test(request.path)) {
+        const [base, area] = routedParts(request.segments);
+        if (base !== 'v3') throw new ToolFailure('The path must stay under /v3/. Nothing was sent.');
+        // Users, invitations and sub-accounts (and their API keys) are account administration, not the agent's job.
+        if (request.method !== 'GET' && (area === 'organization' || area === 'corporate')) {
           throw new ToolFailure('Changing the Brevo organization or its sub-accounts is not available here. Nothing was sent.');
         }
       },

@@ -440,9 +440,27 @@ test('api_get and api_request reach the rest of the API under /v3/, and keep the
 
   const invite = await callTool(module, 'api_request', { method: 'POST', path: '/v3/organization/user/invitation/send', json: { email: 'x@example.com' } }, ctx);
   assert.match(invite.payload.error, /organization or its sub-accounts is not available here\. Nothing was sent\./);
+  // Brevo decodes escapes before it routes, so the guard looks at the path as Brevo would.
+  for (const path of [
+    '/v3/%63orporate/subAccount/key',
+    '/v3/Corporate/subAccount/key',
+    '/v3/corporate%2FsubAccount%2Fkey',
+    '/v3/corporate;x/subAccount/key',
+    '/v3/contacts%2F..%2Forganization/user/invitation/send',
+    '/v3/%4Frganization/user/invitation/send',
+  ]) {
+    const refused = await callTool(module, 'api_request', { method: 'POST', path, json: { name: 'x' } }, ctx);
+    assert.match(refused.payload.error, /organization or its sub-accounts is not available here\. Nothing was sent\./, path);
+  }
+  const escaped = await callTool(module, 'api_request', { method: 'POST', path: '/v3/..%2Fcorporate/subAccount/key' }, ctx);
+  assert.equal(escaped.payload.error, 'The path must stay under /v3/. Nothing was sent.');
   const outside = await callTool(module, 'api_get', { path: '/v2/contacts' }, ctx);
   assert.equal(outside.payload.error, 'The path must start with /v3/. Nothing was sent.');
   assert.equal(fetch.calls.length, 2);
+  // Reading the organization works.
+  const users = await callTool(module, 'api_get', { path: '/v3/organization/invited/users' }, ctx);
+  assert.equal(users.isError, false);
+  assert.equal(fetch.calls.length, 3);
 });
 
 test('logs carry the tool, method and status, never the key or the email', async () => {

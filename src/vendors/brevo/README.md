@@ -49,7 +49,7 @@ Quick start table:
 | `get_transactional_stats` | read | Transactional totals for a period: delivered, opens, clicks, bounces, spam, unsubscribes. |
 | `list_transactional_events` | read | Transactional events by recipient, event, message id, template or tag; shows whether an email went out. |
 | `api_get` | read | Any other GET under `/v3/`, such as `/v3/contacts/attributes`, `/v3/contacts/segments` or `/v3/smsCampaigns`. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE under `/v3/`, such as creating or sending an SMS campaign or changing a campaign's status. Sent once, never retried. Organization users and sub-accounts are left out. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE under `/v3/`, such as creating or sending an SMS campaign or changing a campaign's status. Sent once, never retried. Changes to organization users and sub-accounts are left out (reading them works). |
 
 Connection check: `get_account` with no arguments.
 
