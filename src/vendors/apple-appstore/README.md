@@ -36,7 +36,7 @@ Quick start table:
 | `api_get` | read | Any other GET of the App Store Connect API (`/v1/`, `/v2/`, `/v3/`), signed with the key. |
 | `api_request` | write | A POST, PUT, PATCH or DELETE to the App Store Connect API, such as a review submission. Sent once, never retried. |
 
-Account picker `apps` (App Store apps, one or more, listed by `list_apps`): every tool that names an app refuses one outside the selection. App Store Connect does not say which app an event or a review belongs to, so under the lock the write tools look it up first (an event in the app's event list, a review among the app's newest 1,000 reviews). `api_get` and `api_request` must name a chosen app in the path (`/v1/apps/<id>/...`), in `relationships.app` of a POST to a collection, or in `filter[app]`. The older setup kept this choice in `apps` as `{ appname, appid }` rows; `appid` is the id.
+Account picker `apps` (App Store apps, one or more, listed by `list_apps`): every tool that names an app refuses one outside the selection. App Store Connect does not say which app an event or a review belongs to, so under the lock the write tools look it up first (an event in the app's event list, a review among the app's newest 1,000 reviews). `api_get` and `api_request` must name a chosen app in the path (`/v1/apps/<id>/...`), in `relationships.app` of a POST to a collection, or in `filter[app]`.
 
 Connection check: `list_apps` with no arguments.
 

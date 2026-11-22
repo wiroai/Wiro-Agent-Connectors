@@ -32,7 +32,7 @@ Quick start table:
 | `list_events` | read | An app's SDK events and their conversion mapping. |
 | `api_get` | read | Any other GET of the Roasit API under `/api/`. |
 
-Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`). The older setup kept this choice in `apps` as `{ appname, platform, apptoken, storeid }` rows, one per platform; `apptoken` is the id (one per app), and a row's platform is the `platform` filter of `get_report`.
+Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`).
 
 Connection check: `get_account` with no arguments.
 

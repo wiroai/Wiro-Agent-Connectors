@@ -26,7 +26,7 @@ Quick start table:
 | `list_events` | read | The apps' events by slug, for per-event metrics, and whether each is a SKAdNetwork event. |
 | `api_get` | read | Any other GET of the Report Service API under `/reports-service/`, such as the pivot or CSV report. |
 
-Account picker `apps` (Adjust apps, one or more, listed by `list_apps`): a report covers the chosen apps by default, and app tokens outside them are refused before anything is sent; `api_get` must list only chosen apps in `app_token__in`. Without a lock (the CLI without `CONNECTOR_ACCOUNTS`), a report without `app_tokens` covers the whole account. The older setup kept this choice in `apps` as `{ appname, platform, apptoken, storeid }` rows; `apptoken` is the id.
+Account picker `apps` (Adjust apps, one or more, listed by `list_apps`): a report covers the chosen apps by default, and app tokens outside them are refused before anything is sent; `api_get` must list only chosen apps in `app_token__in`. Without a lock (the CLI without `CONNECTOR_ACCOUNTS`), a report without `app_tokens` covers the whole account.
 
 Connection check: `list_apps` with no arguments.
 
