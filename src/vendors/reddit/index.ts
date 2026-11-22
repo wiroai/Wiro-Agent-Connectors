@@ -6,11 +6,13 @@
 // - `access_token`: the current OAuth access token. The host refreshes it (it
 //   lasts an hour); this module never does.
 // - `developerprofileusername`: the Reddit username of the developer profile
-//   that owns the app. Reddit asks every request to name it in the
-//   User-Agent: "server:agent-connectors:1.0 (by /u/<name>)".
+//   that owns the app. Reddit asks every request to carry a User-Agent that
+//   names the app uniquely and its developer:
+//   "server:agent-connectors.<name>:1.0.0 (by /u/<name>)".
 // - `redditusername` (optional): the connected account's username, as the host
-//   wrote it after the sign-in. Used to list the account's own posts without
-//   asking Reddit first; ownership checks always ask Reddit.
+//   wrote it from Reddit's answer after the sign-in. Used to list the
+//   account's own posts and to key its duplicate memory without asking Reddit
+//   first; ownership checks always ask Reddit.
 //
 // Scope, as Reddit's terms for this kind of app ask: the connected identity,
 // its communities, one community's rules, one text or link post, one comment
@@ -54,8 +56,9 @@ function subredditName(value: string): string {
   return value.replace(/^\/?r\//i, '');
 }
 
+/** Reddit's User-Agent: unique to the app (its developer profile names it), with the developer as the contact. */
 function userAgent(developer: string): string {
-  return `server:agent-connectors:1.0 (by /u/${developer})`;
+  return `server:agent-connectors.${developer}:1.0.0 (by /u/${developer})`;
 }
 
 function permalink(path: unknown): string | undefined {

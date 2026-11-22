@@ -1,7 +1,7 @@
 // Reddit's rate and mutation rules, kept in memory for as long as the module
 // is loaded (nothing is stored anywhere else):
 //
-// - Requests of one app go out one at a time, and the X-Ratelimit-Used,
+// - Requests of one connection go out one at a time, and the X-Ratelimit-Used,
 //   -Remaining and -Reset headers of every reply are remembered. When the
 //   window is spent, or Reddit answers 429, nothing more is sent until the
 //   reset; a write limit Reddit states in a reply (RATELIMIT) holds writes
@@ -13,14 +13,17 @@
 //   whose outcome is unknown needs an explicit go-ahead after a check, and the
 //   same text is not repeated in another community or thread.
 //
-// The app is told apart by a hash of its developer profile username.
+// A connection is told apart by a hash of its developer profile username and
+// access token, so connections served by one loaded module never share a
+// window; a refreshed token starts with an empty one, which the next reply
+// fills in. The ledger is keyed by the account name the connection gives.
 
 import { sha256Hex, ToolFailure, type ApiRequest, type ApiResponse, type ToolHelpers } from '../../core/index.js';
 
 const HOUR = 60 * 60 * 1000;
 export const LEDGER_TTL_MS = 48 * HOUR;
 const MAX_LEDGER_ROWS = 500;
-const MAX_APPS = 64;
+const MAX_CONNECTIONS = 64;
 
 interface RateState {
   cooldownUntil: number;
@@ -39,14 +42,15 @@ export interface RateInfo {
 
 const rates = new Map<string, RateState>();
 
-async function appKey(h: ToolHelpers): Promise<string> {
-  return sha256Hex(`reddit-app\n${String(h.credentials['developerprofileusername'] ?? '').toLowerCase()}`);
+async function connectionKey(h: ToolHelpers): Promise<string> {
+  const developer = String(h.credentials['developerprofileusername'] ?? '').toLowerCase();
+  return sha256Hex(`reddit-connection\n${developer}\n${String(h.credentials['access_token'] ?? '')}`);
 }
 
 function stateFor(key: string): RateState {
   let state = rates.get(key);
   if (!state) {
-    while (rates.size >= MAX_APPS) {
+    while (rates.size >= MAX_CONNECTIONS) {
       const oldest = rates.keys().next().value;
       if (oldest === undefined) break;
       rates.delete(oldest);
@@ -80,19 +84,19 @@ function seconds(ms: number): number {
 
 /** What the last reply said about the app's rate window. */
 export async function rateInfo(h: ToolHelpers): Promise<RateInfo | undefined> {
-  const state = rates.get(await appKey(h));
+  const state = rates.get(await connectionKey(h));
   if (!state || (state.used === undefined && state.remaining === undefined)) return undefined;
   const reset = state.resetAt !== undefined ? Math.max(0, Math.ceil((state.resetAt - Date.now()) / 1000)) : undefined;
   return { used: state.used, remaining: state.remaining, resetSeconds: reset };
 }
 
 /**
- * One request to Reddit, after any other request of the same app finished,
- * and only when its rate window allows one. A GET is a read; every other
- * request is a write.
+ * One request to Reddit, after any other request of the same connection
+ * finished, and only when its rate window allows one. A GET is a read; every
+ * other request is a write.
  */
 export async function redditRequest(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
-  const state = stateFor(await appKey(h));
+  const state = stateFor(await connectionKey(h));
   const previous = state.queue;
   let release: () => void = () => {};
   state.queue = new Promise<void>((resolve) => {
@@ -131,7 +135,7 @@ export async function redditRequest(h: ToolHelpers, request: ApiRequest): Promis
 
 /** Holds writes back after Reddit stated a write limit; returns the seconds to wait. */
 export async function noteWriteLimit(h: ToolHelpers, statedSeconds: number | undefined): Promise<number | undefined> {
-  const state = stateFor(await appKey(h));
+  const state = stateFor(await connectionKey(h));
   const now = Date.now();
   const headerWait = state.resetAt !== undefined ? (state.resetAt - now) / 1000 : 0;
   const wait = Math.max(statedSeconds ?? 0, headerWait);

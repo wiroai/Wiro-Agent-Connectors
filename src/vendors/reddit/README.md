@@ -4,11 +4,11 @@ Works with [Reddit](https://www.reddit.com) through the Reddit Data API, within 
 
 It keeps Reddit's rules for automated posting in the connector itself:
 
-- **Rate window.** Requests of one app go out one at a time. The connector reads Reddit's `X-Ratelimit-Used`, `-Remaining` and `-Reset` headers on every reply, stops sending when the window is spent or Reddit answers 429, holds writes back for the delay Reddit states in a `RATELIMIT` reply, and keeps the last request of a window for a write. Results carry the current window as `rateLimit`.
+- **Rate window.** Requests of one connection go out one at a time. The connector reads Reddit's `X-Ratelimit-Used`, `-Remaining` and `-Reset` headers on every reply, stops sending when the window is spent or Reddit answers 429, holds writes back for the delay Reddit states in a `RATELIMIT` reply, and keeps the last request of a window for a write. Results carry the current window as `rateLimit`.
 - **No duplicates.** Each post and comment is remembered by a SHA-256 digest of the operation, the account, the target and the normalized text (case, spacing and tracking parameters do not matter; the text itself is never kept). An identical post or comment that went through in the last 48 hours is not sent again; the same text is not repeated in another community or thread; and after an unclear outcome the same request needs a check and `allow_repeat_after_check: true`. A deleted post or comment is forgotten, so it may be written again.
 - **Own content only.** `edit_text` and `delete_item` ask Reddit who is connected and who wrote the item right before they change it.
 
-This memory lives as long as the connector is loaded; nothing is stored anywhere else.
+This memory lives as long as the connector is loaded; nothing is stored anywhere else. The rate window is kept per connection, keyed by a SHA-256 hash of the developer profile username and the access token, so connections served by one loaded connector never hold each other back (a refreshed token starts a new window, which the next reply fills in). The duplicate memory is kept per Reddit account: by the `redditusername` the host gives, or, without one, by the name Reddit gives for the token. A host that serves several connections from one loaded connector passes each connection's own `redditusername`, as Reddit named the account at sign-in, or none.
 
 ## Credentials
 
@@ -27,9 +27,9 @@ This memory lives as long as the connector is loaded; nothing is stored anywhere
 
 To revoke it, the account owner opens [reddit.com/prefs/apps](https://www.reddit.com/prefs/apps) and chooses **revoke access** next to the app under the authorized applications. The app owner can delete the app on the same page, which ends all of its tokens.
 
-**`developerprofileusername`**: the username of the Reddit account that owns the app, without `u/` (shown on the app's **developers** line at reddit.com/prefs/apps). Reddit asks every request to name it in the User-Agent, which the connector sends as `server:agent-connectors:1.0 (by /u/<name>)`.
+**`developerprofileusername`**: the username of the Reddit account that owns the app, without `u/` (shown on the app's **developers** line at reddit.com/prefs/apps). Reddit asks every request to carry a User-Agent that names the app uniquely and its developer; the connector sends `server:agent-connectors.<name>:1.0.0 (by /u/<name>)`, so each app's requests are told apart from every other app's.
 
-**`redditusername`**: the connected account's username, which a host writes after the sign-in. With it, posts and comments are listed without asking Reddit who is connected first; ownership checks always ask Reddit.
+**`redditusername`**: the connected account's username, which a host writes from Reddit's answer after the sign-in. With it, posts and comments are listed, and the duplicate memory is keyed, without asking Reddit who is connected first; ownership checks always ask Reddit.
 
 ## Tools
 

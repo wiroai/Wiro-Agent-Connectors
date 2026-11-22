@@ -4,7 +4,7 @@ import { callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext,
 
 const TOKEN = 'eyJexampleRedditAccessToken123';
 const credentials = { access_token: TOKEN, developerprofileusername: 'u/acme_dev', redditusername: 'acme_social' };
-const UA = 'server:agent-connectors:1.0 (by /u/acme_dev)';
+const UA = 'server:agent-connectors.acme_dev:1.0.0 (by /u/acme_dev)';
 const RATE = { 'x-ratelimit-used': '12', 'x-ratelimit-remaining': '588.0', 'x-ratelimit-reset': '300' };
 const me = fixture(import.meta.url, 'me.json');
 const submitOk = fixture(import.meta.url, 'submit-ok.json');
@@ -315,7 +315,7 @@ test('the rate window: a spent window or a 429 stops every request until the res
   assert.equal(write.isError, false, write.payload.error);
 });
 
-test('requests of one app go out one at a time', async () => {
+test('requests of one connection go out one at a time', async () => {
   let inFlight = 0;
   let most = 0;
   const { module, ctx } = setup(async (request) => {
@@ -327,6 +327,20 @@ test('requests of one app go out one at a time', async () => {
   });
   await Promise.all([callTool(module, 'get_me', {}, ctx), callTool(module, 'list_my_posts', {}, ctx), callTool(module, 'get_subreddit_rules', { subreddit: 'test' }, ctx)]);
   assert.equal(most, 1);
+});
+
+test('connections served by one loaded module keep their own rate windows', async () => {
+  // Connection A spends its window; connection B, with the same developer profile but its own token, is not held back by it.
+  const { module, fetch } = setup(reddit({ 'GET /api/v1/me': (request) => jsonResponse(200, me, request.headers.authorization === `Bearer ${TOKEN}` ? { 'x-ratelimit-used': '600', 'x-ratelimit-remaining': '0.0', 'x-ratelimit-reset': '540' } : RATE) }));
+  const a = makeContext({ credentials, fetch }).ctx;
+  const b = makeContext({ credentials: { ...credentials, access_token: 'eyJexampleOtherConnectionToken456' }, fetch }).ctx;
+  await callTool(module, 'get_me', {}, a);
+  const held = await callTool(module, 'get_me', {}, a);
+  assert.match(held.payload.error, /needs a pause/);
+  const other = await callTool(module, 'get_me', {}, b);
+  assert.equal(other.isError, false, other.payload.error);
+  assert.deepEqual(other.payload.rateLimit, { used: 12, remaining: 588, resetSeconds: 300 }, 'B sees its own window, never A\'s');
+  assert.equal(fetch.calls.length, 2);
 });
 
 test('api_get reads inside the rate window with the User-Agent; there is no api_request', async () => {
