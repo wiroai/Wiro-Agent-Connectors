@@ -41,7 +41,7 @@ export function bearer(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
 }
 
-/** The token a call signs in with: the sign-in's access token (with its app secret proof), or the system user token. */
+/** The token a call signs in with: the system user token, or the sign-in's access token (with its app secret proof). */
 export interface UserAuth {
   token: string;
   proof?: string;
@@ -49,13 +49,17 @@ export interface UserAuth {
 
 const PROOF = /^[0-9a-f]{64}$/i;
 
+/**
+ * A connection has one way in. When a host passes both tokens, the system user
+ * token is used: a token next to it is one left over from before, and the app
+ * secret proof, made for that other token, is not sent.
+ */
 export function userAuth(credentials: Readonly<Record<string, string>>): UserAuth {
-  const token = credentials['access_token'];
-  if (token) {
-    const proof = credentials['appsecret_proof'];
-    return { token, ...(proof && PROOF.test(proof) ? { proof } : {}) };
-  }
-  return { token: credentials['systemusertoken'] ?? '' };
+  const system = credentials['systemusertoken'];
+  if (system) return { token: system };
+  const token = credentials['access_token'] ?? '';
+  const proof = credentials['appsecret_proof'];
+  return { token, ...(token && proof && PROOF.test(proof) ? { proof } : {}) };
 }
 
 /** Headers and query for a request made with the sign-in token: the app secret proof goes with the token it was made for. */
