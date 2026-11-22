@@ -59,15 +59,27 @@ test('the sites picker: list_sites leaves out unverified properties and names Do
     { id: 'https://shop.example.org/', name: 'https://shop.example.org/', property_type: 'url_prefix', permission_level: 'siteRestrictedUser' },
   ]);
   assert.equal(payload.unverified_left_out, 1);
+  assert.equal(payload.note, undefined, 'no lock, no note');
   assert.deepEqual(payload.sites.map((item) => field(item, picker.idField)), [DOMAIN, PREFIX, 'https://shop.example.org/']);
   assert.ok(payload.sites.every((item) => typeof field(item, picker.nameField) === 'string'));
 });
 
-test('list_sites marks the properties chosen for the connection as selected, and lists the others too', async () => {
+test('list_sites marks the properties chosen for the connection as selected, lists the others too, and says when none is chosen', async () => {
   const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'sites.json')));
   const { payload } = await callTool(module, 'list_sites', {}, ctx);
   assert.deepEqual(payload.sites.map((item) => [item.id, item.selected]), [[DOMAIN, true], [PREFIX, true], ['https://shop.example.org/', undefined]]);
+  assert.equal(payload.note, undefined);
   assert.match(module.tools.find((tool) => tool.name === 'list_sites').description, /marked selected: true/);
+
+  for (const accounts of [{}, { sites: [] }]) {
+    const none = setup(() => jsonResponse(200, fixture(import.meta.url, 'sites.json')), accounts);
+    const unchosen = await callTool(none.module, 'list_sites', {}, none.ctx);
+    assert.equal(unchosen.isError, false, 'the list itself still answers');
+    assert.equal(unchosen.payload.sites.length, 3);
+    assert.ok(unchosen.payload.sites.every((item) => !('selected' in item)));
+    assert.equal(unchosen.payload.unverified_left_out, 1);
+    assert.match(unchosen.payload.note, /^No property is chosen for this connection yet, so every tool that names a property is refused until properties from this list are chosen for it\.$/);
+  }
 });
 
 test('query_search_analytics posts the query with the property encoded in the path, and pages with start rows', async () => {

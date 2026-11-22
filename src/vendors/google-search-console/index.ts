@@ -360,7 +360,10 @@ const connector = defineConnector({
         return h.page({
           key: 'sites',
           items: sites.slice(skip),
-          extra: skipped ? { unverified_left_out: skipped } : {},
+          extra: compact({
+            unverified_left_out: skipped || undefined,
+            note: chosen?.length === 0 ? 'No property is chosen for this connection yet, so every tool that names a property is refused until properties from this list are chosen for it.' : undefined,
+          }),
           resumeAt: (index) => h.makeCursor({ o: skip + index }),
         });
       },

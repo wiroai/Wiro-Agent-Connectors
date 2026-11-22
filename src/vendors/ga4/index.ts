@@ -317,6 +317,9 @@ const connector = defineConnector({
         return h.page({
           key: 'properties',
           items: properties.slice(skip),
+          extra: compact({
+            note: chosen?.length === 0 ? 'No property is chosen for this connection yet, so every tool that names a property is refused until properties from this list are chosen for it.' : undefined,
+          }),
           resumeAt: (index) => h.makeCursor({ ...(pageToken ? { p: pageToken } : {}), o: skip + index }),
           ...(typeof data?.nextPageToken === 'string' && data.nextPageToken ? { nextPage: h.makeCursor({ p: data.nextPageToken, o: 0 }) } : {}),
         });

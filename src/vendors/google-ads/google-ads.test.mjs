@@ -113,11 +113,12 @@ test('the customers picker lists direct accounts, the clients of manager account
     { id: '7778889999', name: '7778889999', status: 'NOT_ACCESSIBLE', note: 'Google Ads answered HTTP 403 for this account.' },
   ]);
   assert.equal(payload.accessible_accounts, 3);
+  assert.equal(payload.note, undefined, 'no lock, no note');
   assert.ok(payload.customers.every((item) => /^[0-9]{10}$/.test(field(item, picker.idField)) && typeof field(item, picker.nameField) === 'string'));
   assert.equal(payload.nextCursor, undefined);
 });
 
-test('list_customers marks the accounts chosen for the connection as selected, client accounts included', async () => {
+test('list_customers marks the accounts chosen for the connection as selected, client accounts included, and says when none is chosen', async () => {
   const { module, ctx } = setup(hierarchy(), { accounts: { customers: [CUSTOMER, '9876543210', '7778889999'] } });
   const { payload } = await callTool(module, 'list_customers', {}, ctx);
   assert.deepEqual(payload.customers.map((item) => [item.id, item.selected]), [
@@ -127,7 +128,18 @@ test('list_customers marks the accounts chosen for the connection as selected, c
     ['9876543210', true],
     ['7778889999', true],
   ]);
+  assert.equal(payload.note, undefined);
   assert.match(module.tools.find((tool) => tool.name === 'list_customers').description, /marked selected: true/);
+
+  for (const accounts of [{}, { customers: [] }]) {
+    const none = setup(hierarchy(), { accounts });
+    const unchosen = await callTool(none.module, 'list_customers', {}, none.ctx);
+    assert.equal(unchosen.isError, false, 'the list itself still answers');
+    assert.equal(unchosen.payload.customers.length, 5);
+    assert.ok(unchosen.payload.customers.every((item) => !('selected' in item)));
+    assert.equal(unchosen.payload.accessible_accounts, 3);
+    assert.match(unchosen.payload.note, /^No account is chosen for this connection yet, so every tool that names an account is refused until accounts from this list are chosen for it\.$/);
+  }
 });
 
 test('list_customers reads accounts ten at a time and continues with the cursor', async () => {

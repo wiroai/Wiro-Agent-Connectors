@@ -57,15 +57,26 @@ test('the accounts picker: list_accounts lists every account the Google account 
     { id: '5550002', name: 'Example Outdoor EU', time_zone: 'Europe/Berlin', language: 'de-DE', test_account: true },
   ]);
   assert.deepEqual(payload.accounts.map((item) => [field(item, picker.idField), field(item, picker.nameField)]), [['5550001', 'Example Outdoor Store'], ['5550002', 'Example Outdoor EU']]);
+  assert.equal(payload.note, undefined, 'no lock, no note');
   await callTool(module, picker.tool, { cursor: payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].query.pageToken, 'accounts-page-2');
 });
 
-test('list_accounts marks the accounts chosen for the connection as selected, and lists the others too', async () => {
+test('list_accounts marks the accounts chosen for the connection as selected, lists the others too, and says when none is chosen', async () => {
   const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'accounts.json')), { accounts: ['5550002'] });
   const { payload } = await callTool(module, 'list_accounts', {}, ctx);
   assert.deepEqual(payload.accounts.map((item) => [item.id, item.selected]), [['5550001', undefined], ['5550002', true]]);
+  assert.equal(payload.note, undefined);
   assert.match(module.tools.find((tool) => tool.name === 'list_accounts').description, /marked selected: true/);
+
+  for (const accounts of [{}, { accounts: [] }]) {
+    const none = setup(() => jsonResponse(200, fixture(import.meta.url, 'accounts.json')), accounts);
+    const unchosen = await callTool(none.module, 'list_accounts', {}, none.ctx);
+    assert.equal(unchosen.isError, false, 'the list itself still answers');
+    assert.equal(unchosen.payload.accounts.length, 2);
+    assert.ok(unchosen.payload.accounts.every((item) => !('selected' in item)));
+    assert.match(unchosen.payload.note, /^No account is chosen for this connection yet, so every tool that names an account is refused until accounts from this list are chosen for it\.$/);
+  }
 });
 
 test('list_products trims each processed product to its key fields, price and status, and pages', async () => {

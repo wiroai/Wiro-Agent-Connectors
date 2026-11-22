@@ -424,7 +424,10 @@ const connector = defineConnector({
         return h.page({
           key: 'customers',
           items: customers.slice(skip),
-          extra: { accessible_accounts: accessible.length },
+          extra: compact({
+            accessible_accounts: accessible.length,
+            note: chosen?.length === 0 ? 'No account is chosen for this connection yet, so every tool that names an account is refused until accounts from this list are chosen for it.' : undefined,
+          }),
           resumeAt: (index) => h.makeCursor({ i: start, o: skip + index }),
           ...(start + PICKER_BATCH < accessible.length ? { nextPage: h.makeCursor({ i: start + PICKER_BATCH, o: 0 }) } : {}),
         });

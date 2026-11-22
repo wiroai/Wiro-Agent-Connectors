@@ -65,16 +65,27 @@ test('the properties picker: list_properties flattens account summaries, with th
     ['300100200', 'Example App'],
     ['300200100', 'blog.example.org'],
   ]);
+  assert.equal(first.payload.note, undefined, 'no lock, no note');
 
   await callTool(module, picker.tool, { cursor: first.payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].query.pageToken, 'next-page-token-1');
 });
 
-test('list_properties marks the properties chosen for the connection as selected, and lists the others too', async () => {
+test('list_properties marks the properties chosen for the connection as selected, lists the others too, and says when none is chosen', async () => {
   const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'account-summaries.json')), { properties: ['300100200'] });
   const { payload } = await callTool(module, 'list_properties', {}, ctx);
   assert.deepEqual(payload.properties.map((item) => [item.id, item.selected]), [['300100100', undefined], ['300100200', true], ['300200100', undefined]]);
+  assert.equal(payload.note, undefined);
   assert.match(module.tools.find((tool) => tool.name === 'list_properties').description, /marked selected: true/);
+
+  for (const accounts of [{}, { properties: [] }]) {
+    const none = setup(() => jsonResponse(200, fixture(import.meta.url, 'account-summaries.json')), accounts);
+    const unchosen = await callTool(none.module, 'list_properties', {}, none.ctx);
+    assert.equal(unchosen.isError, false, 'the list itself still answers');
+    assert.equal(unchosen.payload.properties.length, 3);
+    assert.ok(unchosen.payload.properties.every((item) => !('selected' in item)));
+    assert.match(unchosen.payload.note, /^No property is chosen for this connection yet, so every tool that names a property is refused until properties from this list are chosen for it\.$/);
+  }
 });
 
 test('run_report posts a Data API report for a chosen property and returns rows keyed by name, totals and metadata', async () => {
