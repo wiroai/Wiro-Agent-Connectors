@@ -32,7 +32,15 @@ To revoke: in **System users**, select the system user and click **Revoke tokens
 
 ### `accesstoken`: the Page tokens an older setup kept
 
-An older setup of this connection kept no user or system user token: it kept each chosen Page's own access token, as a JSON list such as `["EAA...", "EAA..."]`. When neither `access_token` nor `systemusertoken` is set, the connector uses those Page tokens as they are. It reads the Page each one belongs to from Facebook (`/me` with that token) once, keeps that in memory for 15 minutes keyed by a hash of the token, and never returns a token. `list_pages` then lists those Pages; a token Facebook refuses (expired, or revoked by a password change) is named in a note, and its Page cannot be reached until you sign in again. Nothing new is set up this way: to renew such a connection, sign in again or use a system user token. A host that moves such a connection over passes the list as JSON text in `accesstoken`, never as `access_token` (the list is not a token), and the Pages it chose (kept in `pageid`) under the `pages` picker.
+A sign-in made with an older setup of this connection kept no user token: it kept each chosen Page's own access token, as a JSON list such as `["EAA...", "EAA..."]` (a one-Page connection of an even older setup may hold its one token as plain text). When neither `access_token` nor `systemusertoken` is set, the connector uses those Page tokens as they are. It reads the Page each one belongs to from Facebook (`/me` with that token) once, keeps that in memory for 15 minutes keyed by a hash of the token, and never returns a token. `list_pages` then lists those Pages; a token Facebook refuses (expired, or revoked by a password change) is named in a note, and its Page cannot be reached until you sign in again. Nothing new is set up this way: to renew such a connection, sign in again or use a system user token.
+
+A host that moves such a connection over:
+
+1. passes the list as JSON text in `accesstoken`, or a token kept as plain text as it is, and never in `access_token`: the old field held Page tokens only, never a sign-in token;
+2. serves the connection without a sign-in token: `accesstoken` is a way in of its own (`requiredCredentials`), so no `access_token` or `appsecret_proof` comes with it;
+3. puts the Pages it chose (kept in `pageid`) under the `pages` picker; `pageid` is not a credential.
+
+A system user connection of the older setup kept the same list next to its system user token. The connector fetches Page tokens with the system user token, so a host passes `systemusertoken` there; a list passed next to it is not used.
 
 To revoke: remove the app in Facebook under **Settings & privacy → Settings → Business integrations**, which ends its Page tokens too.
 
@@ -43,7 +51,7 @@ To revoke: remove the app in Facebook under **Settings & privacy → Settings �
 | `FACEBOOK_PAGES_ACCESS_TOKEN` | A current user access token from your own app's sign-in (alternative 1). |
 | `FACEBOOK_PAGES_APPSECRET_PROOF` | Optional: the app secret proof of that token, when your app requires it. |
 | `FACEBOOK_PAGES_SYSTEMUSERTOKEN` | A system user token (alternative 2). |
-| `FACEBOOK_PAGES_ACCESSTOKEN` | The Page tokens an older setup kept, as a JSON list (alternative 3). |
+| `FACEBOOK_PAGES_ACCESSTOKEN` | The Page tokens an older setup kept, as a JSON list, or its one token as plain text (alternative 3). |
 
 ## Account picker
 
