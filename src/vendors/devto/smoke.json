@@ -1,0 +1,13 @@
+{
+  "read": { "tool": "list_my_articles", "args": { "per_page": 5 } },
+  "write": {
+    "tool": "create_draft_article",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "body_markdown": "An unpublished draft from the connector smoke test.",
+      "tags": ["test"],
+      "ai_disclosure_level": "fully_autonomous"
+    },
+    "note": "Leaves an unpublished draft on the account. dev.to's API cannot delete articles: delete it on dev.to."
+  }
+}

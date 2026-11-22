@@ -1,0 +1,39 @@
+{
+  "type_of": "article",
+  "id": 2211234,
+  "title": "How we cut CI time in half",
+  "description": "A short summary",
+  "readable_publish_date": null,
+  "slug": "how-we-cut-ci-time-in-half-temp-slug-4417810",
+  "path": "/alice/how-we-cut-ci-time-in-half-temp-slug-4417810",
+  "url": "https://dev.to/alice/how-we-cut-ci-time-in-half-temp-slug-4417810",
+  "comments_count": 0,
+  "public_reactions_count": 0,
+  "collection_id": null,
+  "published_timestamp": "",
+  "language": "en",
+  "subforem_id": 1,
+  "ai_disclosure_level": "fully_autonomous",
+  "ai_disclosure_label": "Fully autonomous",
+  "positive_reactions_count": 0,
+  "cover_image": "https://media2.dev.to/dynamic/image/width=1000,height=420/https%3A%2F%2Fimages.example.com%2Fcover.png",
+  "social_image": "x",
+  "canonical_url": "https://dev.to/alice/how-we-cut-ci-time-in-half-temp-slug-4417810",
+  "created_at": "2026-11-21T10:00:00Z",
+  "edited_at": null,
+  "crossposted_at": null,
+  "published_at": null,
+  "last_comment_at": "2017-01-01T05:00:00Z",
+  "reading_time_minutes": 4,
+  "tag_list": "devops, ci",
+  "tags": [
+    "devops",
+    "ci"
+  ],
+  "body_html": "<p>x</p>",
+  "body_markdown": "x",
+  "user": {
+    "name": "Alice",
+    "username": "alice"
+  }
+}

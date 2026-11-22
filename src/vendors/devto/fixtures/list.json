@@ -1,0 +1,61 @@
+[
+  {
+    "type_of": "article",
+    "id": 101,
+    "title": "Draft | one",
+    "description": "d",
+    "published": false,
+    "published_at": null,
+    "slug": "draft-one-temp-slug-123",
+    "path": "/alice/draft-one-temp-slug-123",
+    "url": "https://dev.to/alice/draft-one-temp-slug-123",
+    "comments_count": 0,
+    "public_reactions_count": 0,
+    "page_views_count": 0,
+    "published_timestamp": "",
+    "body_markdown": "## Hi",
+    "positive_reactions_count": 0,
+    "cover_image": null,
+    "tag_list": [
+      "ai",
+      "webdev"
+    ],
+    "canonical_url": "https://dev.to/alice/draft-one-temp-slug-123",
+    "reading_time_minutes": 1,
+    "user": {
+      "name": "Alice",
+      "username": "alice"
+    }
+  },
+  {
+    "type_of": "article",
+    "id": 100,
+    "title": "Published one",
+    "published": true,
+    "published_at": "2026-11-01T10:00:00.000Z",
+    "slug": "published-one-abc",
+    "url": "https://dev.to/alice/published-one-abc",
+    "comments_count": 3,
+    "public_reactions_count": 12,
+    "page_views_count": 456,
+    "tag_list": [
+      "devops"
+    ],
+    "organization": {
+      "name": "Acme",
+      "username": "acme"
+    }
+  },
+  {
+    "type_of": "article",
+    "id": 99,
+    "title": "Older",
+    "published": true,
+    "published_at": "2026-10-01T09:30:00.000Z",
+    "url": "https://dev.to/alice/older-1x",
+    "comments_count": 1,
+    "public_reactions_count": 5,
+    "page_views_count": 1200,
+    "tag_list": []
+  }
+]

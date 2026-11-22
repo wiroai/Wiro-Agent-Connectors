@@ -1,0 +1,24 @@
+{
+  "type_of": "article",
+  "id": 2211234,
+  "title": "How we cut CI time in half",
+  "url": "https://dev.to/acme/how-we-cut-ci-time-in-half-3k2p",
+  "collection_id": 991,
+  "ai_disclosure_level": "not_disclosed",
+  "cover_image": null,
+  "canonical_url": "https://blog.example.com/ci",
+  "published_at": "2026-11-21T10:05:00Z",
+  "tag_list": "devops, ci",
+  "tags": [
+    "devops",
+    "ci"
+  ],
+  "organization": {
+    "name": "Acme",
+    "username": "acme",
+    "slug": "acme"
+  },
+  "warnings": [
+    "This article has ai_disclosure_level=not_disclosed. Set it to one of: not_disclosed, no_ai, some_ai, fully_autonomous. See https://dev.to/llms.txt"
+  ]
+}
