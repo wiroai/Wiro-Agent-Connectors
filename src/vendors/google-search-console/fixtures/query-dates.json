@@ -1,0 +1,13 @@
+{
+  "rows": [
+    { "keys": ["2026-11-12"], "clicks": 410, "impressions": 15220, "ctr": 0.026938239159001315, "position": 11.84 },
+    { "keys": ["2026-11-13"], "clicks": 398, "impressions": 14876, "ctr": 0.026754503899973112, "position": 12.02 },
+    { "keys": ["2026-11-14"], "clicks": 377, "impressions": 14102, "ctr": 0.026733796624592256, "position": 12.21 },
+    { "keys": ["2026-11-15"], "clicks": 301, "impressions": 12011, "ctr": 0.025060361335442510, "position": 12.6 },
+    { "keys": ["2026-11-16"], "clicks": 322, "impressions": 12450, "ctr": 0.025863453815261044, "position": 12.4 },
+    { "keys": ["2026-11-17"], "clicks": 405, "impressions": 15010, "ctr": 0.026982011992005330, "position": 11.9 },
+    { "keys": ["2026-11-18"], "clicks": 415, "impressions": 15400, "ctr": 0.026948051948051950, "position": 11.7 },
+    { "keys": ["2026-11-19"], "clicks": 420, "impressions": 15602, "ctr": 0.026919625688988590, "position": 11.66 }
+  ],
+  "responseAggregationType": "byProperty"
+}

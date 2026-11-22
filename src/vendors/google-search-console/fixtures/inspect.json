@@ -1,0 +1,30 @@
+{
+  "inspectionResult": {
+    "inspectionResultLink": "https://search.google.com/search-console/inspect?resource_id=sc-domain:example.com&id=abc123",
+    "indexStatusResult": {
+      "verdict": "PASS",
+      "coverageState": "Submitted and indexed",
+      "robotsTxtState": "ALLOWED",
+      "indexingState": "INDEXING_ALLOWED",
+      "lastCrawlTime": "2026-11-17T21:14:02Z",
+      "pageFetchState": "SUCCESSFUL",
+      "googleCanonical": "https://www.example.com/widgets/",
+      "userCanonical": "https://www.example.com/widgets/",
+      "sitemap": ["https://www.example.com/sitemap.xml"],
+      "referringUrls": ["https://www.example.com/", "https://www.example.com/blog/widgets-guide/"],
+      "crawledAs": "MOBILE"
+    },
+    "mobileUsabilityResult": { "verdict": "VERDICT_UNSPECIFIED" },
+    "richResultsResult": {
+      "verdict": "PASS",
+      "detectedItems": [
+        {
+          "richResultType": "Product snippets",
+          "items": [
+            { "name": "Example Widget", "issues": [{ "issueMessage": "Missing field \"aggregateRating\"", "severity": "WARNING" }] }
+          ]
+        }
+      ]
+    }
+  }
+}

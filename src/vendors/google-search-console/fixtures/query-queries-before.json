@@ -1,0 +1,8 @@
+{
+  "rows": [
+    { "keys": ["example widgets"], "clicks": 1490, "impressions": 21002, "ctr": 0.07094562422626416, "position": 1.9 },
+    { "keys": ["buy widgets online"], "clicks": 380, "impressions": 27010, "ctr": 0.014068863383931877, "position": 7.6 },
+    { "keys": ["cheap widgets"], "clicks": 90, "impressions": 3001, "ctr": 0.029990003332222592, "position": 9.4 }
+  ],
+  "responseAggregationType": "byProperty"
+}
