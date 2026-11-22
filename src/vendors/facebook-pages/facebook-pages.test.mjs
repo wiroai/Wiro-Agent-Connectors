@@ -281,6 +281,15 @@ test('one Page token an older setup kept as plain text, not a list, is read too'
   assert.equal(fetch.calls.find((call) => call.method === 'POST').headers.authorization, `Bearer ${LEGACY_BAKERY}`);
 });
 
+test('what a host moving an older sign-in over reads: the Page token list is a way in of its own, and pageid feeds the picker, not a credential', () => {
+  const { module } = loadModuleFor(import.meta.url);
+  // A host serves such a connection with accesstoken alone: it has no sign-in token.
+  assert.deepEqual(JSON.parse(JSON.stringify(module.requiredCredentials)), [['access_token'], ['systemusertoken'], ['accesstoken']]);
+  assert.equal(module.credentials.includes('accesstoken'), true);
+  assert.equal(module.credentials.includes('pageid'), false);
+  assert.equal(module.accountPickers.find((picker) => picker.key === 'pages').legacyField, 'pageid');
+});
+
 test('a scheduled post is sent unpublished with its time and gets no permalink; a time too soon is refused', async () => {
   const { module, fetch, ctx } = setup(router({ ...PAGE_ROUTES, 'POST /v26.0/1001/feed': f('feed-create.json') }));
   const when = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);

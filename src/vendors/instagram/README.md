@@ -33,7 +33,12 @@ To revoke: in **System users**, select the system user and click **Revoke tokens
 
 ### A connection from an older setup
 
-An older setup kept the chosen accounts' ids in `accountId`, as a JSON list. The `accounts` picker's `legacyField` names it in lowercase (`accountid`), so a host that moves the choice over compares the name in any case. With Instagram Login it kept the account's id and username as JSON lists of one, which the connector reads as they are, and its token as a JSON list of one: pass the token itself as `access_token`. With a system user token it also kept a Page token per account; the connector fetches those itself, so pass only `systemusertoken`.
+An older setup kept the chosen accounts' ids in `accountId`, as a JSON list. The connector's names are the older setup's field names in lowercase, so the `accounts` picker's `legacyField` and the credential are both `accountid`. A host that moves such a connection over:
+
+1. looks the older field names up in any case: `accountid` reads `accountId`;
+2. puts every id of that list under the `accounts` picker;
+3. with Instagram Login, passes the account's id and username, which that setup kept as JSON lists of one, as `accountid` and `igusername` (the connector reads them as they are), and the token, also kept as a JSON list of one, as `access_token`: the token itself, not the list;
+4. with a system user token, passes only `systemusertoken`. That setup's token list there holds a Page token per chosen account, even when it holds one, and is never a sign-in token; the connector fetches Page tokens itself.
 
 ### Environment variables (CLI)
 
