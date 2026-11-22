@@ -345,7 +345,7 @@ test('trash_page and restore_page set in_trash, the field Notion-Version 2026-03
 
 test('a write without a clear answer is unknown, sent once, with the read tool to check', async () => {
   const cases = [
-    ['create_page', { parent_page_id: PAGE, title: 'x' }, 'search'],
+    ['create_page', { parent_page_id: PAGE, title: 'x' }, 'list_block_children'],
     ['append_markdown', { page_id: PAGE, markdown: 'x' }, 'read_page_markdown'],
     ['append_blocks', { block_id: PAGE, children: [{ type: 'divider', divider: {} }] }, 'list_block_children'],
     ['update_page_text', { page_id: PAGE, edits: [{ old_text: 'a', new_text: 'b' }] }, 'read_page_markdown'],
@@ -364,6 +364,12 @@ test('a write without a clear answer is unknown, sent once, with the read tool t
     assert.equal(payload.check, check);
     assert.equal(fetch.calls.length, 1, `${tool} is never retried`);
   }
+  const { module } = setup(() => jsonResponse(200, {}));
+  // Sending the same text edit twice can change the page twice ("Ship it" -> "Ship it today today"), so it is no update.
+  const edit = module.tools.find((tool) => tool.name === 'update_page_text');
+  assert.deepEqual({ ...edit.annotations }, { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true });
+  // A new page under a parent is checked among the parent's children, which do not lag like search.
+  assert.match(module.tools.find((tool) => tool.name === 'create_page').description, /child_page block in list_block_children of the parent/);
 });
 
 test('a rate limit carries retryAfter, and reads that fail say nothing changed nowhere', async () => {

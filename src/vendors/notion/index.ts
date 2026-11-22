@@ -423,12 +423,16 @@ const connector = defineConnector({
     {
       name: 'create_page',
       kind: 'create',
-      check: 'search',
+      // Search lags behind changes; a parent page's children do not.
+      check: 'list_block_children',
       title: 'Create a Notion page',
       description:
         'Creates a page under a parent page, or a row in a data source with its properties, with a body in Markdown or as blocks (up to 100; '
         + 'append the rest with append_blocks). Under a page, a Markdown body\'s first # heading becomes the title when title is left out. '
-        + 'workspace: true makes a private top-level page, for personal access tokens only. Returns the new page with its link.',
+        + 'workspace: true makes a private top-level page, for personal access tokens only. Returns the new page with its link. When the '
+        + 'outcome is unknown, look before creating it again: a page under a parent shows up at once as a child_page block in '
+        + 'list_block_children of the parent; check a row with query_data_source and a filter on its title; only a workspace page needs '
+        + 'search, which can lag behind.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -561,7 +565,8 @@ const connector = defineConnector({
     },
     {
       name: 'update_page_text',
-      kind: 'update',
+      // Not idempotent: when new_text contains old_text, sending the same edit twice changes the page twice.
+      kind: 'write',
       check: 'read_page_markdown',
       title: 'Edit text in a Notion page',
       description:

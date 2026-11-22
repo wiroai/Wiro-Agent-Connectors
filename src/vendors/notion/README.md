@@ -51,10 +51,10 @@ IDs can be given as the 32 hexadecimal characters at the end of a page's link, w
 | `get_data_source` | read | A data source's schema: property names, types, IDs, select and status options, relation targets and computed properties. |
 | `query_data_source` | read | Rows of a data source with a Notion filter and sorts, each with its title, link and property values. |
 | `list_users` | read | Workspace members and bots with their IDs, to fill a person property (needs a user information capability). |
-| `create_page` | create | A page under a page, a database row with its properties, or a private top-level page (personal access tokens only), with a Markdown body or up to 100 blocks. |
+| `create_page` | create | A page under a page, a database row with its properties, or a private top-level page (personal access tokens only), with a Markdown body or up to 100 blocks. An unclear outcome is checked with `list_block_children` on the parent page (a row with `query_data_source`), since search lags behind. |
 | `append_markdown` | create | Adds Markdown at the end or the start of a page. |
 | `append_blocks` | create | Adds up to 100 blocks to a page or inside a block, at the end, at the start or after a given block. |
-| `update_page_text` | update | Replaces exact passages of a page's Markdown in place. |
+| `update_page_text` | write | Replaces exact passages of a page's Markdown in place. Sending the same edit twice can change the page twice, so it is marked destructive and not idempotent. |
 | `replace_page_markdown` | update | Replaces a page's whole body; child pages and databases are never deleted. |
 | `update_page` | update | Renames a page or changes a row's properties, icon or cover; optionally without notifications. |
 | `update_block` | update | Changes one block, such as ticking a to-do or rewriting a paragraph. |
