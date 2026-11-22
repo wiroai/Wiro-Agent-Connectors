@@ -1,0 +1,9 @@
+{
+  "lists": [
+    { "listId": "123", "listVersion": 3, "name": "Newsletter subscribers", "objectTypeId": "0-1", "processingStatus": "COMPLETE", "processingType": "MANUAL", "createdAt": "2025-09-28T22:03:17.998Z", "updatedAt": "2026-11-01T22:03:37.005Z", "additionalProperties": { "hs_list_size": "59", "hs_folder_name": "Marketing" } },
+    { "listId": "124", "listVersion": 1, "name": "Customers", "objectTypeId": "0-1", "processingStatus": "COMPLETE", "processingType": "DYNAMIC", "createdAt": "2025-09-28T22:03:17.998Z", "updatedAt": "2026-11-01T22:03:37.005Z", "additionalProperties": { "hs_list_size": "310" } }
+  ],
+  "offset": 2,
+  "hasMore": true,
+  "total": 5
+}

@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_account", "args": {} },
+  "write": {
+    "tool": "create_object",
+    "args": { "object_type": "notes", "properties": { "hs_note_body": "Connector smoke test {{timestamp}}", "hs_timestamp": "{{timestamp}}" } },
+    "note": "Creates an unassociated note. Delete it with delete_object (object_type notes and the id in the result)."
+  }
+}

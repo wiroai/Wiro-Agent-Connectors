@@ -1,0 +1,1 @@
+{ "status": "COMPLETE", "results": [ { "id": "501", "properties": { "email": "ann@example.com", "hs_object_id": "501" } }, { "id": "502", "properties": { "email": "bob@example.com", "hs_object_id": "502" } } ] }
