@@ -1,0 +1,10 @@
+{
+  "data": [
+    { "name": "page_media_view", "period": "day", "values": [{ "value": 400, "end_time": "2026-11-02T08:00:00+0000" }, { "value": 600, "end_time": "2026-11-03T08:00:00+0000" }], "id": "1001/insights/page_media_view/day" },
+    { "name": "page_post_engagements", "period": "day", "values": [{ "value": 30, "end_time": "2026-11-02T08:00:00+0000" }, { "value": 45, "end_time": "2026-11-03T08:00:00+0000" }], "id": "1001/insights/page_post_engagements/day" },
+    { "name": "page_daily_follows_unique", "period": "day", "values": [{ "value": 4, "end_time": "2026-11-02T08:00:00+0000" }, { "value": 6, "end_time": "2026-11-03T08:00:00+0000" }], "id": "1001/insights/page_daily_follows_unique/day" },
+    { "name": "page_daily_unfollows_unique", "period": "day", "values": [{ "value": 1, "end_time": "2026-11-02T08:00:00+0000" }, { "value": 0, "end_time": "2026-11-03T08:00:00+0000" }], "id": "1001/insights/page_daily_unfollows_unique/day" },
+    { "name": "page_follows", "period": "day", "values": [{ "value": 1200, "end_time": "2026-11-02T08:00:00+0000" }, { "value": 1209, "end_time": "2026-11-03T08:00:00+0000" }], "id": "1001/insights/page_follows/day" }
+  ],
+  "paging": { "previous": "https://graph.facebook.com/v26.0/1001/insights?since=1", "next": "https://graph.facebook.com/v26.0/1001/insights?until=2" }
+}

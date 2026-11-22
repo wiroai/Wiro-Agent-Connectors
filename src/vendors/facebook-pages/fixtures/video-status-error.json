@@ -1,0 +1,12 @@
+{
+  "status": {
+    "video_status": "error",
+    "uploading_phase": {
+      "status": "error",
+      "errors": [{ "code": 1363019, "message": "The video file you tried to upload is in a format we don't support." }]
+    },
+    "processing_phase": { "status": "not_started" },
+    "publishing_phase": { "status": "not_started" }
+  },
+  "id": "5001"
+}

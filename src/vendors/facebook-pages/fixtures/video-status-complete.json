@@ -1,0 +1,9 @@
+{
+  "status": {
+    "video_status": "upload_complete",
+    "uploading_phase": { "status": "complete", "bytes_transfered": 7340032 },
+    "processing_phase": { "status": "not_started" },
+    "publishing_phase": { "status": "not_started" }
+  },
+  "id": "5001"
+}

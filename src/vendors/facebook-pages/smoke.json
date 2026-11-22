@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "list_pages", "args": { "limit": 10 } },
+  "write": {
+    "tool": "create_post",
+    "args": { "message": "Connector smoke test {{timestamp}}" },
+    "note": "Publishes a text post on the only Page chosen in CONNECTOR_ACCOUNTS (or set page_id). Delete it on the Page, or with api_request: method DELETE, path /v26.0/<post_id>."
+  }
+}

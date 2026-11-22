@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "id": "1001",
+      "name": "Example Bakery",
+      "category": "Bakery",
+      "tasks": ["ADVERTISE", "ANALYZE", "CREATE_CONTENT", "MESSAGING", "MODERATE", "MANAGE"],
+      "access_token": "EAAPageTokenForBakery0001"
+    },
+    {
+      "id": "1002",
+      "name": "Example Cafe",
+      "category": "Cafe",
+      "tasks": ["ANALYZE"],
+      "access_token": "EAAPageTokenForCafe0002"
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "QVFIUmFiYzEyMw", "after": "QVFIUnh5ejQ1Ng" },
+    "next": "https://graph.facebook.com/v26.0/me/accounts?limit=50&after=QVFIUnh5ejQ1Ng"
+  }
+}
