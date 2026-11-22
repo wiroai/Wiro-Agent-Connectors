@@ -1,0 +1,12 @@
+{
+  "results": [
+    {
+      "customerClient": {
+        "resourceName": "customers/4445556666/customerClients/1231231234",
+        "id": "1231231234"
+      }
+    }
+  ],
+  "fieldMask": "customerClient.id",
+  "queryResourceConsumption": "10"
+}

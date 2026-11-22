@@ -12,19 +12,19 @@ Reporting and campaign management in [Google Ads](https://ads.google.com), throu
 | Credential | CLI variable | Required | What it is |
 | --- | --- | --- | --- |
 | `access_token` | `GOOGLE_ADS_ACCESS_TOKEN` | yes | A Google OAuth access token for a Google account with access to the Google Ads accounts, with the scope `https://www.googleapis.com/auth/adwords`. |
-| `developertoken` | `GOOGLE_ADS_DEVELOPERTOKEN` | no | A Google Ads developer token, from an older setup. Google sunset developer tokens on September 9, 2026, ignores them since and has said it will refuse them in a later major version of the API, so the connector accepts a value but never sends it. Leave it empty. |
-| `managercustomerid` | `GOOGLE_ADS_MANAGERCUSTOMERID` | no | A manager account (MCC) ID, sent as `login-customer-id` on every request, for accounts you reach through that manager. Dashes are fine. A tool's `login_customer_id` argument overrides it per call. |
+| `developertoken` | `GOOGLE_ADS_DEVELOPERTOKEN` | no | A Google Ads developer token, from an older setup. Google sunset developer tokens on September 9, 2026, ignores them since and has said it will refuse them in a later major version of the API, so the connector accepts a value but never sends it. Leave it empty: no developer token is needed. |
+| `managercustomerid` | `GOOGLE_ADS_MANAGERCUSTOMERID` | no | A manager account (MCC) ID, sent as `login-customer-id` with every Google Ads request, for accounts you reach through that manager. Dashes are fine. Usually not needed: without it the connector finds the manager account of each account itself (see [Accounts reached through a manager account](#accounts-reached-through-a-manager-account)). A tool's `login_customer_id` argument overrides both per call. |
 
-The access token comes from an OAuth client in your own Google Cloud project, and that project's Google Ads API access level decides which accounts and how many operations a day you can use. A host that runs this connector signs in with that client, refreshes the token and passes the current one on every call; the connector never stores or refreshes it.
+The access token comes from an OAuth client in your own Google Cloud project. That project's Google Ads API access level decides which accounts and how many operations a day you can use; no developer token and no manager account are needed to get it. A host that runs this connector signs in with that client, refreshes the token and passes the current one on every call; the connector never stores or refreshes it.
 
 ### Where to get them
 
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (or pick one) and enable the [Google Ads API](https://console.cloud.google.com/apis/library/googleads.googleapis.com). This gives the project Test access (test accounts only).
-2. To reach real accounts, apply for Explorer access (or Basic or Standard) on the Google Ads API **Overview** page of the same project. New Basic and Standard applications need the project's brand verified first.
+2. To reach real accounts, open the [Google Ads API Overview page](https://console.cloud.google.com/google/ads-apis/overview) of the same project, expand **Upgrade access level** and apply for **Explorer** access (Google reviews it automatically and grants it in most cases), or for Basic or Standard. New Basic and Standard applications need the project's brand verified first.
 3. In [Google Auth Platform, Audience](https://console.cloud.google.com/auth/audience), choose **External**. While the app is in **Testing**, only its test users can sign in, and Google ends their sign-in after 7 days: add your Google account as a test user, or set the publishing status to **In production**.
 4. In [Data Access](https://console.cloud.google.com/auth/scopes), add the scope `https://www.googleapis.com/auth/adwords`.
 5. In [Clients](https://console.cloud.google.com/auth/clients), create an OAuth client of type **Web application** and add the redirect URI your host gives you. Copy the client ID and the client secret into your host, which then signs you in with a Google account that can open your Google Ads accounts.
-6. If you manage accounts through a manager account, copy its 10-digit ID from the top of Google Ads (e.g. `123-456-7890`) into `managercustomerid`, or pass it as `login_customer_id` (`list_customers` tells you which manager each client account sits under).
+6. Optional: to send one manager account with every request, copy its 10-digit ID from the top of Google Ads (e.g. `123-456-7890`) into `managercustomerid`.
 7. For the CLI, get a token with the same client, for example in the [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/) with **Use your own OAuth credentials** (add `https://developers.google.com/oauthplayground` as a redirect URI first) and the scope above. It lasts one hour, and the CLI does not refresh it.
 
 ### How to revoke them
@@ -32,6 +32,10 @@ The access token comes from an OAuth client in your own Google Cloud project, an
 - In your Google Account, open [Third-party apps and services](https://myaccount.google.com/connections), pick your app and choose **Delete all connections**.
 - Or delete the OAuth client in the Google Cloud console (Google Auth Platform, Clients).
 - To take the Google account's access to a Google Ads account away altogether, remove it in Google Ads, Admin, Access and security.
+
+## Accounts reached through a manager account
+
+Google Ads needs the manager account's ID (`login-customer-id`) for an account the Google account reaches through a manager account, and none for an account it opens directly. Each tool takes it from, in order: its `login_customer_id` argument, the `managercustomerid` credential, or what the connector finds. To find it, the connector lists the accounts the Google account opens directly (`customers:listAccessibleCustomers`); an account among them needs none, and for any other account it asks those accounts, at most 25 and manager accounts first, whether the account sits anywhere below them (`customer_client`, which lists every level). It reads nothing else of them. What it finds is kept in memory for an hour, keyed by a hash of the access token, and `list_customers` adds what it reads, so a call usually costs no extra request. An account that no manager account leads to goes without one, and Google Ads then answers for itself (HTTP 403: give `login_customer_id`).
 
 ## Account picker
 
@@ -67,5 +71,5 @@ The access token comes from an OAuth client in your own Google Cloud project, an
 <!--
 Rows for the repository README.
 Connectors: | `google-ads` | [Google Ads](https://ads.google.com): GAQL reports, atomic mutates for campaigns, budgets, ad groups, ads, keywords, audiences and conversion settings, image assets, Keyword Planner ideas, Customer Match uploads, and the rest of the API | Google OAuth access token (optional manager account ID) | Available |
-Quick start: | `google-ads` | `GOOGLE_ADS_ACCESS_TOKEN`; optional `GOOGLE_ADS_MANAGERCUSTOMERID` and `GOOGLE_ADS_DEVELOPERTOKEN` | A Google OAuth access token from your own Google Cloud OAuth client with the Google Ads API enabled (and Explorer or higher access for real accounts) and the scope `adwords`. The developer token is optional and never sent: Google ignores it since September 2026. Account key: `customers`. |
+Quick start: | `google-ads` | `GOOGLE_ADS_ACCESS_TOKEN`; optional `GOOGLE_ADS_MANAGERCUSTOMERID` and `GOOGLE_ADS_DEVELOPERTOKEN` | A Google OAuth access token from your own Google Cloud OAuth client with the Google Ads API enabled (and Explorer or higher access for real accounts) and the scope `adwords`. No developer token or manager account is needed: the developer token is never sent (Google ignores it since September 2026), and the connector finds the manager account of a client account itself. Account key: `customers`. |
 -->
