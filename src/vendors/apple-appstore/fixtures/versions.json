@@ -1,0 +1,16 @@
+{
+  "data": [
+    {
+      "type": "appStoreVersions",
+      "id": "ver-4-3",
+      "attributes": { "platform": "IOS", "versionString": "4.3", "appStoreState": "PREPARE_FOR_SUBMISSION", "appVersionState": "PREPARE_FOR_SUBMISSION", "releaseType": "AFTER_APPROVAL", "createdDate": "2026-11-18T10:00:00-08:00" }
+    },
+    {
+      "type": "appStoreVersions",
+      "id": "ver-4-2",
+      "attributes": { "platform": "IOS", "versionString": "4.2", "appStoreState": "READY_FOR_SALE", "appVersionState": "READY_FOR_DISTRIBUTION", "releaseType": "AFTER_APPROVAL", "createdDate": "2026-10-30T10:00:00-07:00" }
+    }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567890/appStoreVersions" },
+  "meta": { "paging": { "total": 12, "limit": 5 } }
+}

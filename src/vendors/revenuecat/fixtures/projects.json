@@ -1,0 +1,8 @@
+{
+  "object": "list",
+  "items": [
+    { "object": "project", "id": "proj1ab2c3d4", "name": "Acme Photo", "created_at": 1658399423658, "icon_url": "https://example.com/icon.png", "icon_url_large": "https://example.com/icon-large.png" }
+  ],
+  "next_page": null,
+  "url": "/v2/projects"
+}

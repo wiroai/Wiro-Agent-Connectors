@@ -1,0 +1,32 @@
+{
+  "data": {
+    "type": "appEventScreenshots",
+    "id": "8c3f4d5e-3333-4eee-8fff-000000000002",
+    "attributes": {
+      "fileSize": 40,
+      "fileName": "event-details-page.png",
+      "appEventAssetType": "EVENT_DETAILS_PAGE",
+      "imageAsset": null,
+      "assetToken": "PurpleSource/v4/00/11/22/event-details-page.png",
+      "uploadOperations": [
+        {
+          "method": "PUT",
+          "url": "https://store-030.blobstore.apple.com/assets-example-030001/PurpleSource%2Fv4%2Fpart1?uploadId=00000000-0000-4000-8000-000000000001&Signature=REDACTED&partNumber=1&Expires=1795400000",
+          "length": 24,
+          "offset": 0,
+          "requestHeaders": [ { "name": "Content-Type", "value": "image/png" } ]
+        },
+        {
+          "method": "PUT",
+          "url": "https://store-030.blobstore.apple.com/assets-example-030001/PurpleSource%2Fv4%2Fpart2?uploadId=00000000-0000-4000-8000-000000000001&Signature=REDACTED&partNumber=2&Expires=1795400000",
+          "length": 16,
+          "offset": 24,
+          "requestHeaders": [ { "name": "Content-Type", "value": "image/png" } ]
+        }
+      ],
+      "assetDeliveryState": { "errors": [], "warnings": [], "state": "AWAITING_UPLOAD" }
+    },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventScreenshots/8c3f4d5e-3333-4eee-8fff-000000000002" }
+  },
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventScreenshots" }
+}

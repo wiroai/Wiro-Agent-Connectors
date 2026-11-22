@@ -1,0 +1,10 @@
+{
+  "object": "chart_options",
+  "resolutions": [ { "id": "0", "display_name": "Day" }, { "id": "1", "display_name": "Week" }, { "id": "2", "display_name": "Month" } ],
+  "segments": [ { "object": "chart_segment", "id": "country", "display_name": "Country", "group_display_name": "Customer" }, { "object": "chart_segment", "id": "store", "display_name": "Store", "group_display_name": "Product" } ],
+  "filters": [
+    { "object": "chart_filter", "id": "store", "display_name": "Store", "group_display_name": "Product", "value_mode": "inline_enum", "options": [ { "id": "app_store", "display_name": "App Store" }, { "id": "play_store", "display_name": "Play Store" } ] },
+    { "object": "chart_filter", "id": "country", "display_name": "Country", "group_display_name": "Customer", "value_mode": "inferred_standard" }
+  ],
+  "user_selectors": { "revenue_type": { "default": "revenue", "display_name": "Revenue type", "options": [ { "id": "revenue", "display_name": "Revenue" }, { "id": "proceeds", "display_name": "Proceeds" } ] } }
+}

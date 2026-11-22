@@ -1,0 +1,4 @@
+[
+  { "id": "roas_all", "label": "ROAS (all)", "kind": "pct", "group": "ROAS", "desc": "Cohort revenue to date divided by spend.", "dimensions": ["day", "platform", "country", "network", "campaign", "adgroup", "ad"], "filters": ["platform", "country", "network", "campaign", "adgroup", "ad"] },
+  { "id": "store_installs", "label": "Store installs", "kind": "int", "group": "Installs", "desc": "Installs the stores counted.", "dimensions": ["day", "platform", "country"], "filters": ["platform", "country"] }
+]

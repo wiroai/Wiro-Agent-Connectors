@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "type": "appStoreVersionLocalizations",
+      "id": "vloc-4-2-en",
+      "attributes": {
+        "locale": "en-US",
+        "description": "Acme Photo turns everyday shots into film photos. Pick from 120 film looks, add light leaks and frames, and export in full resolution.",
+        "keywords": "film,filters,photo editor,frames",
+        "promotionalText": "New: winter film looks.",
+        "whatsNew": "Long video exports no longer stop halfway.",
+        "marketingUrl": "https://example.com",
+        "supportUrl": "https://example.com/support"
+      }
+    }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appStoreVersions/ver-4-2/appStoreVersionLocalizations?filter%5Blocale%5D=en-US" },
+  "meta": { "paging": { "total": 1, "limit": 1 } }
+}

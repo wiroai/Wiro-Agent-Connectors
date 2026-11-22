@@ -1,0 +1,4 @@
+[
+  { "id": "purchase", "name": "Purchase event", "short_name": "PUR", "section": "Revenue", "formatting": "money", "description": "", "app_token": ["abc123def456"], "tokens": ["x1y2z3"], "is_skad_event": false },
+  { "id": "subscribe", "name": "Subscribe", "short_name": "SUB", "section": "Events", "formatting": "number", "description": "", "app_token": ["abc123def456", "ghi789jkl012"], "tokens": ["q9w8e7"], "is_skad_event": true }
+]

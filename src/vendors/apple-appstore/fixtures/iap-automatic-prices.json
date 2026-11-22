@@ -1,0 +1,19 @@
+{
+  "data": [
+    {
+      "type": "inAppPurchasePrices",
+      "id": "eyJpIjoiNjUwMDAwMDAwMiIsInQiOiJUVVIiLCJwIjoiMjAwMDEifQ",
+      "attributes": { "startDate": "2026-01-01", "endDate": null },
+      "relationships": {
+        "inAppPurchasePricePoint": { "data": { "type": "inAppPurchasePricePoints", "id": "iap-pp-tur-79" } },
+        "territory": { "data": { "type": "territories", "id": "TUR" } }
+      }
+    }
+  ],
+  "included": [
+    { "type": "inAppPurchasePricePoints", "id": "iap-pp-tur-79", "attributes": { "customerPrice": "79.99", "proceeds": "56.61" } },
+    { "type": "territories", "id": "TUR", "attributes": { "currency": "TRY" } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/inAppPurchasePriceSchedules/6500000002/automaticPrices" },
+  "meta": { "paging": { "total": 1, "limit": 20 } }
+}

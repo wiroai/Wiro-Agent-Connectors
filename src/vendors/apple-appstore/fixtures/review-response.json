@@ -1,0 +1,14 @@
+{
+  "data": {
+    "type": "customerReviewResponses",
+    "id": "6f1c7a52-0000-4000-8000-000000000009",
+    "attributes": {
+      "responseBody": "Sorry about the crash, Sam. Version 4.2 fixes long exports: please update and let us know.",
+      "lastModifiedDate": "2026-11-21T10:02:11-08:00",
+      "state": "PENDING_PUBLISH"
+    },
+    "relationships": { "review": { "links": { "related": "https://api.appstoreconnect.apple.com/v1/customerReviewResponses/6f1c7a52-0000-4000-8000-000000000009/review" } } },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/customerReviewResponses/6f1c7a52-0000-4000-8000-000000000009" }
+  },
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/customerReviewResponses" }
+}

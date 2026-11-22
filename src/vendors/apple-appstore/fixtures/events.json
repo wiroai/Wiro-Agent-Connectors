@@ -1,0 +1,63 @@
+{
+  "data": [
+    {
+      "type": "appEvents",
+      "id": "6a1d2b3c-1111-4aaa-8bbb-000000000001",
+      "attributes": {
+        "referenceName": "lunar-new-year-2027",
+        "badge": "SPECIAL_EVENT",
+        "eventState": "DRAFT",
+        "deepLink": "https://example.com/events/lunar",
+        "purchaseRequirement": "NO_COST_ASSOCIATED",
+        "primaryLocale": "en-US",
+        "priority": "HIGH",
+        "purpose": "APPROPRIATE_FOR_ALL_USERS",
+        "territorySchedules": [
+          { "territories": ["CHN", "TWN", "HKG"], "publishStart": "2027-01-30T00:00:00Z", "eventStart": "2027-02-06T00:00:00Z", "eventEnd": "2027-02-13T00:00:00Z" }
+        ]
+      },
+      "relationships": {
+        "localizations": {
+          "meta": { "paging": { "total": 2, "limit": 50 } },
+          "data": [
+            { "type": "appEventLocalizations", "id": "7b2e3c4d-2222-4ccc-8ddd-000000000001" },
+            { "type": "appEventLocalizations", "id": "7b2e3c4d-2222-4ccc-8ddd-000000000002" }
+          ]
+        }
+      },
+      "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEvents/6a1d2b3c-1111-4aaa-8bbb-000000000001" }
+    },
+    {
+      "type": "appEvents",
+      "id": "6a1d2b3c-1111-4aaa-8bbb-000000000002",
+      "attributes": {
+        "referenceName": "halloween-2026",
+        "badge": "SPECIAL_EVENT",
+        "eventState": "PAST",
+        "purchaseRequirement": "NO_COST_ASSOCIATED",
+        "primaryLocale": "en-US",
+        "priority": "NORMAL",
+        "purpose": "KEEP_ACTIVE_USERS_INFORMED",
+        "territorySchedules": [
+          { "territories": ["USA", "GBR"], "publishStart": "2026-10-20T00:00:00Z", "eventStart": "2026-10-28T00:00:00Z", "eventEnd": "2026-11-01T00:00:00Z" }
+        ]
+      },
+      "relationships": { "localizations": { "data": [] } },
+      "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEvents/6a1d2b3c-1111-4aaa-8bbb-000000000002" }
+    }
+  ],
+  "included": [
+    {
+      "type": "appEventLocalizations",
+      "id": "7b2e3c4d-2222-4ccc-8ddd-000000000001",
+      "attributes": { "locale": "en-US", "name": "Lunar New Year Looks", "shortDescription": "Unlock festive filters and frames", "longDescription": "Celebrate with red lantern filters, gold frames and a new fireworks effect, free for one week." }
+    },
+    {
+      "type": "appEventLocalizations",
+      "id": "7b2e3c4d-2222-4ccc-8ddd-000000000002",
+      "attributes": { "locale": "zh-Hans", "name": null, "shortDescription": null, "longDescription": null }
+    }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567890/appEvents?include=localizations&limit=50" },
+  "meta": { "paging": { "total": 2, "limit": 50 } }
+}

@@ -1,0 +1,9 @@
+{
+  "object": "list",
+  "items": [
+    { "object": "product", "id": "prod1a2b3c4d5", "store_identifier": "com.example.photo.pro.weekly", "type": "subscription", "subscription": { "duration": "P1W", "grace_period_duration": "P3D", "trial_duration": "P3D" }, "created_at": 1658399423658, "app_id": "app1a2b3c4", "display_name": "Pro Weekly", "state": "active" },
+    { "object": "product", "id": "prod1a2b3c4d6", "store_identifier": "com.example.photo.credits50", "type": "consumable", "one_time": { "is_consumable": true }, "created_at": 1658399423658, "app_id": "app1a2b3c4", "display_name": "50 Credits", "state": "active" }
+  ],
+  "next_page": null,
+  "url": "/v2/projects/proj1ab2c3d4/products"
+}

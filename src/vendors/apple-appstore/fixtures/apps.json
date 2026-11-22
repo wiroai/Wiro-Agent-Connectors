@@ -1,0 +1,22 @@
+{
+  "data": [
+    {
+      "type": "apps",
+      "id": "1234567890",
+      "attributes": { "name": "Acme Photo", "bundleId": "com.example.photo", "sku": "ACME-PHOTO-1", "primaryLocale": "en-US" },
+      "relationships": { "appEvents": { "links": { "related": "https://api.appstoreconnect.apple.com/v1/apps/1234567890/appEvents" } } },
+      "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567890" }
+    },
+    {
+      "type": "apps",
+      "id": "1234567891",
+      "attributes": { "name": "Acme Video", "bundleId": "com.example.video", "sku": "ACME-VIDEO-1", "primaryLocale": "tr" },
+      "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567891" }
+    }
+  ],
+  "links": {
+    "self": "https://api.appstoreconnect.apple.com/v1/apps?fields%5Bapps%5D=name%2CbundleId%2Csku%2CprimaryLocale&sort=name&limit=2",
+    "next": "https://api.appstoreconnect.apple.com/v1/apps?cursor=Mg.AJUmP2s&fields%5Bapps%5D=name%2CbundleId%2Csku%2CprimaryLocale&sort=name&limit=2"
+  },
+  "meta": { "paging": { "total": 3, "limit": 2 } }
+}

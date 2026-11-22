@@ -1,0 +1,24 @@
+{
+  "revenue": {
+    "data": [
+      { "title": "Total", "type": "total", "value": 38.4, "values": [ { "period": 1, "value": 9.99 }, { "period": 2, "value": 17.1 } ], "cohort_size": 5210 },
+      { "title": "app_store:premium_monthly", "type": "single", "value": 41.2, "values": [ { "period": 1, "value": 9.99 } ], "cohort_size": 3120 }
+    ],
+    "description": "<div>Realized LTV.</div>",
+    "value": 38.4,
+    "unit": "USD",
+    "title": "LTV"
+  },
+  "proceeds": {
+    "data": [ { "title": "Total", "type": "total", "value": 32.6, "values": [], "cohort_size": 5210 } ],
+    "value": 32.6,
+    "unit": "USD",
+    "title": "LTV"
+  },
+  "net_revenue": {
+    "data": [ { "title": "Total", "type": "total", "value": 29.9, "values": [], "cohort_size": 5210 } ],
+    "value": 29.9,
+    "unit": "USD",
+    "title": "LTV"
+  }
+}

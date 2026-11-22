@@ -1,0 +1,12 @@
+{
+  "data": {
+    "type": "customerReviewResponses",
+    "id": "6f1c7a52-0000-4000-8000-000000000002",
+    "relationships": { "review": { "data": { "type": "customerReviews", "id": "00000043-a7b1-4c2d-9e3f-000000000002" } } },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/customerReviewResponses/6f1c7a52-0000-4000-8000-000000000002" }
+  },
+  "included": [
+    { "type": "customerReviews", "id": "00000043-a7b1-4c2d-9e3f-000000000002", "attributes": { "rating": 5 } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/customerReviewResponses/6f1c7a52-0000-4000-8000-000000000002" }
+}

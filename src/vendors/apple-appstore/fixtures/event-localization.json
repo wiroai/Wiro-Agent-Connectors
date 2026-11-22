@@ -1,0 +1,10 @@
+{
+  "data": {
+    "type": "appEventLocalizations",
+    "id": "7b2e3c4d-2222-4ccc-8ddd-000000000003",
+    "attributes": { "locale": "de-DE", "name": "Frühlings-Challenge", "shortDescription": "Neue Filter jeden Tag", "longDescription": "Eine Woche lang jeden Tag ein neuer Frühlingsfilter." },
+    "relationships": { "appEvent": { "links": { "related": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations/7b2e3c4d-2222-4ccc-8ddd-000000000003/appEvent" } } },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations/7b2e3c4d-2222-4ccc-8ddd-000000000003" }
+  },
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations" }
+}

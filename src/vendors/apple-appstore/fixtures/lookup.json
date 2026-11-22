@@ -1,0 +1,28 @@
+{
+  "resultCount": 1,
+  "results": [
+    {
+      "trackId": 1234567890,
+      "trackName": "Acme Photo",
+      "trackViewUrl": "https://apps.apple.com/us/app/acme-photo/id1234567890?uo=4",
+      "sellerName": "Example Apps Ltd",
+      "price": 0,
+      "formattedPrice": "Free",
+      "currency": "USD",
+      "primaryGenreName": "Photo & Video",
+      "genres": ["Photo & Video", "Lifestyle"],
+      "averageUserRating": 4.61,
+      "userRatingCount": 18234,
+      "contentAdvisoryRating": "4+",
+      "version": "4.2",
+      "currentVersionReleaseDate": "2026-11-02T08:00:00Z",
+      "releaseNotes": "Long video exports no longer stop halfway.",
+      "description": "Acme Photo turns everyday shots into film photos.",
+      "minimumOsVersion": "16.0",
+      "languageCodesISO2A": ["EN", "TR"],
+      "fileSizeBytes": "98123776",
+      "artworkUrl512": "https://is1-ssl.mzstatic.com/image/thumb/example/512x512bb.jpg",
+      "screenshotUrls": ["https://is1-ssl.mzstatic.com/image/thumb/example/1.jpg"]
+    }
+  ]
+}

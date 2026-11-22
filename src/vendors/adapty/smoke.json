@@ -1,0 +1,4 @@
+{
+  "read": { "tool": "get_chart", "args": { "chart_id": "mrr", "period_unit": "week" } },
+  "write": null
+}

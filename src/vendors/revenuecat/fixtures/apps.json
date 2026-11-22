@@ -1,0 +1,9 @@
+{
+  "object": "list",
+  "items": [
+    { "object": "app", "id": "app1a2b3c4", "name": "Acme Photo iOS", "created_at": 1658399423658, "type": "app_store", "project_id": "proj1ab2c3d4", "app_store": { "bundle_id": "com.example.photo" } },
+    { "object": "app", "id": "app1a2b3c5", "name": "Acme Photo Android", "created_at": 1658399423700, "type": "play_store", "project_id": "proj1ab2c3d4", "play_store": { "package_name": "com.example.photo" } }
+  ],
+  "next_page": "/v2/projects/proj1ab2c3d4/apps?limit=100&starting_after=app1a2b3c5",
+  "url": "/v2/projects/proj1ab2c3d4/apps"
+}

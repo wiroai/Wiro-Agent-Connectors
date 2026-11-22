@@ -1,0 +1,29 @@
+{
+  "data": [
+    {
+      "type": "inAppPurchasePrices",
+      "id": "eyJpIjoiNjUwMDAwMDAwMSIsInQiOiJVU0EiLCJwIjoiMTAwMDEifQ",
+      "attributes": { "startDate": null, "endDate": "2099-01-01" },
+      "relationships": {
+        "inAppPurchasePricePoint": { "data": { "type": "inAppPurchasePricePoints", "id": "iap-pp-199" } },
+        "territory": { "data": { "type": "territories", "id": "USA" } }
+      }
+    },
+    {
+      "type": "inAppPurchasePrices",
+      "id": "eyJpIjoiNjUwMDAwMDAwMSIsInQiOiJVU0EiLCJwIjoiMTAwMDIifQ",
+      "attributes": { "startDate": "2099-01-01", "endDate": null },
+      "relationships": {
+        "inAppPurchasePricePoint": { "data": { "type": "inAppPurchasePricePoints", "id": "iap-pp-299" } },
+        "territory": { "data": { "type": "territories", "id": "USA" } }
+      }
+    }
+  ],
+  "included": [
+    { "type": "inAppPurchasePricePoints", "id": "iap-pp-199", "attributes": { "customerPrice": "1.99", "proceeds": "1.69" } },
+    { "type": "inAppPurchasePricePoints", "id": "iap-pp-299", "attributes": { "customerPrice": "2.99", "proceeds": "2.54" } },
+    { "type": "territories", "id": "USA", "attributes": { "currency": "USD" } }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/inAppPurchasePriceSchedules/6500000001/manualPrices" },
+  "meta": { "paging": { "total": 2, "limit": 20 } }
+}

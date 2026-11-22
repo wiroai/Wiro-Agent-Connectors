@@ -1,0 +1,4 @@
+{
+  "read": { "tool": "get_overview", "args": {} },
+  "write": null
+}

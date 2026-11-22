@@ -1,0 +1,23 @@
+{
+  "data": {
+    "type": "appEvents",
+    "id": "6a1d2b3c-1111-4aaa-8bbb-000000000003",
+    "attributes": {
+      "referenceName": "spring-challenge-2027",
+      "badge": "CHALLENGE",
+      "eventState": "DRAFT",
+      "deepLink": "myapp://events/spring",
+      "purchaseRequirement": "NO_COST_ASSOCIATED",
+      "primaryLocale": "en-US",
+      "priority": "NORMAL",
+      "purpose": "ATTRACT_NEW_USERS",
+      "territorySchedules": [
+        { "territories": ["USA", "GBR", "DEU"], "publishStart": "2027-03-01T00:00:00Z", "eventStart": "2027-03-08T00:00:00Z", "eventEnd": "2027-03-15T00:00:00Z" }
+      ],
+      "archivedTerritorySchedules": []
+    },
+    "relationships": { "localizations": { "links": { "related": "https://api.appstoreconnect.apple.com/v1/appEvents/6a1d2b3c-1111-4aaa-8bbb-000000000003/localizations" } } },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEvents/6a1d2b3c-1111-4aaa-8bbb-000000000003" }
+  },
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEvents" }
+}

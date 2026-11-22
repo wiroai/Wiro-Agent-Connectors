@@ -1,0 +1,11 @@
+{
+  "data": [
+    {
+      "type": "inAppPurchases",
+      "id": "6500000001",
+      "attributes": { "name": "50 Credits", "productId": "com.example.photo.credits50", "inAppPurchaseType": "CONSUMABLE", "state": "APPROVED", "familySharable": false, "reviewNote": "internal note" }
+    }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/apps/1234567890/inAppPurchasesV2" },
+  "meta": { "paging": { "total": 1, "limit": 100 } }
+}

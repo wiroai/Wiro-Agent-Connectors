@@ -1,0 +1,40 @@
+{
+  "data": {
+    "revenue": {
+      "data": [
+        { "date": "2026-08-01", "value": 41234.5 },
+        { "date": "2026-09-01", "value": 43980.25 },
+        { "date": "2026-10-01", "value": 45102.0 }
+      ],
+      "value": 130316.75,
+      "value_from": null,
+      "value_to": null,
+      "compare_value_from": 118220.4,
+      "compare_value_to": null,
+      "title": "revenue",
+      "type": "multi",
+      "default_aggregation": "sum",
+      "description": "<div>Total money received from both subscriptions and one-time purchases. Does not include\nrevenue from subscriptions and purchases that were refunded afterward. Calculated before the store's fee.<br />\nFor example, 5 monthly $10 subs &amp; 1 yearly $100 sub</div>",
+      "metric_name": "Revenue",
+      "is_json": true,
+      "unit": "USD",
+      "recommended_period": null
+    },
+    "proceeds": {
+      "data": [
+        { "date": "2026-08-01", "value": 35048.83 },
+        { "date": "2026-09-01", "value": 37383.21 },
+        { "date": "2026-10-01", "value": 38336.7 }
+      ],
+      "value": 110768.74,
+      "title": "proceeds",
+      "type": "multi",
+      "default_aggregation": "sum",
+      "description": "<div>Revenue after the store's commission.</div>",
+      "metric_name": "Proceeds",
+      "is_json": true,
+      "unit": "USD",
+      "recommended_period": null
+    }
+  }
+}

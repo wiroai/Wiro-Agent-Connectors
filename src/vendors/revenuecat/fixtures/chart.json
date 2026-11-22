@@ -1,0 +1,33 @@
+{
+  "object": "chart_data",
+  "category": "revenue",
+  "display_type": "line",
+  "display_name": "Revenue",
+  "description": "Revenue generated in the period, net of refunds.",
+  "documentation_link": "https://www.revenuecat.com/docs/dashboard-and-metrics/charts/revenue-chart",
+  "last_computed_at": 1763740800000,
+  "start_date": 1761955200000,
+  "end_date": 1764460800000,
+  "yaxis_currency": "USD",
+  "filtering_allowed": true,
+  "segmenting_allowed": true,
+  "resolution": "month",
+  "values": [
+    { "cohort": 1759276800, "measure": 0, "value": 98000.5, "incomplete": false },
+    { "cohort": 1759276800, "measure": 1, "value": 10412, "incomplete": false },
+    { "cohort": 1761955200, "measure": 0, "value": 71000.25, "incomplete": true },
+    { "cohort": 1761955200, "measure": 1, "value": 7602, "incomplete": true }
+  ],
+  "summary": { "total": { "Revenue": 169000.75, "Transactions": 18014 }, "average": { "Revenue": 84500.38, "Transactions": 9007 } },
+  "yaxis": "$",
+  "segments": null,
+  "segments_limit": null,
+  "periods": null,
+  "measures": [
+    { "display_name": "Revenue", "description": "Revenue", "unit": "$", "decimal_precision": 2, "scale": 1, "chartable": true, "tabulable": true },
+    { "display_name": "Transactions", "description": "Transactions", "unit": "#", "decimal_precision": 0, "scale": 1, "chartable": true, "tabulable": true }
+  ],
+  "user_selectors": { "revenue_type": "revenue" },
+  "unsupported_params": null,
+  "annotations": []
+}
