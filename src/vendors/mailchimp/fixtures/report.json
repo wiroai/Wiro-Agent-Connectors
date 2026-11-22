@@ -1,0 +1,21 @@
+{
+  "id": "42694e9e57",
+  "campaign_title": "November newsletter",
+  "type": "regular",
+  "list_id": "abc123def4",
+  "list_is_active": true,
+  "list_name": "Main Newsletter",
+  "subject_line": "What is new in November",
+  "preview_text": "Three things",
+  "emails_sent": 5350,
+  "abuse_reports": 0,
+  "unsubscribed": 8,
+  "send_time": "2026-11-20T14:00:00+00:00",
+  "bounces": { "hard_bounces": 12, "soft_bounces": 45, "syntax_errors": 0 },
+  "forwards": { "forwards_count": 2, "forwards_opens": 1 },
+  "opens": { "opens_total": 3210, "proxy_excluded_opens": 3000, "unique_opens": 2680, "proxy_excluded_unique_opens": 2500, "open_rate": 0.5009, "proxy_excluded_open_rate": 0.47, "last_open": "2026-11-21T08:00:00+00:00" },
+  "clicks": { "clicks_total": 890, "unique_clicks": 654, "unique_subscriber_clicks": 600, "click_rate": 0.1222, "last_click": "2026-11-21T08:00:00+00:00" },
+  "list_stats": { "sub_rate": 0.02, "unsub_rate": 0.001, "open_rate": 42.5, "click_rate": 6.1 },
+  "ecommerce": { "total_orders": 0, "total_spent": 0, "total_revenue": 0 },
+  "_links": []
+}

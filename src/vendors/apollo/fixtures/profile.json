@@ -1,0 +1,19 @@
+{
+  "id": "user001",
+  "team_id": "team001",
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "title": "Head of Sales",
+  "email": "jane@example.com",
+  "num_credits_remaining": 880,
+  "effective_num_lead_credits": 1000,
+  "num_lead_credits_used": 120,
+  "effective_num_direct_dial_credits": 100,
+  "num_direct_dial_credits_used": 8,
+  "effective_num_export_credits": 500,
+  "num_export_credits_used": 25,
+  "effective_num_ai_credits": 200,
+  "num_ai_credits_used": 4,
+  "effective_num_power_up_credits": 50,
+  "num_power_up_credits_used": 0
+}

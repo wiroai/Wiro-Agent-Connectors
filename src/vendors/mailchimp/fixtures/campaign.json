@@ -1,0 +1,19 @@
+{
+  "id": "42694e9e57",
+  "web_id": 456789,
+  "type": "regular",
+  "create_time": "2026-11-21T09:00:00+00:00",
+  "archive_url": "https://eepurl.com/xyz",
+  "long_archive_url": "https://us19.campaign-archive.com/?u=abc&id=42694e9e57",
+  "status": "save",
+  "emails_sent": 0,
+  "send_time": "",
+  "content_type": "template",
+  "needs_block_refresh": false,
+  "resendable": false,
+  "recipients": { "list_id": "abc123def4", "list_is_active": true, "list_name": "Main Newsletter", "segment_text": "<p class=\"!margin--lv0 display--inline\">All subscribers</p>", "recipient_count": 5420, "segment_opts": { "saved_segment_id": 0, "match": "all" } },
+  "settings": { "subject_line": "December news", "preview_text": "What we shipped", "title": "December newsletter", "from_name": "Example Team", "reply_to": "hello@example.com", "use_conversation": false, "to_name": "*|FNAME|*", "folder_id": "", "authenticate": true, "auto_footer": false, "inline_css": false, "auto_tweet": false, "fb_comments": true, "timewarp": false, "template_id": 0, "drag_and_drop": false },
+  "tracking": { "opens": true, "html_clicks": true, "text_clicks": false },
+  "delivery_status": { "enabled": false },
+  "_links": [ { "rel": "self", "href": "https://us19.api.mailchimp.com/3.0/campaigns/42694e9e57" } ]
+}

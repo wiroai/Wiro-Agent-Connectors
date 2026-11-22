@@ -1,0 +1,1 @@
+{ "results": [ { "id": 123456, "nickname": "Marketing", "from_email": "news@example.com", "from_name": "Example News", "reply_to": "news@example.com", "reply_to_name": "Example News", "address": "1 Example Street", "city": "Austin", "state": "TX", "zip": "78701", "country": "USA", "verified": true, "locked": false } ] }

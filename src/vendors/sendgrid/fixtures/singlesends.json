@@ -1,0 +1,7 @@
+{
+  "result": [
+    { "id": "27c21bbf-a12c-440b-b8bf-c526975328ca", "name": "November newsletter", "status": "draft", "categories": ["newsletter"], "send_at": null, "is_abtest": false, "updated_at": "2026-11-21T09:00:00Z", "created_at": "2026-11-21T09:00:00Z" },
+    { "id": "9d4f7e02-5b1a-4c3e-a8f6-2b7c9d1e0f33", "name": "October newsletter", "status": "triggered", "categories": [], "send_at": "2026-10-20T14:00:00Z", "is_abtest": false, "updated_at": "2026-10-20T14:00:00Z", "created_at": "2026-10-18T09:00:00Z" }
+  ],
+  "_metadata": { "self": "https://api.sendgrid.com/v3/marketing/singlesends?page_size=50", "count": 2 }
+}

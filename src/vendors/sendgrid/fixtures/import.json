@@ -1,0 +1,1 @@
+{ "id": "0b2d5f19-0c34-4e62-8dbc-1f9a2e7c4b11", "status": "completed", "job_type": "upsert", "results": { "requested_count": 2, "created_count": 1, "updated_count": 1, "deleted_count": 0, "errored_count": 0 }, "started_at": "2026-11-21T10:00:00Z", "finished_at": "2026-11-21T10:00:05Z" }

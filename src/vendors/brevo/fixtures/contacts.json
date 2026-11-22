@@ -1,0 +1,26 @@
+{
+  "contacts": [
+    {
+      "email": "ann@example.com",
+      "id": 42,
+      "emailBlacklisted": false,
+      "smsBlacklisted": false,
+      "createdAt": "2026-11-20T09:12:01.000+01:00",
+      "modifiedAt": "2026-11-21T10:00:00.000+01:00",
+      "listIds": [5, 12],
+      "listUnsubscribed": [],
+      "attributes": { "FIRSTNAME": "Ann", "LASTNAME": "Example" }
+    },
+    {
+      "email": "bob@example.com",
+      "id": 43,
+      "emailBlacklisted": true,
+      "smsBlacklisted": false,
+      "createdAt": "2026-11-19T08:00:00.000+01:00",
+      "modifiedAt": "2026-11-19T08:00:00.000+01:00",
+      "listIds": [5],
+      "attributes": {}
+    }
+  ],
+  "count": 3
+}

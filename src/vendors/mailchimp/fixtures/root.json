@@ -1,0 +1,22 @@
+{
+  "account_id": "8d3a3db4d97663a9074efcc16",
+  "login_id": "11223344",
+  "account_name": "Example Co",
+  "email": "owner@example.com",
+  "first_name": "Jane",
+  "last_name": "Doe",
+  "username": "jane.example",
+  "avatar_url": "https://example.com/avatar.png",
+  "role": "owner",
+  "member_since": "2020-01-01T00:00:00+00:00",
+  "pricing_plan_type": "monthly",
+  "first_payment": "2020-02-01T00:00:00+00:00",
+  "account_timezone": "America/Los_Angeles",
+  "account_industry": "Software",
+  "contact": { "company": "Example Co", "addr1": "1 Example Street", "city": "Austin", "state": "TX", "zip": "78701", "country": "US" },
+  "pro_enabled": false,
+  "last_login": "2026-11-21T08:00:00+00:00",
+  "total_subscribers": 5420,
+  "industry_stats": { "open_rate": 0.21, "bounce_rate": 0.01, "click_rate": 0.02 },
+  "_links": [ { "rel": "self", "href": "https://us19.api.mailchimp.com/3.0/", "method": "GET" } ]
+}

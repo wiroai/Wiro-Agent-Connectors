@@ -1,0 +1,15 @@
+{
+  "result": [
+    {
+      "id": "d-2c214ac919e84170b21855cc129b4a5f",
+      "name": "Order confirmation",
+      "generation": "dynamic",
+      "updated_at": "2026-10-01 10:00:00",
+      "versions": [
+        { "id": "8aefe0ee-f12b-4575-b5b7-c97e21cb36f3", "template_id": "d-2c214ac919e84170b21855cc129b4a5f", "active": 1, "name": "v2", "subject": "Your order {{order_id}}", "updated_at": "2026-10-01 10:00:00", "generate_plain_content": true, "editor": "code", "thumbnail_url": "//example.com/thumb.png", "html_content": "<p>Order {{order_id}}</p>", "plain_content": "Order {{order_id}}" },
+        { "id": "11111111-f12b-4575-b5b7-c97e21cb36f3", "template_id": "d-2c214ac919e84170b21855cc129b4a5f", "active": 0, "name": "v1", "subject": "Order", "updated_at": "2026-09-01 10:00:00", "editor": "code", "html_content": "<p>old</p>" }
+      ]
+    }
+  ],
+  "_metadata": { "self": "https://api.sendgrid.com/v3/templates?generations=dynamic&page_size=50", "count": 1 }
+}

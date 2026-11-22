@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_account", "args": {} },
+  "write": {
+    "tool": "create_template",
+    "args": { "name": "Smoke test {{timestamp}}", "html": "<html><body><div mc:edit=\"body\">Connector smoke test</div><p>*|UNSUB|*</p></body></html>" },
+    "note": "Creates a user template. Delete it in Mailchimp (Content, Email templates) or with api_request: DELETE /3.0/templates/{id}."
+  }
+}

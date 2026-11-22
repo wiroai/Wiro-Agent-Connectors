@@ -1,0 +1,6 @@
+{
+  "total_entries": 232,
+  "people": [
+    { "id": "person002", "first_name": "Alex", "last_name_obfuscated": "Ex***e", "title": "Marketing Director", "last_refreshed_at": "2026-11-01T00:00:00.000+00:00", "has_email": true, "has_city": true, "has_state": true, "has_country": true, "has_direct_phone": "Yes", "organization": { "name": "Example Media", "has_industry": true, "has_phone": false, "has_city": true, "has_state": true, "has_country": true, "has_zip_code": true, "has_revenue": false, "has_employee_count": true } }
+  ]
+}

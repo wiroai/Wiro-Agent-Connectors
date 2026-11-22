@@ -1,0 +1,7 @@
+{
+  "lists": [
+    { "id": 5, "name": "Weekly newsletter", "totalBlacklisted": 1, "totalSubscribers": 120, "uniqueSubscribers": 120, "folderId": 3 },
+    { "id": 12, "name": "Customers", "totalBlacklisted": 0, "totalSubscribers": 40, "uniqueSubscribers": 40, "folderId": 3 }
+  ],
+  "count": 2
+}

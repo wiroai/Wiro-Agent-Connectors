@@ -1,0 +1,1 @@
+{ "opportunity_stages": [ { "id": "dstg001", "team_id": "t1", "name": "Discovery", "display_order": 1, "forecast_category_cd": "pipeline", "is_won": false, "is_closed": false, "probability": 10, "opportunity_pipeline_id": "pl1" } ] }

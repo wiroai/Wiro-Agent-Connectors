@@ -1,0 +1,7 @@
+{
+  "count": 2,
+  "templates": [
+    { "id": 10, "name": "Order confirmation", "subject": "Your order {{ params.ORDER_ID }}", "isActive": true, "testSent": false, "sender": { "name": "Shop", "email": "shop@example.com", "id": 3 }, "replyTo": "shop@example.com", "toField": "", "tag": "orders", "htmlContent": "<p>Thanks</p>", "createdAt": "2026-10-01T10:00:00.000Z", "modifiedAt": "2026-10-02T10:00:00.000Z", "doiTemplate": false },
+    { "id": 11, "name": "Welcome", "subject": "Welcome!", "isActive": false, "testSent": true, "sender": { "name": "Shop", "email": "shop@example.com", "id": 3 }, "replyTo": "", "toField": "", "tag": "", "htmlContent": "<p>Hi</p>", "createdAt": "2026-10-05T10:00:00.000Z", "modifiedAt": "2026-10-05T10:00:00.000Z", "doiTemplate": false }
+  ]
+}

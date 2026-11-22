@@ -1,0 +1,11 @@
+{
+  "result": [
+    { "id": "ca7a3796-e8a8-4029-9ccb-df8937940562", "name": "Newsletter", "contact_count": 1542, "_metadata": { "self": "https://api.sendgrid.com/v3/marketing/lists/ca7a3796-e8a8-4029-9ccb-df8937940562" } },
+    { "id": "f3d2e8a1-1111-4c2b-9a5e-0d2b6c7e8f90", "name": "Customers", "contact_count": 312, "_metadata": { "self": "https://api.sendgrid.com/v3/marketing/lists/f3d2e8a1-1111-4c2b-9a5e-0d2b6c7e8f90" } }
+  ],
+  "_metadata": {
+    "self": "https://api.sendgrid.com/v3/marketing/lists?page_size=2&page_token=",
+    "next": "https://api.sendgrid.com/v3/marketing/lists?page_size=2&page_token=eyJpZCI6IjEyMyJ9",
+    "count": 5
+  }
+}

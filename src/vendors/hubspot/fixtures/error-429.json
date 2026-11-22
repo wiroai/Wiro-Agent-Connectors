@@ -1,0 +1,1 @@
+{ "status": "error", "message": "You have reached your ten_secondly_rolling limit.", "errorType": "RATE_LIMIT", "correlationId": "d1e2f3a4-7f07-4993-9211-075dc63e7cbf", "policyName": "TEN_SECONDLY_ROLLING", "groupName": "publicapi:oauth:12345678" }

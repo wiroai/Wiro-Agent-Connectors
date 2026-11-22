@@ -1,0 +1,6 @@
+{
+  "senders": [
+    { "id": 1, "name": "Example News", "email": "news@example.com", "active": true, "ips": [] },
+    { "id": 2, "name": "Support", "email": "support@example.com", "active": false }
+  ]
+}

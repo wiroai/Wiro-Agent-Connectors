@@ -1,0 +1,1 @@
+{ "is_ready": false, "items": [ { "type": "success", "id": 1, "heading": "List", "details": "Main Newsletter (5,420 recipients)" }, { "type": "error", "id": 2, "heading": "Content", "details": "Your campaign has no content." } ], "_links": [] }

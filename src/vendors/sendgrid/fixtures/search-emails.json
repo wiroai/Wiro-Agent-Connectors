@@ -1,0 +1,6 @@
+{
+  "result": {
+    "ann@example.com": { "contact": { "id": "3a5f1a26-0a1c-4f8e-9d55-7b4e2f1c9a01", "email": "ann@example.com", "first_name": "Ann", "list_ids": ["ca7a3796-e8a8-4029-9ccb-df8937940562"], "custom_fields": {} } },
+    "bob@example.com": { "error": "contact not found" }
+  }
+}
