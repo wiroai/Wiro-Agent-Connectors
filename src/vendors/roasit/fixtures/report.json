@@ -1,0 +1,24 @@
+{
+  "app": { "app_token": "a1b2c3d4e5f6", "name": "My Game" },
+  "from": "2026-11-14",
+  "to": "2026-11-20",
+  "currency": "USD",
+  "iap": "net",
+  "dimensions": ["network", "campaign", "ad"],
+  "metrics": [
+    { "id": "installs", "label": "Installs", "kind": "int", "desc": "SDK first opens attributed to the row." },
+    { "id": "spend", "label": "Spend", "kind": "money", "desc": "Ad spend pulled from the network." },
+    { "id": "roas_all", "label": "ROAS (all)", "kind": "pct", "desc": "Cohort revenue to date divided by spend." }
+  ],
+  "rows": [
+    { "network": "meta", "network_label": "Meta", "campaign": "Spring UA", "campaign_id": "120210000000001", "ad": "Hero video 9x16", "ad_id": "120210000000777", "installs": 187, "spend": 412.5, "roas_all": 1.83 },
+    { "network": "google", "network_label": "Google Ads", "campaign": "UAC Global", "campaign_id": "555000111", "ad": "", "ad_id": "", "installs": 3, "spend": 980.0, "roas_all": 0.71 },
+    { "network": "google", "network_label": "Google Ads", "campaign": "UAC Global", "campaign_id": "555000111", "ad": "Asset 7", "ad_id": "333222111", "installs": 399, "spend": 0, "roas_all": null }
+  ],
+  "rows_total": 3,
+  "totals": { "installs": 589, "spend": 1392.5, "roas_all": 1.21 },
+  "spend_not_final_days": ["2026-11-20"],
+  "spend_granularity": { "meta": "ad", "google": "campaign" },
+  "lines": [ { "line": "reinstalls", "label": "Reinstalled users", "users": 12, "installs": null, "spend": null, "roas_all": null } ],
+  "notes": ["Ad spend for 2026-11-20 is not final yet", "Google Ads spend is at campaign level"]
+}

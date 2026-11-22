@@ -1,0 +1,1 @@
+{ "id": 42, "email": "owner@example.com", "name": "Example Games", "access_all": true, "token": { "id": 7, "name": "AI agent", "prefix": "roapi_Ab3" } }

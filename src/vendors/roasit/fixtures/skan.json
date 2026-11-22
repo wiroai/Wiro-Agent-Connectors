@@ -1,0 +1,8 @@
+{
+  "status": { "total": 5120, "last_24h": 140, "last_7d": 1033, "invalid": 0, "unverifiable": 3, "last_received": "2026-11-21T07:10:00Z", "last_verified": "2026-11-21T07:10:00Z" },
+  "rows": [
+    { "day": "2026-11-14", "network": "meta", "source_prefix": "12", "campaign": "Spring UA", "installs": 61, "redownloads": 4, "with_value": 40, "revenue_est": 88.4, "coarse": { "low": 20, "medium": 12, "high": 8 }, "spend": 140.2, "spend_final": true, "cpi": 2.3, "roas": 0.63 }
+  ],
+  "currency": "USD",
+  "unmapped": [ { "network": "applovin", "source_id": "3901" } ]
+}
