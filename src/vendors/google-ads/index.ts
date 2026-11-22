@@ -21,6 +21,8 @@ import {
   allowedAccounts,
   apiTools,
   defineConnector,
+  jsonSize,
+  OUTPUT_LIMIT_BYTES,
   OutcomeUnknown,
   requireAccounts,
   sha256Hex,
@@ -144,6 +146,23 @@ function failuresOf(error: any): Record<string, unknown>[] | undefined {
   });
   if (!failures.length && typeof error?.message === 'string') return [{ message: truncate(error.message, 300) }];
   return failures.length ? failures : undefined;
+}
+
+/**
+ * A write's result cut to fit the output limit: the change is made either way,
+ * so the result must never be refused for its size (that would invite a retry).
+ */
+function fitWriteResult(result: Record<string, unknown>, listKey: string): Record<string, unknown> {
+  const list = result[listKey];
+  if (!Array.isArray(list) || jsonSize(result) <= OUTPUT_LIMIT_BYTES - 500) return result;
+  let count = list.length;
+  while (count > 0 && jsonSize({ ...result, [listKey]: list.slice(0, count) }) > OUTPUT_LIMIT_BYTES - 500) count = Math.floor(count * 0.8);
+  return { ...result, [listKey]: list.slice(0, count), [`${listKey}_total`]: list.length, [`${listKey}_note`]: `Only the first ${count} of ${list.length} are listed here; search lists the rest.` };
+}
+
+/** At most 100 indices of skipped inputs, with their count. */
+function skippedSummary(indices: number[]): Record<string, unknown> | undefined {
+  return indices.length ? { count: indices.length, first_indices: indices.slice(0, 100) } : undefined;
 }
 
 function hasPartialFailure(data: any): boolean {
@@ -500,13 +519,13 @@ const connector = defineConnector({
           const value = key ? response[key] : undefined;
           return key ? compact({ type: snake(key.replace(/Result$/, '')), resource_name: value?.resourceName }) : {};
         });
-        return compact({
+        return fitWriteResult(compact({
           customer_id: id,
           validate_only: args.validate_only ? true : undefined,
           results: args.validate_only ? undefined : results,
           valid: args.validate_only && !hasPartialFailure(data) ? true : undefined,
           failures: hasPartialFailure(data) ? failuresOf(data.partialFailureError) : undefined,
-        });
+        }), 'results');
       },
     },
     {
@@ -705,8 +724,8 @@ const connector = defineConnector({
           job,
           long_running_operation: typeof operationName === 'string' ? operationName : undefined,
           identifiers_sent: identifiers.length,
-          skipped_emails: hashed.skippedEmails.length ? hashed.skippedEmails : undefined,
-          skipped_phones: hashed.skippedPhones.length ? hashed.skippedPhones : undefined,
+          skipped_emails: skippedSummary(hashed.skippedEmails),
+          skipped_phones: skippedSummary(hashed.skippedPhones),
           failures: hasPartialFailure(added.data) ? failuresOf(added.data.partialFailureError) : undefined,
           status_query: statusQuery,
           note: 'The job runs in the background; matching can take up to 48 hours. Run status_query with search to follow it.',
@@ -724,8 +743,8 @@ const connector = defineConnector({
       inputSchema: {
         type: 'object',
         properties: {
-          emails: { ...IDENTIFIER_LISTS.emails, maxItems: 1000 },
-          phones: { ...IDENTIFIER_LISTS.phones, maxItems: 1000 },
+          emails: { ...IDENTIFIER_LISTS.emails, maxItems: 200, description: 'Up to 200 email addresses in plain text.' },
+          phones: { ...IDENTIFIER_LISTS.phones, maxItems: 200, description: 'Up to 200 phone numbers in E.164 form, e.g. "+15551234567".' },
         },
         additionalProperties: false,
       },

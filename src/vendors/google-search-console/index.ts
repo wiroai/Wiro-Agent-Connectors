@@ -551,15 +551,23 @@ const connector = defineConnector({
         properties: {
           site_url: SITE_URL,
           sitemap_index: { type: 'string', format: 'uri', maxLength: 2048, description: 'The URL of a sitemap index, to list the sitemaps inside it.' },
+          cursor: CURSOR,
         },
         required: ['site_url'],
         additionalProperties: false,
       },
-      async run(args: { site_url: string; sitemap_index?: string }, h) {
+      async run(args: { site_url: string; sitemap_index?: string; cursor?: string }, h) {
         const { site, path } = siteFor(h, args.site_url);
+        const state = h.cursor(args.cursor);
+        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
         const { data } = await h.api({ path: `${path}/sitemaps`, query: { sitemapIndex: args.sitemap_index }, errors: { 403: QUERY_ERRORS[403], 404: QUERY_ERRORS[404] } });
         const sitemaps = (Array.isArray(data?.sitemap) ? data.sitemap : []).map(trimSitemap);
-        return { site_url: site, sitemaps };
+        return h.page({
+          key: 'sitemaps',
+          items: sitemaps.slice(skip),
+          extra: { site_url: site, total: sitemaps.length },
+          resumeAt: (index) => h.makeCursor({ o: skip + index }),
+        });
       },
     },
     {

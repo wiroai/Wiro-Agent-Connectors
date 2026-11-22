@@ -168,6 +168,18 @@ test('mutate sends the operations once and names each created resource; another 
   assert.equal(fetch.calls.length + open.fetch.calls.length, 1);
 });
 
+test('a mutate with many operations still returns a result that fits, listing the first resources and the total', async () => {
+  const responses = Array.from({ length: 1000 }, (_, index) => ({ adGroupCriterionResult: { resourceName: `customers/${CUSTOMER}/adGroupCriteria/40001~${70000000 + index}` } }));
+  const { module, ctx } = setup(() => jsonResponse(200, { mutateOperationResponses: responses }));
+  const operations = Array.from({ length: 1000 }, () => ({ adGroupCriterionOperation: { create: {} } }));
+  const { result, payload, isError } = await callTool(module, 'mutate', { customer_id: CUSTOMER, operations }, ctx);
+  assert.equal(isError, false);
+  assert.ok(Buffer.byteLength(result.content[0].text) <= 32 * 1024);
+  assert.equal(payload.results_total, 1000);
+  assert.ok(payload.results.length > 100 && payload.results.length < 1000);
+  assert.match(payload.results_note, /search lists the rest/);
+});
+
 test('mutate reports partial failures with the operation and field, and validate_only changes nothing', async () => {
   const partial = setup(() => jsonResponse(200, fixture(import.meta.url, 'mutate-partial.json')));
   const result = await callTool(partial.module, 'mutate', { customer_id: CUSTOMER, partial_failure: true, operations: [{ adGroupCriterionOperation: { create: {} } }, { adGroupCriterionOperation: { create: {} } }] }, partial.ctx);
@@ -281,8 +293,8 @@ test('upload_customer_match hashes normalized identifiers, then creates, fills a
   assert.doesNotMatch(JSON.stringify(fetch.calls.map((call) => call.json)), /Jane|Doe|example\.com|5551234567"/i, 'no plain identifier is sent');
   assert.equal(payload.job, job);
   assert.equal(payload.identifiers_sent, 3);
-  assert.deepEqual(payload.skipped_emails, [1]);
-  assert.deepEqual(payload.skipped_phones, [1]);
+  assert.deepEqual(payload.skipped_emails, { count: 1, first_indices: [1] });
+  assert.deepEqual(payload.skipped_phones, { count: 1, first_indices: [1] });
   assert.match(payload.status_query, /FROM offline_user_data_job WHERE offline_user_data_job\.resource_name = 'customers\/1112223333\/offlineUserDataJobs\/80001'/);
   assert.doesNotMatch(JSON.stringify(payload), /Jane|ops@/i, 'the result echoes no identifier');
 
