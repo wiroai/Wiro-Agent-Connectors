@@ -11,6 +11,9 @@
 //   https://graph.facebook.com with the linked Page's own token, which is
 //   fetched with the system user token and kept in memory for 15 minutes,
 //   keyed by a hash of the token and the account.
+// A connection has one way in: when a host passes both, the system user token
+// is used, and the other token (such as a Page token an older setup kept) is
+// never sent to graph.instagram.com.
 
 import {
   allowedAccounts,
@@ -103,8 +106,9 @@ interface Access {
   token: string;
 }
 
+/** Whether calls go through Instagram Login: a sign-in token, and no system user token (which comes first). */
 function signedIn(h: ToolHelpers): boolean {
-  return Boolean(h.credentials['access_token']);
+  return Boolean(h.credentials['access_token']) && !h.credentials['systemusertoken'];
 }
 
 /** The id of the account that signed in, written by the host as text (an older setup kept it as a JSON list of one). */

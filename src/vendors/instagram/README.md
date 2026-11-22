@@ -4,7 +4,7 @@ Publish to Instagram professional accounts (Business and Creator) and read how t
 
 ## Credentials
 
-The connector needs one of two credentials: `access_token` (Instagram Login with your own app) or `systemusertoken` (a Meta Business system user token).
+The connector needs one of two credentials: `access_token` (Instagram Login with your own app) or `systemusertoken` (a Meta Business system user token). A connection has one way in: when both are given, the system user token is used, and the other token is never sent.
 
 ### `access_token`: Instagram Login with your own app
 
@@ -31,6 +31,10 @@ The token reaches every Instagram account linked to a Facebook Page assigned to 
 
 To revoke: in **System users**, select the system user and click **Revoke tokens**, or remove its Page and Instagram assignments.
 
+### A connection from an older setup
+
+An older setup kept the chosen accounts' ids in `accountId`, as a JSON list. The `accounts` picker's `legacyField` names it in lowercase (`accountid`), so a host that moves the choice over compares the name in any case. With Instagram Login it kept the account's id and username as JSON lists of one, which the connector reads as they are, and its token as a JSON list of one: pass the token itself as `access_token`. With a system user token it also kept a Page token per account; the connector fetches those itself, so pass only `systemusertoken`.
+
 ### Environment variables (CLI)
 
 | Variable | Credential |
@@ -44,7 +48,7 @@ To revoke: in **System users**, select the system user and click **Revoke tokens
 
 | Key | Lists | Tool |
 | --- | --- | --- |
-| `accounts` | The Instagram professional accounts the agent may publish to and read (several may be chosen). An older setup kept this choice in `accountid`. | `list_accounts` |
+| `accounts` | The Instagram professional accounts the agent may publish to and read (several may be chosen). An older setup kept this choice in `accountId` (legacy field `accountid`; see above). | `list_accounts` |
 
 Every tool takes an optional `account_id`; it may be left out when only one account is chosen, or, with Instagram Login, for the account that signed in. Any other account is refused before anything is sent.
 

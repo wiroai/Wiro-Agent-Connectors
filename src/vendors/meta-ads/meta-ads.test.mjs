@@ -69,6 +69,23 @@ test('list_ad_accounts signs in with the token and its proof, keeps the active a
   assert.equal(locked.fetch.calls[0].headers.authorization, `Bearer ${SYSTEM_TOKEN}`);
 });
 
+test('a system user token comes first: a sign-in token passed next to it, and its proof, are never sent', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me/adaccounts': f('adaccounts.json'),
+    [`GET /v26.0/act_${ACCOUNT}`]: f('account.json'),
+    [`GET /v26.0/act_${ACCOUNT}/adsets`]: { data: [] },
+  }), { credentials: { systemusertoken: SYSTEM_TOKEN, access_token: USER_TOKEN, appsecret_proof: PROOF } });
+  await callTool(module, 'list_ad_accounts', {}, ctx);
+  await callTool(module, 'get_ad_account', { ad_account_id: `act_${ACCOUNT}` }, ctx);
+  const read = await callTool(module, 'api_get', { path: `/v26.0/act_${ACCOUNT}/adsets` }, ctx);
+  assert.equal(read.payload.status, 200);
+  assert.equal(fetch.calls.length, 3);
+  for (const call of fetch.calls) {
+    assert.equal(call.headers.authorization, `Bearer ${SYSTEM_TOKEN}`);
+    assert.equal('appsecret_proof' in call.query, false);
+  }
+});
+
 test('get_ad_account names the status and whether the connection can manage it', async () => {
   const { module, fetch, ctx } = setup(router({ [`GET /v26.0/act_${ACCOUNT}`]: f('account.json') }));
   const { payload } = await callTool(module, 'get_ad_account', { ad_account_id: `act_${ACCOUNT}` }, ctx);

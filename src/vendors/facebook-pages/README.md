@@ -6,7 +6,7 @@ The connection's token (from a sign-in or a system user) only lists your Pages a
 
 ## Credentials
 
-The connector needs one of two credentials: `access_token` (a sign-in with your own Facebook app) or `systemusertoken` (a Meta Business system user token). A connection made with an older setup may have only `accesstoken` instead: see below.
+The connector needs one of two credentials: `access_token` (a sign-in with your own Facebook app) or `systemusertoken` (a Meta Business system user token). A connection has one way in: when both are given, the system user token is used and no app secret proof is sent. A connection made with an older setup may have only `accesstoken` instead: see below.
 
 ### `access_token`: a sign-in with your own Facebook app
 
@@ -32,7 +32,7 @@ To revoke: in **System users**, select the system user and click **Revoke tokens
 
 ### `accesstoken`: the Page tokens an older setup kept
 
-An older setup of this connection kept no user or system user token: it kept each chosen Page's own access token, as a JSON list such as `["EAA...", "EAA..."]`. When neither `access_token` nor `systemusertoken` is set, the connector uses those Page tokens as they are. It reads the Page each one belongs to from Facebook (`/me` with that token) once, keeps that in memory for 15 minutes keyed by a hash of the token, and never returns a token. `list_pages` then lists those Pages; a token Facebook refuses (expired, or revoked by a password change) is named in a note, and its Page cannot be reached until you sign in again. Nothing new is set up this way: to renew such a connection, sign in again or use a system user token.
+An older setup of this connection kept no user or system user token: it kept each chosen Page's own access token, as a JSON list such as `["EAA...", "EAA..."]`. When neither `access_token` nor `systemusertoken` is set, the connector uses those Page tokens as they are. It reads the Page each one belongs to from Facebook (`/me` with that token) once, keeps that in memory for 15 minutes keyed by a hash of the token, and never returns a token. `list_pages` then lists those Pages; a token Facebook refuses (expired, or revoked by a password change) is named in a note, and its Page cannot be reached until you sign in again. Nothing new is set up this way: to renew such a connection, sign in again or use a system user token. A host that moves such a connection over passes the list as JSON text in `accesstoken`, never as `access_token` (the list is not a token), and the Pages it chose (kept in `pageid`) under the `pages` picker.
 
 To revoke: remove the app in Facebook under **Settings & privacy → Settings → Business integrations**, which ends its Page tokens too.
 

@@ -225,6 +225,62 @@ test('a sign-in or system user token comes first: an older setup\'s Page tokens 
   assert.equal(fetch.calls[1].headers.authorization, `Bearer ${PAGE_TOKEN}`);
 });
 
+test('a system user token comes first: a sign-in token passed next to it, and its proof, are never sent', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me/accounts': f('me-accounts.json'),
+    'POST /v26.0/1001/feed': f('feed-create.json'),
+    'GET /v26.0/1001_3003': f('permalink.json'),
+  }), { credentials: { systemusertoken: SYSTEM_TOKEN, access_token: USER_TOKEN, appsecret_proof: PROOF } });
+  const listed = await callTool(module, 'list_pages', {}, ctx);
+  assert.deepEqual(listed.payload.pages.map((page) => page.id), ['1001']);
+  const posted = await callTool(module, 'create_post', { message: 'Hello' }, ctx);
+  assert.equal(posted.payload.post_id, '1001_3003');
+  // The Page token came with the system user's Page list, so the post needs no lookup.
+  assert.deepEqual(fetch.calls.map((call) => [call.method, call.path, call.headers.authorization]), [
+    ['GET', '/v26.0/me/accounts', `Bearer ${SYSTEM_TOKEN}`],
+    ['POST', '/v26.0/1001/feed', `Bearer ${PAGE_TOKEN}`],
+    ['GET', '/v26.0/1001_3003', `Bearer ${PAGE_TOKEN}`],
+  ]);
+  assert.equal(fetch.calls.some((call) => 'appsecret_proof' in call.query), false);
+});
+
+test('two Pages\' tokens kept from an older setup, both Pages chosen: a post names its Page and goes out with that Page\'s own token', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me': legacyMe,
+    'POST /v26.0/1001/feed': { id: '1001_3003' },
+    'POST /v26.0/1002/feed': { id: '1002_3004' },
+    'GET /v26.0/1001_3003': { permalink_url: 'https://www.facebook.com/1001/posts/3003' },
+    'GET /v26.0/1002_3004': { permalink_url: 'https://www.facebook.com/1002/posts/3004' },
+  }), { credentials: { accesstoken: JSON.stringify([LEGACY_BAKERY, LEGACY_CAFE]) }, accounts: { pages: ['1001', '1002'] } });
+  const unnamed = await callTool(module, 'create_post', { message: 'Hello' }, ctx);
+  assert.match(unnamed.payload.error, /page_id is required: one of 1001, 1002\. Nothing was sent\./);
+  assert.equal(fetch.calls.length, 0);
+
+  const bakery = await callTool(module, 'create_post', { page_id: '1001', message: 'Hello from the bakery' }, ctx);
+  const cafe = await callTool(module, 'create_post', { page_id: '1002', message: 'Hello from the cafe' }, ctx);
+  assert.deepEqual([bakery.payload.post_id, cafe.payload.post_id], ['1001_3003', '1002_3004']);
+  assert.deepEqual(fetch.calls.filter((call) => call.method === 'POST').map((call) => [call.path, call.headers.authorization]), [
+    ['/v26.0/1001/feed', `Bearer ${LEGACY_BAKERY}`],
+    ['/v26.0/1002/feed', `Bearer ${LEGACY_CAFE}`],
+  ]);
+  // Each token's Page is read once; no sign-in or system user lookup is made.
+  assert.equal(fetch.calls.filter((call) => call.path === '/v26.0/me').length, 2);
+  assert.equal(fetch.calls.some((call) => call.path === '/v26.0/me/accounts' || 'appsecret_proof' in call.query), false);
+});
+
+test('one Page token an older setup kept as plain text, not a list, is read too', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me': legacyMe,
+    'POST /v26.0/1001/feed': { id: '1001_3003' },
+    'GET /v26.0/1001_3003': { permalink_url: 'https://www.facebook.com/1001/posts/3003' },
+  }), { credentials: { accesstoken: LEGACY_BAKERY } });
+  const listed = await callTool(module, 'list_pages', {}, ctx);
+  assert.deepEqual(listed.payload.pages.map((page) => page.id), ['1001']);
+  const posted = await callTool(module, 'create_post', { message: 'Hello' }, ctx);
+  assert.equal(posted.payload.post_id, '1001_3003');
+  assert.equal(fetch.calls.find((call) => call.method === 'POST').headers.authorization, `Bearer ${LEGACY_BAKERY}`);
+});
+
 test('a scheduled post is sent unpublished with its time and gets no permalink; a time too soon is refused', async () => {
   const { module, fetch, ctx } = setup(router({ ...PAGE_ROUTES, 'POST /v26.0/1001/feed': f('feed-create.json') }));
   const when = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);

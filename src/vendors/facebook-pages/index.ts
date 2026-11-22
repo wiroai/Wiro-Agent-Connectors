@@ -7,6 +7,7 @@
 //   host has one;
 // - `systemusertoken`: a token of a Meta Business Manager system user that has
 //   the Pages assigned.
+// When a host passes both, the system user token is used (without the proof).
 // Either one only lists the Pages and fetches each Page's own access token;
 // every Page call goes out with that Page token, kept in memory for 15 minutes
 // and keyed by a hash of the credential and the Page. The app secret proof

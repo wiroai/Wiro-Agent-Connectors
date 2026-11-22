@@ -18,17 +18,21 @@ export function compact(value: Record<string, unknown>): Record<string, unknown>
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null));
 }
 
-/** The token every call signs in with: the sign-in's access token, or the system user token. */
+/**
+ * The token every call signs in with: the system user token, or the sign-in's
+ * access token. A connection has one way in: when a host passes both, the
+ * system user token is used, since a token next to it is one left over from before.
+ */
 export function tokenOf(credentials: Readonly<Record<string, string>>): string {
-  return credentials['access_token'] || credentials['systemusertoken'] || '';
+  return credentials['systemusertoken'] || credentials['access_token'] || '';
 }
 
 const PROOF = /^[0-9a-f]{64}$/i;
 
-/** The app secret proof, which goes only with the sign-in token it was made for. */
+/** The app secret proof, which goes only with the sign-in token it was made for (never with a system user token). */
 export function proofQuery(credentials: Readonly<Record<string, string>>): Record<string, string> {
   const proof = credentials['appsecret_proof'];
-  return credentials['access_token'] && proof && PROOF.test(proof) ? { appsecret_proof: proof } : {};
+  return credentials['access_token'] && !credentials['systemusertoken'] && proof && PROOF.test(proof) ? { appsecret_proof: proof } : {};
 }
 
 /**
