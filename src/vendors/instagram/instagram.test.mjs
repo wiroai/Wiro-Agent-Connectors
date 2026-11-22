@@ -407,6 +407,59 @@ test('with Instagram Login, an account id an older setup kept as a JSON list is 
   assert.equal(fetch.calls[0].path, `/v26.0/${LOGIN_IG}/content_publishing_limit`);
 });
 
+test('with Instagram Login, a connection an older setup kept (id and username as JSON lists of one, that account chosen) lists and publishes as before', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET https://graph.instagram.com/v26.0/me': f('me-login.json'),
+    [`POST https://graph.instagram.com/v26.0/${LOGIN_IG}/media`]: f('container-create.json'),
+    [`GET https://graph.instagram.com/v26.0/${CONTAINER}`]: f('container-finished.json'),
+    [`POST https://graph.instagram.com/v26.0/${LOGIN_IG}/media_publish`]: f('media-publish.json'),
+    'GET https://graph.instagram.com/v26.0/17900000000000001': f('media-details.json'),
+  }), {
+    credentials: { access_token: LOGIN_TOKEN, accountid: JSON.stringify([LOGIN_IG]), igusername: JSON.stringify(['example.shop']) },
+    accounts: { accounts: [LOGIN_IG] },
+  });
+  const listed = await callTool(module, 'list_accounts', {}, ctx);
+  assert.deepEqual(listed.payload.accounts.map((item) => [item.id, item.username]), [[LOGIN_IG, 'example.shop']]);
+  const published = await callTool(module, 'publish_image', { image_url: 'https://cdn.example.com/loaf.jpg' }, ctx);
+  assert.equal(published.isError, false);
+  assert.equal(published.payload.account_id, LOGIN_IG);
+  for (const call of fetch.calls) {
+    assert.equal(call.origin, 'https://graph.instagram.com');
+    assert.equal(call.headers.authorization, `Bearer ${LOGIN_TOKEN}`);
+  }
+});
+
+test('a system user token comes first: a token passed next to it is never used, and calls go through the linked Pages', async () => {
+  const STRAY = 'EAAPageTokenKeptBefore0009';
+  const STUDIO = '17841400000000003';
+  const { module, fetch, ctx } = setup(router({ ...LINKED, [`POST /v26.0/${IG}/media`]: f('container-create.json'), ...PUBLISHED }), {
+    credentials: {
+      systemusertoken: SYSTEM_TOKEN,
+      access_token: STRAY,
+      accountid: JSON.stringify([IG, STUDIO]),
+      igusername: JSON.stringify(['example.bakery', 'example.studio']),
+    },
+    accounts: { accounts: [IG, STUDIO] },
+  });
+  const listed = await callTool(module, 'list_accounts', {}, ctx);
+  assert.deepEqual(listed.payload.accounts.map((item) => item.id), [IG, STUDIO]);
+
+  // Two accounts are chosen: the call names one (an older setup's account id list does not pick it).
+  const unnamed = await callTool(module, 'publish_image', { image_url: 'https://cdn.example.com/loaf.jpg' }, ctx);
+  assert.match(unnamed.payload.error, new RegExp(`account_id is required: one of ${IG}, ${STUDIO}\\. Nothing was sent\\.`));
+
+  const published = await callTool(module, 'publish_image', { account_id: IG, image_url: 'https://cdn.example.com/loaf.jpg' }, ctx);
+  assert.equal(published.isError, false);
+  assert.equal(published.payload.media_id, '17900000000000001');
+  assert.deepEqual(fetch.calls.map((call) => `${call.method} ${call.origin}${call.path} ${call.headers.authorization}`), [
+    `GET https://graph.facebook.com/v26.0/me/accounts Bearer ${SYSTEM_TOKEN}`,
+    `POST https://graph.facebook.com/v26.0/${IG}/media Bearer ${PAGE_TOKEN}`,
+    `GET https://graph.facebook.com/v26.0/${CONTAINER} Bearer ${PAGE_TOKEN}`,
+    `POST https://graph.facebook.com/v26.0/${IG}/media_publish Bearer ${PAGE_TOKEN}`,
+    `GET https://graph.facebook.com/v26.0/17900000000000001 Bearer ${PAGE_TOKEN}`,
+  ]);
+});
+
 test('api_get and api_request use the chosen account\'s token and host, and never reach tokens', async () => {
   const { module, fetch, ctx } = setup(router({ ...LINKED, [`GET /v26.0/${IG}/tags`]: { data: [] } }));
   const read = await callTool(module, 'api_get', { path: `/v26.0/${IG}/tags` }, ctx);
