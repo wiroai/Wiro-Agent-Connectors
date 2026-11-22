@@ -9,7 +9,8 @@
 // - privatekey: the text of the key's .p8 file (its base64 works too).
 // Each call signs a 20-minute ES256 token with WebCrypto and sends it to
 // https://api.appstoreconnect.apple.com only; the public lookup and the image
-// upload addresses Apple returns get no credentials. The key's role decides
+// upload addresses Apple returns (on its upload servers, the connector's
+// uploadHosts) get no credentials. The key's role decides
 // what it may do: in-app events need Admin, App Manager or Marketing, review
 // responses Admin, App Manager or Customer Support.
 //
@@ -40,7 +41,7 @@ import {
   trimResponse,
   trimReview,
 } from './client.js';
-import { checkEventImage, EVENT_ASSET_TYPES, imageInfo, MAX_IMAGE_BYTES, uploadEventImage, type EventAssetType } from './media.js';
+import { checkEventImage, EVENT_ASSET_TYPES, imageInfo, MAX_IMAGE_BYTES, UPLOAD_HOSTS, uploadEventImage, type EventAssetType } from './media.js';
 import { appMetadata, purchasePrice, subscriptions } from './metadata.js';
 import { PLATFORMS, submitEventForReview } from './review.js';
 
@@ -221,6 +222,8 @@ const connector = defineConnector({
   vendor: 'apple-appstore',
   label: 'App Store Connect',
   origins: [ORIGIN, LOOKUP_ORIGIN],
+  // Event image parts go to the pre-signed addresses App Store Connect returns, on these hosts.
+  uploadHosts: UPLOAD_HOSTS,
   credentials: ['keyid', 'issuerid', 'privatekey'],
   credentialLabels: {
     keyid: 'App Store Connect key ID',
@@ -766,9 +769,8 @@ const connector = defineConnector({
         "Adds an in-app event's image in one locale from a public https URL: the event card (EVENT_CARD, landscape 16:9, 1920x1080 to 3840x2160) "
         + 'or the event details page (EVENT_DETAILS_PAGE, portrait 9:16, 1080x1920 to 2160x3840), JPEG or PNG, checked first. No text, logos, '
         + 'borders or gradients in it. It reserves the image, uploads it to Apple\'s upload server, commits it and waits up to 45 seconds for '
-        + 'processing; a kind the localization already has: delete_app_event_image first. A host that lets connectors send only downloads outside '
-        + 'the API refuses that upload: the reservation is then removed, nothing is added, and the images are added in App Store Connect instead '
-        + '(Apps > the app > In-App Events > the event) before submit_app_event_for_review.',
+        + 'processing; a kind the localization already has: delete_app_event_image first. An upload that fails removes the reservation again, '
+        + 'so nothing is left behind. submit_app_event_for_review sends the event once it has both images.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -844,7 +846,7 @@ const connector = defineConnector({
       title: 'Send an App Store in-app event to App Review',
       description:
         "Sends an in-app event to App Review, as App Store Connect's Add for Review does: the event needs its texts and both images first "
-        + '(list_app_event_images shows them; add them in App Store Connect when upload_app_event_image cannot). It reuses '
+        + '(upload_app_event_image adds them, list_app_event_images shows them). It reuses '
         + "the app's open review submission when that holds nothing else (or already holds the event), else starts one, adds the event and sends it. "
         + 'An open submission holding other items (an app version, another event) is left alone and the tool says what it holds. Only a draft, a '
         + 'rejected event or one ready for review can be sent. Never sent twice: check list_app_events after an unclear outcome.',
