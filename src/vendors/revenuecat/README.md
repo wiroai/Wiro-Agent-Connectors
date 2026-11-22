@@ -35,6 +35,8 @@ Quick start table:
 | `list_entitlement_products` | read | The products attached to an entitlement. |
 | `api_get` | read | Any other GET on the aggregate routes under `/v2/projects`. |
 
+Connection check: `list_projects` with no arguments.
+
 Every tool but `list_projects` takes an optional `project_id`; without it, the key's only project is used (one extra request), and a key that sees several projects is asked which one.
 
 ## Credentials

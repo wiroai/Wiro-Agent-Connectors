@@ -450,14 +450,21 @@ test('get_app_metadata says when the app is not on the App Store in the country,
   assert.equal(skip.fetch.calls.length, 3);
 });
 
-test('list_subscriptions reads each group with its introductory offers and says whether there is a free trial', async () => {
-  const { module, fetch, ctx } = setup(routes({
+test('list_subscriptions reads each group with its introductory offers and current prices, and says whether there is a free trial', async () => {
+  const table = {
     [`GET /v1/apps/${APP}/subscriptionGroups`]: () => jsonResponse(200, fixture(import.meta.url, 'subscription-groups.json')),
     'GET /v1/subscriptionGroups/21000001/subscriptions': () => jsonResponse(200, fixture(import.meta.url, 'subscriptions.json')),
-  }));
+    'GET /v1/subscriptions/6400000001/prices': () => jsonResponse(200, fixture(import.meta.url, 'subscription-prices.json')),
+    'GET /v1/subscriptions/6400000002/prices': () => jsonResponse(200, { data: [] }),
+  };
+  const { module, fetch, ctx } = setup(routes(table));
   const { payload } = await callTool(module, 'list_subscriptions', { app_id: APP }, ctx);
   assert.equal(fetch.calls[1].query.include, 'introductoryOffers');
+  assert.equal(fetch.calls[2].query['filter[territory]'], 'USA');
+  assert.equal(fetch.calls[2].query.include, 'subscriptionPricePoint,territory');
+  assert.equal(fetch.calls.length, 4);
   assert.equal(payload.hasFreeTrial, true);
+  assert.equal(payload.priceTerritory, 'USA');
   assert.deepEqual(payload.groups[0].subscriptions[0], {
     id: '6400000001',
     name: 'Pro Weekly',
@@ -466,12 +473,24 @@ test('list_subscriptions reads each group with its introductory offers and says 
     state: 'APPROVED',
     groupLevel: 2,
     familySharable: false,
+    price: {
+      customerPrice: '8.99',
+      proceeds: '7.64',
+      currency: 'USD',
+      territory: 'USA',
+      scheduled: [{ customerPrice: '9.99', proceeds: '8.49', currency: 'USD', territory: 'USA', startDate: '2099-01-01' }],
+    },
     introductoryOffers: [
       { offerMode: 'FREE_TRIAL', duration: 'THREE_DAYS', numberOfPeriods: 1, territories: 2 },
       { offerMode: 'PAY_AS_YOU_GO', duration: 'ONE_WEEK', numberOfPeriods: 1, territories: 1 },
     ],
   });
   assert.deepEqual(payload.groups[0].subscriptions[1].introductoryOffers, []);
+  assert.equal(payload.groups[0].subscriptions[1].price, undefined);
+
+  const noPrices = setup(routes(table));
+  await callTool(noPrices.module, 'list_subscriptions', { app_id: APP, include_prices: false }, noPrices.ctx);
+  assert.equal(noPrices.fetch.calls.length, 2);
 });
 
 test('list_in_app_purchases trims each purchase', async () => {

@@ -8,6 +8,8 @@ import { compact, includedMap, LOOKUP_ORIGIN, nextAppleCursor, text, type Asc } 
 /** Version states that mean the version is the one on the App Store. */
 const LIVE_STATES = new Set(['READY_FOR_SALE', 'READY_FOR_DISTRIBUTION']);
 const MAX_GROUPS = 10;
+/** How many subscriptions get their price read, one request each. */
+const MAX_PRICED = 30;
 
 function trimAppInfo(item: any, localizations: Map<string, any>, locale: string): Record<string, unknown> {
   const a = item?.attributes ?? {};
@@ -164,11 +166,45 @@ function summarizeOffers(refs: any[], offers: Map<string, any>): Array<Record<st
   return [...groups.values()];
 }
 
-export async function subscriptions(api: Asc, appId: string): Promise<Record<string, unknown>> {
+/** The price in effect now in one territory, and any later one already scheduled. */
+async function subscriptionPrice(api: Asc, subscriptionId: string, territory: string): Promise<Record<string, unknown> | undefined> {
+  const reply = await api.get(`/v1/subscriptions/${encodeURIComponent(subscriptionId)}/prices`, {
+    'filter[territory]': territory,
+    include: 'subscriptionPricePoint,territory',
+    'fields[subscriptionPrices]': 'startDate,subscriptionPricePoint,territory',
+    'fields[subscriptionPricePoints]': 'customerPrice,proceeds',
+    'fields[territories]': 'currency',
+    limit: 10,
+  });
+  const points = includedMap(reply, 'subscriptionPricePoints');
+  const territories = includedMap(reply, 'territories');
+  const today = new Date().toISOString().slice(0, 10);
+  const prices = (Array.isArray(reply?.data) ? reply.data : []).map((item: any) => {
+    const point = points.get(item?.relationships?.subscriptionPricePoint?.data?.id);
+    const place = territories.get(item?.relationships?.territory?.data?.id);
+    return compact({
+      customerPrice: point?.attributes?.customerPrice,
+      proceeds: point?.attributes?.proceeds,
+      currency: place?.attributes?.currency,
+      territory: item?.relationships?.territory?.data?.id ?? territory,
+      startDate: item?.attributes?.startDate,
+    });
+  });
+  const started = prices
+    .filter((price: Record<string, unknown>) => typeof price['startDate'] !== 'string' || (price['startDate'] as string) <= today)
+    .sort((a: Record<string, unknown>, b: Record<string, unknown>) => String(b['startDate'] ?? '').localeCompare(String(a['startDate'] ?? '')));
+  const later = prices.filter((price: Record<string, unknown>) => typeof price['startDate'] === 'string' && (price['startDate'] as string) > today);
+  if (!started.length && !later.length) return undefined;
+  return compact({ ...(started[0] ?? {}), scheduled: later.length ? later : undefined });
+}
+
+export async function subscriptions(api: Asc, appId: string, territory?: string): Promise<Record<string, unknown>> {
   const groupsReply = await api.get(`/v1/apps/${appId}/subscriptionGroups`, { 'fields[subscriptionGroups]': 'referenceName', limit: 50 });
   const groupItems: any[] = Array.isArray(groupsReply?.data) ? groupsReply.data : [];
   const groups: Array<Record<string, unknown>> = [];
   let freeTrial = false;
+  let priced = 0;
+  let unpriced = 0;
   for (const group of groupItems.slice(0, MAX_GROUPS)) {
     const reply = await api.get(`/v1/subscriptionGroups/${encodeURIComponent(group.id)}/subscriptions`, {
       'fields[subscriptions]': 'name,productId,subscriptionPeriod,state,groupLevel,familySharable,introductoryOffers',
@@ -178,12 +214,22 @@ export async function subscriptions(api: Asc, appId: string): Promise<Record<str
       limit: 50,
     });
     const offers = includedMap(reply, 'subscriptionIntroductoryOffers');
-    const items = (Array.isArray(reply?.data) ? reply.data : []).map((item: any) => {
+    const items: Array<Record<string, unknown>> = [];
+    for (const item of Array.isArray(reply?.data) ? reply.data : []) {
       const s = item?.attributes ?? {};
       const refs: any[] = Array.isArray(item?.relationships?.introductoryOffers?.data) ? item.relationships.introductoryOffers.data : [];
       const introductoryOffers = summarizeOffers(refs, offers);
       if (introductoryOffers.some((offer) => offer['offerMode'] === 'FREE_TRIAL')) freeTrial = true;
-      return compact({
+      let price: Record<string, unknown> | undefined;
+      if (territory && typeof item?.id === 'string') {
+        if (priced < MAX_PRICED) {
+          priced += 1;
+          price = await subscriptionPrice(api, item.id, territory);
+        } else {
+          unpriced += 1;
+        }
+      }
+      items.push(compact({
         id: item?.id,
         name: s.name,
         productId: s.productId,
@@ -191,9 +237,10 @@ export async function subscriptions(api: Asc, appId: string): Promise<Record<str
         state: s.state,
         groupLevel: s.groupLevel,
         familySharable: s.familySharable,
+        price,
         introductoryOffers,
-      });
-    });
+      }));
+    }
     groups.push(compact({
       id: group.id,
       referenceName: group?.attributes?.referenceName,
@@ -201,12 +248,17 @@ export async function subscriptions(api: Asc, appId: string): Promise<Record<str
       ...(nextAppleCursor(reply) ? { note: 'The group has more than 50 subscriptions; the first 50 are shown.' } : {}),
     }));
   }
-  return compact({
-    appId,
-    hasFreeTrial: freeTrial,
-    groups,
-    note: groupItems.length > MAX_GROUPS || nextAppleCursor(groupsReply)
+  const notes = [
+    groupItems.length > MAX_GROUPS || nextAppleCursor(groupsReply)
       ? `The app has more than ${MAX_GROUPS} subscription groups; the first ${MAX_GROUPS} are shown. Read the others with api_get.`
       : undefined,
+    unpriced ? `Prices are shown for the first ${MAX_PRICED} subscriptions; read the others with api_get (/v1/subscriptions/<id>/prices).` : undefined,
+  ].filter(Boolean);
+  return compact({
+    appId,
+    priceTerritory: territory,
+    hasFreeTrial: freeTrial,
+    groups,
+    note: notes.length ? notes.join(' ') : undefined,
   });
 }

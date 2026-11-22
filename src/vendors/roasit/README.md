@@ -34,6 +34,8 @@ Quick start table:
 
 Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`). The older setup kept this choice in `apps` as `{ appname, platform, apptoken, storeid }` rows, one per platform; `apptoken` is the id (one per app), and a row's platform is the `platform` filter of `get_report`.
 
+Connection check: `get_account` with no arguments.
+
 ## Credentials
 
 **`apitoken`: a Roasit API token**

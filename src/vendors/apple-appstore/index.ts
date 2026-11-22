@@ -285,18 +285,23 @@ const connector = defineConnector({
       kind: 'read',
       title: 'List App Store subscriptions',
       description:
-        "An app's auto-renewable subscriptions by subscription group: name, product ID, period, state and level of each, with its introductory offers "
-        + '(free trial, pay as you go or pay up front, with the duration and the number of territories), and whether any subscription has a free trial. '
-        + 'One request per group, at most 10 groups.',
+        "An app's auto-renewable subscriptions by subscription group: name, product ID, period, state and level of each, its current price in one "
+        + 'territory (customer price, proceeds, currency, and any price change already scheduled), its introductory offers (free trial, pay as you go '
+        + 'or pay up front, with the duration and the number of territories), and whether any subscription has a free trial. One request per group '
+        + '(at most 10) and one per priced subscription (at most 30).',
       inputSchema: {
         type: 'object',
-        properties: { app_id: APP_ID },
+        properties: {
+          app_id: APP_ID,
+          price_territory: { type: 'string', pattern: '^[A-Z]{3}$', default: 'USA', description: 'The territory of the prices, an ISO alpha-3 code (default USA).' },
+          include_prices: { type: 'boolean', default: true, description: 'false skips the prices (one request less per subscription).' },
+        },
         required: ['app_id'],
         additionalProperties: false,
       },
-      async run(args: { app_id: string }, h) {
+      async run(args: { app_id: string; price_territory: string; include_prices: boolean }, h) {
         requireApp(h, args.app_id);
-        return subscriptions(asc(h), args.app_id);
+        return subscriptions(asc(h), args.app_id, args.include_prices ? args.price_territory : undefined);
       },
     },
     {
@@ -305,7 +310,8 @@ const connector = defineConnector({
       title: 'List App Store in-app purchases',
       description:
         "An app's in-app purchases (consumable, non-consumable and non-renewing subscriptions): name, product ID, type, state and family sharing. "
-        + 'Auto-renewable subscriptions are in list_subscriptions. Pass nextCursor back as cursor for more.',
+        + 'Auto-renewable subscriptions are in list_subscriptions. A purchase\'s price: api_get /v1/inAppPurchasePriceSchedules/<id>/manualPrices with '
+        + 'include=inAppPurchasePricePoint and filter[territory]. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {

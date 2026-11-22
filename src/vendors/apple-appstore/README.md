@@ -22,8 +22,8 @@ Quick start table:
 | --- | --- | --- |
 | `list_apps` | read | The apps the key can see: Apple ID, name, bundle ID, SKU, primary locale. Lists the candidates of the `apps` account picker. |
 | `get_app_metadata` | read | What an app is: its record, app info for one locale (subtitle, categories, age rating, privacy URL), latest versions, the live version's description, keywords, promotional text and what's new, and the public App Store listing of one country (price, genre, rating, rating count, live description). |
-| `list_subscriptions` | read | Auto-renewable subscriptions by group, with their introductory offers (free trial, pay as you go, pay up front) and whether any has a free trial. |
-| `list_in_app_purchases` | read | Consumable, non-consumable and non-renewing purchases: name, product ID, type, state. |
+| `list_subscriptions` | read | Auto-renewable subscriptions by group, with their current price in one territory (default USA), their introductory offers (free trial, pay as you go, pay up front) and whether any has a free trial. |
+| `list_in_app_purchases` | read | Consumable, non-consumable and non-renewing purchases: name, product ID, type, state. Their prices are read with `api_get` (`/v1/inAppPurchasePriceSchedules/<id>/manualPrices`). |
 | `list_reviews` | read | Customer reviews with rating, title, text, nickname, territory, date and the developer response; filters for rating, territory and answered or not. |
 | `respond_to_review` | update | Publishes the developer response to a review, replacing an earlier one. Sent once, never retried. |
 | `delete_review_response` | delete | Deletes a developer response. |
@@ -37,6 +37,10 @@ Quick start table:
 | `api_request` | write | A POST, PUT, PATCH or DELETE to the App Store Connect API, such as a review submission. Sent once, never retried. |
 
 Account picker `apps` (App Store apps, one or more, listed by `list_apps`): every tool that names an app refuses one outside the selection. App Store Connect does not say which app an event or a review belongs to, so under the lock the write tools look it up first (an event in the app's event list, a review among the app's newest 1,000 reviews). `api_get` and `api_request` must name a chosen app in the path (`/v1/apps/<id>/...`), in `relationships.app` of a POST to a collection, or in `filter[app]`. The older setup kept this choice in `apps` as `{ appname, appid }` rows; `appid` is the id.
+
+Connection check: `list_apps` with no arguments.
+
+Submitting an in-app event for App Review has no tool of its own: with `api_request`, create a review submission for the app (`POST /v1/reviewSubmissions`), add the event to it (`POST /v1/reviewSubmissionItems` with `relationships.appEvent`), then send it (`PATCH /v1/reviewSubmissions/<id>` with `submitted: true`); or submit it in App Store Connect. A review submission can hold other items, such as an app version, so check what it contains first.
 
 ## Credentials
 

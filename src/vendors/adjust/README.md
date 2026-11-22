@@ -28,6 +28,8 @@ Quick start table:
 
 Account picker `apps` (Adjust apps, one or more, listed by `list_apps`): a report covers the chosen apps by default, and app tokens outside them are refused before anything is sent; `api_get` must list only chosen apps in `app_token__in`. Without a lock (the CLI without `CONNECTOR_ACCOUNTS`), a report without `app_tokens` covers the whole account. The older setup kept this choice in `apps` as `{ appname, platform, apptoken, storeid }` rows; `apptoken` is the id.
 
+Connection check: `list_apps` with no arguments.
+
 ## Credentials
 
 **`userapitoken`: the Adjust API token**
