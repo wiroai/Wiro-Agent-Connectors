@@ -13,6 +13,8 @@ import { apiTools, defineConnector, OutcomeUnknown, ToolFailure, type ToolHelper
 import { compact, isoDate, postStats, TEXT_WINDOW_BYTES, textWindow, topLinks, trimPost, trimResource, trimSubscription } from './format.js';
 
 const V2 = '/v2';
+/** A post with its body: read up to the 8 MiB a host allows for an API reply. */
+const LARGE_REPLY_BYTES = 8 * 1024 * 1024;
 const PUBLICATION_ID = { type: 'string' as const, pattern: '^pub_[0-9A-Za-z-]{8,64}$', description: 'The publication (pub_...). Default: the saved publication ID.' };
 const POST_ID = { type: 'string' as const, pattern: '^post_[0-9A-Za-z-]{8,64}$', description: 'The post ID (post_...).' };
 const SUBSCRIPTION_ID = { type: 'string' as const, pattern: '^sub_[0-9A-Za-z-]{8,64}$', description: 'The subscription ID (sub_...).' };
@@ -292,6 +294,7 @@ const connector = defineConnector({
         const response = await h.api({
           path: `${V2}/publications/${id}/posts/${args.post_id}`,
           query: { 'expand[]': expand },
+          maxBytes: LARGE_REPLY_BYTES,
           errors: { 404: 'beehiiv found no such post, or creating it failed in the background (POST_CREATION_FAILED: create it once more)' },
         });
         const post = response.data?.data ?? {};

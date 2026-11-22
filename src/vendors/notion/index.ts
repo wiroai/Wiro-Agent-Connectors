@@ -27,6 +27,8 @@ import {
 } from './format.js';
 
 const NOTION_VERSION = '2026-03-11';
+/** A long page's Markdown: read up to the 8 MiB a host allows for an API reply. */
+const LARGE_REPLY_BYTES = 8 * 1024 * 1024;
 
 const NOT_SHARED =
   'Notion found nothing with that ID that this connection can see. Check the ID; if it is right, the page is not shared with the connection: '
@@ -224,6 +226,7 @@ const connector = defineConnector({
         const { data } = await h.api({
           path: `/v1/pages/${id}/markdown`,
           query: { markdown_version: 'v2', include_transcript: args.include_transcript ? true : undefined },
+          maxBytes: LARGE_REPLY_BYTES,
           errors: { 404: NOT_SHARED },
         });
         const markdown = typeof data?.markdown === 'string' ? data.markdown : '';

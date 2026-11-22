@@ -6,6 +6,8 @@ import { cleanVendorText, formatNumber, OutcomeUnknown, shrinkToFit, ToolFailure
 
 /** Hashnode takes requests up to 100 KB. */
 export const MAX_REQUEST_BYTES = 100 * 1024;
+/** Answers can carry whole posts: read up to the 8 MiB a host allows for an API reply. */
+const MAX_ANSWER_BYTES = 8 * 1024 * 1024;
 
 /** Drops undefined and null fields. */
 export function compact(value: Record<string, unknown>): Record<string, unknown> {
@@ -32,7 +34,7 @@ export async function gql(
         + `${options.write ? 'Nothing was changed.' : 'Nothing was sent.'}`,
     );
   }
-  const response = await h.api({ method: 'POST', path: '/', json: body, ...(options.write ? { write: true } : { safe: true }) });
+  const response = await h.api({ method: 'POST', path: '/', json: body, maxBytes: MAX_ANSWER_BYTES, ...(options.write ? { write: true } : { safe: true }) });
   const payload = response.data;
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     if (options.write) throw new OutcomeUnknown('Hashnode answered without GraphQL JSON, so it is not known whether the change was made.');

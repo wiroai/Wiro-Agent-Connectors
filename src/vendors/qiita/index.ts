@@ -11,6 +11,8 @@ import { apiTools, defineConnector, ToolFailure, truncate, type ToolHelpers } fr
 
 const BASE = '/api/v2';
 const MAX_SCAN_PAGES = 10;
+/** Lists carry every article's body: read up to the 8 MiB a host allows for an API reply. */
+const LIST_REPLY_BYTES = 8 * 1024 * 1024;
 
 const ITEM_ID = {
   type: 'string' as const,
@@ -176,7 +178,7 @@ const connector = defineConnector({
         const perPage = typeof state?.['n'] === 'number' ? state['n'] : args.per_page;
         if (args.sort === 'newest') {
           const page = typeof state?.['p'] === 'number' ? state['p'] : 1;
-          const { data, headers } = await h.api({ path: `${BASE}/authenticated_user/items`, query: { page, per_page: perPage } });
+          const { data, headers } = await h.api({ path: `${BASE}/authenticated_user/items`, query: { page, per_page: perPage }, maxBytes: LIST_REPLY_BYTES });
           const items: any[] = Array.isArray(data) ? data : [];
           const total = totalCount(headers);
           const more = total !== undefined ? page * perPage < total : items.length >= perPage;
@@ -193,7 +195,7 @@ const connector = defineConnector({
         let total: number | undefined;
         let headers: Headers | undefined;
         for (let page = 1; page <= MAX_SCAN_PAGES; page++) {
-          const response = await h.api({ path: `${BASE}/authenticated_user/items`, query: { page, per_page: 100 } });
+          const response = await h.api({ path: `${BASE}/authenticated_user/items`, query: { page, per_page: 100 }, maxBytes: LIST_REPLY_BYTES });
           headers = response.headers;
           total = totalCount(response.headers) ?? total;
           const items: any[] = Array.isArray(response.data) ? response.data : [];
@@ -267,7 +269,7 @@ const connector = defineConnector({
         const page = typeof state?.['p'] === 'number' ? state['p'] : 1;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
         const perPage = typeof state?.['n'] === 'number' ? state['n'] : args.per_page;
-        const { data, headers } = await h.api({ path: `${BASE}/items`, query: { page, per_page: perPage, query: args.query } });
+        const { data, headers } = await h.api({ path: `${BASE}/items`, query: { page, per_page: perPage, query: args.query }, maxBytes: LIST_REPLY_BYTES });
         const items: any[] = Array.isArray(data) ? data : [];
         const total = totalCount(headers);
         const more = total !== undefined ? page * perPage < total : items.length >= perPage;

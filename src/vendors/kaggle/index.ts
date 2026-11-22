@@ -30,6 +30,8 @@ import {
 } from './helpers.js';
 
 const API = '/api/v1';
+/** Notebook code and run logs can be long: read up to the 8 MiB a host allows for an API reply. */
+const LARGE_REPLY_BYTES = 8 * 1024 * 1024;
 const MACHINES: Record<string, { machineShape?: string; enableGpu: boolean; enableTpu: boolean }> = {
   none: { enableGpu: false, enableTpu: false },
   gpu_t4x2: { machineShape: 'NvidiaTeslaT4', enableGpu: true, enableTpu: false },
@@ -158,7 +160,7 @@ const refused = (data: any): Record<string, unknown> | undefined => {
 async function findOutputFile(h: ToolHelpers, owner: string, slug: string, name: string): Promise<{ name: string; url: string } | undefined> {
   let token: string | undefined;
   for (let page = 0; page < 10; page++) {
-    const { data } = await h.api({ path: `${API}/kernels/output`, query: { userName: owner, kernelSlug: slug, pageSize: 100, pageToken: token } });
+    const { data } = await h.api({ path: `${API}/kernels/output`, query: { userName: owner, kernelSlug: slug, pageSize: 100, pageToken: token }, maxBytes: LARGE_REPLY_BYTES });
     const failed = answerError(data);
     if (failed) throw new ToolFailure(`Kaggle refused to list the output: ${failed}.`);
     for (const file of listOf(data, 'files')) {
@@ -264,7 +266,7 @@ const connector = defineConnector({
       },
       async run(args: { notebook: string; include_code: boolean; cursor?: string }, h) {
         const { owner, slug } = ownerSlug(args.notebook, h.credentials['username'] as string, 'notebook');
-        const { data } = await h.api({ path: `${API}/kernels/pull`, query: { userName: owner, kernelSlug: slug }, errors: { 404: 'Kaggle found no notebook with that name that this account can see' } });
+        const { data } = await h.api({ path: `${API}/kernels/pull`, query: { userName: owner, kernelSlug: slug }, maxBytes: LARGE_REPLY_BYTES, errors: { 404: 'Kaggle found no notebook with that name that this account can see' } });
         const failed = answerError(data);
         if (failed) throw new ToolFailure(`Kaggle refused to read the notebook: ${failed}.`);
         const metadata = field(data, 'metadata') ?? {};
@@ -413,6 +415,7 @@ const connector = defineConnector({
         const { data } = await h.api({
           path: `${API}/kernels/output`,
           query: { userName: owner, kernelSlug: slug, pageSize: args.page_size, pageToken: at.token },
+          maxBytes: LARGE_REPLY_BYTES,
           errors: { 404: 'Kaggle found no notebook with that name that this account can see' },
         });
         const failed = answerError(data);
