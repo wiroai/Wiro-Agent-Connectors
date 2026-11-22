@@ -1,0 +1,8 @@
+{ "data": { "publication": { "id": "64f0c3a1b2c3d4e5f6a7b8c9", "title": "Acme Engineering", "posts": {
+  "totalDocuments": 42,
+  "pageInfo": { "hasNextPage": true, "endCursor": "NjVhMWIyYzNkNGU1ZjYwNzE4MjkzMDVfMjAyNi0xMS0wMVQxMDowMDowMC4wMDBa" },
+  "edges": [
+    { "node": { "id": "65a1b2c3d4e5f60718293051", "title": "Shipping a GraphQL API", "slug": "shipping-a-graphql-api", "url": "https://blog.example.com/shipping-a-graphql-api", "publishedAt": "2026-11-18T09:00:00.000Z", "updatedAt": "2026-11-19T12:00:00.000Z", "views": 1280, "reactionCount": 34, "responseCount": 5, "replyCount": 2, "readTimeInMinutes": 7, "tags": [{ "slug": "graphql" }, { "slug": "api" }], "series": { "name": "API notes" } } },
+    { "node": { "id": "65a1b2c3d4e5f60718293052", "title": "Hello | world", "slug": "hello-world", "url": "https://blog.example.com/hello-world", "publishedAt": "2026-11-01T10:00:00.000Z", "updatedAt": null, "views": null, "reactionCount": 0, "responseCount": 0, "replyCount": 0, "readTimeInMinutes": 1, "tags": [], "series": null } }
+  ]
+} } } }

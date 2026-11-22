@@ -1,0 +1,1 @@
+{ "errors": [{ "message": "Cannot query field \"stats\" on type \"Post\".", "locations": [{ "line": 1, "column": 60 }], "extensions": { "code": "GRAPHQL_VALIDATION_FAILED" } }] }

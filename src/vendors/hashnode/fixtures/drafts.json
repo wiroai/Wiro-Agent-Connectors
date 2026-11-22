@@ -1,0 +1,7 @@
+{ "data": { "publication": { "id": "64f0c3a1b2c3d4e5f6a7b8c9", "title": "Acme Engineering", "drafts": {
+  "totalDocuments": 1,
+  "pageInfo": { "hasNextPage": false, "endCursor": null },
+  "edges": [
+    { "node": { "id": "66b2c3d4e5f6071829304152", "title": "Launch notes", "subtitle": "What changed", "updatedAt": "2026-11-21T15:00:00.000Z", "scheduledDate": null, "readTimeInMinutes": 3, "canonicalUrl": null, "coverImage": { "url": "https://cdn.example.com/cover.png" }, "tags": [{ "slug": "release" }], "series": null } }
+  ]
+} } } }

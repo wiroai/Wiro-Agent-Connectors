@@ -1,0 +1,1 @@
+{ "errors": [{ "message": "Tag slug is invalid.", "path": ["createDraft"], "extensions": { "code": "BAD_USER_INPUT" } }], "data": { "createDraft": null } }

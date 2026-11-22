@@ -1,0 +1,11 @@
+{
+  "read": { "tool": "get_blog", "args": {} },
+  "write": {
+    "tool": "create_draft",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "content_markdown": "A draft from the connector smoke test. Nothing is published."
+    },
+    "note": "Leaves an unpublished draft on the blog (its editor link is in the result). The connector never deletes: delete the draft in the Hashnode editor."
+  }
+}

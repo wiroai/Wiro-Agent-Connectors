@@ -1,0 +1,6 @@
+{ "data": { "publication": { "id": "64f0c3a1b2c3d4e5f6a7b8c9", "post": { "id": "65a1b2c3d4e5f60718293051", "title": "Shipping a GraphQL API", "subtitle": null, "slug": "shipping-a-graphql-api", "url": "https://blog.example.com/shipping-a-graphql-api", "publishedAt": "2026-11-18T09:00:00.000Z", "updatedAt": "2026-11-19T12:00:00.000Z", "canonicalUrl": null, "views": 1280, "reactionCount": 34, "responseCount": 5, "replyCount": 2, "readTimeInMinutes": 7,
+  "content": { "markdown": "## Why GraphQL\n\nOne endpoint.\n" },
+  "coverImage": null,
+  "tags": [{ "slug": "graphql", "name": "GraphQL" }],
+  "series": { "id": "67c3d4e5f607182930415263", "name": "API notes" },
+  "seo": { "title": null, "description": null } } } } }

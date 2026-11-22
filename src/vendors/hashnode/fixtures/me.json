@@ -1,0 +1,4 @@
+{ "data": { "me": { "id": "5f1e2d3c4b5a69788796a5b4", "username": "alice", "publications": { "edges": [
+  { "node": { "id": "64f0c3a1b2c3d4e5f6a7b8c9", "title": "Acme Engineering", "url": "https://blog.example.com" } },
+  { "node": { "id": "650a1b2c3d4e5f6071829304", "title": "Alice writes", "url": "https://alice.hashnode.dev" } }
+] } } } }

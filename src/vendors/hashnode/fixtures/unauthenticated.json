@@ -1,0 +1,1 @@
+{ "errors": [{ "message": "You must be authenticated.", "path": ["me"], "extensions": { "code": "UNAUTHENTICATED" } }], "data": null }
