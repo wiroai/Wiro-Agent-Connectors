@@ -13,6 +13,7 @@ import { createHttp, type ApiRequest, type ApiResponse, type MediaOptions, type 
 import { parseSiteUrl } from './origins.js';
 import { decodeCursor, encodeCursor, fitPage, shrinkToFit, type PageInput } from './output.js';
 import { validateArguments } from './schema.js';
+import { uploadHostProblem } from './upload-hosts.js';
 
 /**
  * What a tool does. The MCP annotations follow from it, so they are true by
@@ -102,6 +103,15 @@ export interface ConnectorDefinition {
    * normalizeCredentials, so hosts and the module agree on it.
    */
   originFields?: string[];
+  /**
+   * Only when the vendor's API hands out its own upload addresses, such as a
+   * pre-signed part address on another host: the hosts they are on, as narrow
+   * as the vendor documents them, e.g. [".blobstore.apple.com"]. An entry with
+   * a leading dot matches every host under it, one without only that host.
+   * Hosts let a tool send a PUT or POST with a body there through ctx.fetch,
+   * with no credential header (see isUploadHost).
+   */
+  uploadHosts?: string[];
   /** The names the module reads from ctx.credentials, e.g. ["api_key"]. All are required, unless requiredCredentials says otherwise. */
   credentials: string[];
   /**
@@ -178,8 +188,20 @@ function assertDefinition(def: ConnectorDefinition): void {
     const check = def.tools.find((candidate) => candidate.name === tool.check);
     if (!check || check.kind !== 'read') problem(`write tool ${tool.name} needs check: the name of a read tool`);
   }
+  assertUploadHosts(def, problem);
   assertRequiredCredentials(def, problem);
   assertAccountPickers(def, problem);
+}
+
+function assertUploadHosts(def: ConnectorDefinition, problem: (message: string) => never): void {
+  const hosts: unknown = def.uploadHosts;
+  if (hosts === undefined) return;
+  if (!Array.isArray(hosts)) problem('uploadHosts must be a list of host names, e.g. [".blobstore.apple.com"]');
+  (hosts as unknown[]).forEach((entry, index) => {
+    const wrong = uploadHostProblem(entry);
+    if (wrong) problem(`upload host ${JSON.stringify(entry)} ${wrong}`);
+    if ((hosts as unknown[]).indexOf(entry) !== index) problem(`upload host ${String(entry)} is listed twice`);
+  });
 }
 
 function assertRequiredCredentials(def: ConnectorDefinition, problem: (message: string) => never): void {
@@ -407,6 +429,7 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
     vendor: def.vendor,
     origins: [...def.origins],
     originFields: [...(def.originFields ?? [])],
+    uploadHosts: [...(def.uploadHosts ?? [])],
     credentials: [...def.credentials],
     requiredCredentials: required.map((list) => [...list]),
     accountPickers: (def.accountPickers ?? []).map(copyPicker),

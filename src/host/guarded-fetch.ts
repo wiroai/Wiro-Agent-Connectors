@@ -2,6 +2,7 @@ import dns from 'node:dns';
 import https from 'node:https';
 import net from 'node:net';
 import { parseSiteUrl } from '../core/origins.js';
+import { isUploadHost, uploadHostProblem } from '../core/upload-hosts.js';
 import type { ConnectorFetch, ConnectorModule, ConnectorRequestInit } from '../types.js';
 import { isPublicAddress } from './ip.js';
 
@@ -16,6 +17,12 @@ import { isPublicAddress } from './ip.js';
 //   first: https only, no user name or password in the URL, every address the
 //   name resolves to must be public, the connection goes to the address that
 //   was checked, and redirects are not followed.
+// - A PUT or POST with a body to a host in the module's uploadHosts (an upload
+//   address its vendor's API returned, such as a pre-signed part address) is
+//   an upload: https on the default port, no user name or password, no
+//   Authorization, Proxy-Authorization or Cookie header, a body within the
+//   upload cap, every address public, the connection to the checked address,
+//   redirects not followed, and the reply capped like an API reply.
 // - Any other URL is a media download: GET or HEAD without a body, https only,
 //   no headers but Accept, User-Agent and one byte range (Range: bytes=F-L, for
 //   a module that reads a large file in parts), so credentials never leave for
@@ -45,7 +52,7 @@ export interface PinnedReply {
   destroy(): void;
 }
 
-/** One HTTPS request to an address that was already checked: a media download, or an API request to a credential origin. */
+/** One HTTPS request to an address that was already checked: a media download, an upload, or an API request to a credential origin. */
 export type PinnedTransport = (request: {
   url: URL;
   address: ResolvedAddress;
@@ -67,12 +74,19 @@ export interface GuardedFetchOptions {
    * originsFromCredentials). API requests may go there, after the SSRF checks.
    */
   credentialOrigins?: readonly string[];
+  /**
+   * The module's uploadHosts: a PUT or POST with a body may go to an address
+   * on one of them, after the checks of an upload (see isUploadHost).
+   */
+  uploadHosts?: readonly string[];
   /** Per request, API and media alike (default 30 s). */
   timeoutMs?: number;
   /** The largest API reply (default 8 MiB). */
   maxResponseBytes?: number;
   /** The largest media download (default 25 MiB). */
   maxMediaBytes?: number;
+  /** The largest body of an upload to an upload host (default 25 MiB). */
+  maxUploadBytes?: number;
   maxRedirects?: number;
   /** Replacements for tests: the API fetch, the DNS lookup and the HTTPS transport to checked addresses. */
   apiFetch?: typeof fetch;
@@ -85,12 +99,15 @@ export interface GuardedFetchOptions {
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const DEFAULT_MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 5;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
 const MEDIA_HEADERS = new Set(['accept', 'user-agent', 'range']);
 /** The Range a media download may carry: one byte range from a given first byte. */
 const BYTE_RANGE = /^bytes=\d{1,15}-\d{0,15}$/;
+/** Headers an upload never carries: its address holds its own signature, and credentials never go there. */
+const CREDENTIAL_HEADERS = new Set(['authorization', 'proxy-authorization', 'cookie']);
 
 function refuse(message: string): never {
   throw new ConnectorFetchError('URL_REFUSED', message);
@@ -232,9 +249,15 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
     if (!url || url.protocol !== 'https:' || url.origin !== origin) throw new Error(`credential origin ${origin} must be an https origin like https://example.com`);
     if (!origins.has(origin)) credentialOrigins.add(origin);
   }
+  const uploadHosts = [...(options.uploadHosts ?? [])];
+  for (const entry of uploadHosts) {
+    const problem = uploadHostProblem(entry);
+    if (problem) throw new Error(`upload host ${JSON.stringify(entry)} ${problem}`);
+  }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const maxMediaBytes = options.maxMediaBytes ?? DEFAULT_MAX_MEDIA_BYTES;
+  const maxUploadBytes = options.maxUploadBytes ?? DEFAULT_MAX_UPLOAD_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const resolve = options.resolve ?? systemResolve;
   const transport = options.transport ?? options.mediaTransport ?? httpsTransport;
@@ -282,10 +305,12 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
     return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
   }
 
-  /** An API request to a credential origin: checked like a media URL, sent to the checked address, never redirected. */
-  async function credentialApi(url: URL, init: ConnectorRequestInit): Promise<Response> {
-    if (url.username || url.password) refuse('URLs with a user name or password are not allowed');
-    const method = (init.method ?? 'GET').toUpperCase();
+  /**
+   * One request to a checked address that is never redirected: an API request
+   * to a credential origin, or an upload. The reply is capped like an API
+   * reply, and a redirect comes back as it is.
+   */
+  async function pinned(url: URL, method: string, init: ConnectorRequestInit): Promise<Response> {
     const timer = timeoutSignal(timeoutMs, init.signal);
     try {
       const address = await publicAddress(url);
@@ -304,11 +329,30 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
       const empty = NULL_BODY_STATUSES.has(reply.status) || method === 'HEAD';
       if (empty) reply.destroy();
       const bytes = empty ? null : await readReply(reply, maxResponseBytes, 'reply');
-      // A redirect comes back as it is: an API request is never sent on to another address.
       return new Response(bytes, { status: reply.status, headers: toHeaders(reply.headers) });
     } catch (error) {
       throw failure(error, timer.timedOut(), init.signal);
     }
+  }
+
+  /** An API request to a credential origin: checked like a media URL, sent to the checked address, never redirected. */
+  async function credentialApi(url: URL, init: ConnectorRequestInit): Promise<Response> {
+    if (url.username || url.password) refuse('URLs with a user name or password are not allowed');
+    return pinned(url, (init.method ?? 'GET').toUpperCase(), init);
+  }
+
+  /** An upload to one of the module's upload hosts: no credentials, checked like a media URL, sent to the checked address, never redirected. */
+  async function upload(url: URL, method: string, init: ConnectorRequestInit): Promise<Response> {
+    if (url.protocol !== 'https:') refuse(`only https uploads are allowed, not ${url.protocol}`);
+    if (url.port) refuse('an upload goes to the default https port only');
+    if (url.username || url.password) refuse('URLs with a user name or password are not allowed');
+    for (const name of Object.keys(init.headers ?? {})) {
+      if (CREDENTIAL_HEADERS.has(name.toLowerCase())) refuse(`an upload to ${url.hostname} cannot carry the ${name.toLowerCase()} header`);
+    }
+    const body = init.body as string | Uint8Array;
+    const size = typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength;
+    if (size > maxUploadBytes) refuse(`the upload is larger than ${maxUploadBytes} bytes`);
+    return pinned(url, method, init);
   }
 
   async function media(start: URL, init: ConnectorRequestInit): Promise<Response> {
@@ -364,6 +408,8 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
     }
     if (origins.has(url.origin)) return api(url, init);
     if (credentialOrigins.has(url.origin)) return credentialApi(url, init);
+    const method = (init.method ?? 'GET').toUpperCase();
+    if ((method === 'PUT' || method === 'POST') && init.body !== undefined && isUploadHost(url.hostname, uploadHosts)) return upload(url, method, init);
     return media(url, init);
   };
 }

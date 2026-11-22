@@ -13,6 +13,7 @@ const {
   defineConnector,
   encodeCursor,
   fitPage,
+  isUploadHost,
   orList,
   OUTPUT_LIMIT_BYTES,
   parseSiteUrl,
@@ -136,12 +137,52 @@ test('a connector definition is checked when the module loads', () => {
   assert.throws(() => defineConnector({ ...base, credentials: ['site_url'], originFields: ['site_url', 'site_url'] }), /origin field site_url is listed twice/);
   assert.doesNotThrow(() => defineConnector({ ...base, origins: [], credentials: ['site_url', 'api_key'], originFields: ['site_url'] }));
   const module = defineConnector(base);
-  assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'originFields', 'credentials', 'requiredCredentials', 'accountPickers', 'tools', 'call']);
+  assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'originFields', 'uploadHosts', 'credentials', 'requiredCredentials', 'accountPickers', 'tools', 'call']);
   assert.deepEqual(module.originFields, []);
+  assert.deepEqual(module.uploadHosts, [], 'no upload hosts by default');
   assert.deepEqual(module.requiredCredentials, [['api_key']], 'by default one list of every credential');
   assert.deepEqual(module.accountPickers, []);
   assert.ok(Object.isFrozen(module) && Object.isFrozen(module.tools[0].annotations));
   assert.ok(Object.isFrozen(module.requiredCredentials[0]));
+});
+
+test('upload hosts are checked when the module loads: lowercase host names, with a leading dot for every host under one', () => {
+  const tool = { name: 'get_x', kind: 'read', title: 'Get', description: 'Gets.', inputSchema: { type: 'object', properties: {}, additionalProperties: false }, run: async () => ({}) };
+  const base = { vendor: 'acme', label: 'Acme', origins: ['https://api.acme.test'], credentials: ['api_key'], tools: [tool] };
+  const module = defineConnector({ ...base, uploadHosts: ['.blobstore.apple.com', 'uploads.example.com', '.xn--bcher-kva.example'] });
+  assert.deepEqual(module.uploadHosts, ['.blobstore.apple.com', 'uploads.example.com', '.xn--bcher-kva.example'], 'exported as given');
+  assert.ok(Object.isFrozen(module.uploadHosts));
+  const cases = [
+    ['.blobstore.apple.com', /uploadHosts must be a list of host names/],
+    [[7], /upload host 7 must be a host name/],
+    [['Uploads.Example.com'], /upload host "Uploads\.Example\.com" must be a lowercase host name like uploads\.example\.com/],
+    [['https://uploads.example.com'], /must be a lowercase host name/],
+    [['*.apple.com'], /must be a lowercase host name/],
+    [['uploads..example.com'], /must be a lowercase host name/],
+    [['-uploads.example.com'], /must be a lowercase host name/],
+    [['uploads.example.com.'], /must be a lowercase host name/],
+    [['..example.com'], /must be a lowercase host name/],
+    [[''], /must be a lowercase host name/],
+    [['[::1]'], /must be a lowercase host name/],
+    [['.com'], /upload host "\.com" needs at least two labels, like example\.com/],
+    [['localhost'], /needs at least two labels/],
+    [['93.184.216.34'], /upload host "93\.184\.216\.34" must be a host name, not an IP address/],
+    [['.blobstore.apple.com', '.blobstore.apple.com'], /upload host \.blobstore\.apple\.com is listed twice/],
+  ];
+  for (const [uploadHosts, message] of cases) {
+    assert.throws(() => defineConnector({ ...base, uploadHosts }), message, JSON.stringify(uploadHosts));
+  }
+});
+
+test('an address is on an upload host when it is the host itself, or under one with a leading dot, never a look-alike', () => {
+  const hosts = ['.blobstore.apple.com', 'uploads.example.com'];
+  for (const name of ['store-030.blobstore.apple.com', 'a.b.blobstore.apple.com', 'STORE-030.Blobstore.Apple.COM', 'store-030.blobstore.apple.com.', 'uploads.example.com']) {
+    assert.equal(isUploadHost(name, hosts), true, name);
+  }
+  for (const name of ['blobstore.apple.com', 'evil-blobstore.apple.com', 'store-030.blobstore.apple.com.evil.test', 'apple.com', 'x.uploads.example.com', 'uploads.example.com.evil.test', '93.184.216.34', '']) {
+    assert.equal(isUploadHost(name, hosts), false, name);
+  }
+  assert.equal(isUploadHost('store-030.blobstore.apple.com', []), false, 'a module without upload hosts has none');
 });
 
 test('a site or instance URL credential becomes an https origin, or a plain reason why not', () => {

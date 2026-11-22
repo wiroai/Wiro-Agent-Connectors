@@ -15,6 +15,7 @@ export type { AppStoreConnectKey, GoogleServiceAccountOptions, JwtAlgorithm, Sig
 export type { ApiRequest, ApiResponse, HttpMethod, MediaOptions, MediaResult, QueryValue } from './http.js';
 export { parseSiteUrl, siteOrigin } from './origins.js';
 export type { SiteUrl } from './origins.js';
+export { isUploadHost, uploadHostProblem } from './upload-hosts.js';
 export { decodeCursor, encodeCursor, fitPage, jsonSize, OUTPUT_LIMIT_BYTES, shrinkToFit } from './output.js';
 export type { PageInput } from './output.js';
 export { allowedAccounts, requireAccounts } from './accounts.js';

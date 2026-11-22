@@ -15,10 +15,12 @@ const { validateArguments } = require('../build/core.js');
 const vendors = listVendors();
 const folders = [...vendors, '_template'];
 const readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
-const EXPORTS = ['vendor', 'origins', 'originFields', 'credentials', 'requiredCredentials', 'accountPickers', 'tools', 'call'];
+const EXPORTS = ['vendor', 'origins', 'originFields', 'uploadHosts', 'credentials', 'requiredCredentials', 'accountPickers', 'tools', 'call'];
 const PICKER_FIELDS = ['key', 'label', 'description', 'multiple', 'tool', 'idField', 'nameField', 'legacyField'];
 const NAME = /^[a-z][a-z0-9_]{0,63}$/;
 const DOT_PATH = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){0,5}$/;
+/** An upload host: a lowercase host name of two labels or more, not an IP address, with a leading dot for every host under it. */
+const UPLOAD_HOST = /^\.?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?=[a-z0-9-]*[a-z])[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 test('every vendor folder was built, and nothing else', () => {
   const sources = fs.readdirSync(path.join(ROOT, 'src', 'vendors')).filter((name) => !name.startsWith('_') && fs.existsSync(path.join(ROOT, 'src', 'vendors', name, 'index.ts')));
@@ -38,6 +40,9 @@ for (const folder of folders) {
     assert.ok(Array.isArray(module.originFields), 'originFields is a list, empty when unused');
     for (const name of module.originFields) assert.ok(module.credentials.includes(name), `origin field ${name} is a credential`);
     assert.ok(module.origins.length > 0 || module.originFields.length > 0, 'it names where it may connect');
+    assert.ok(Array.isArray(module.uploadHosts), 'uploadHosts is a list, empty when unused');
+    for (const host of module.uploadHosts) assert.match(host, UPLOAD_HOST);
+    assert.equal(new Set(module.uploadHosts).size, module.uploadHosts.length, 'no upload host twice');
     assert.equal(typeof module.call, 'function');
   });
 

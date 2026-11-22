@@ -7,7 +7,7 @@ import { createGuardedFetch, originsFromCredentials } from './guarded-fetch.js';
 export interface ConnectorServerOptions {
   credentials: Record<string, string>;
   accounts: ConnectorAccounts;
-  /** Defaults to a guarded fetch locked to the module's origins and the origins of its originFields credentials. */
+  /** Defaults to a guarded fetch locked to the module's origins, the origins of its originFields credentials and its upload hosts. */
   fetch?: ConnectorFetch;
   /** Where log lines go (default: stderr). Never stdout: that is the protocol. */
   log?: (text: string) => void;
@@ -30,6 +30,8 @@ export function createConnectorServer(module: ConnectorModule, options: Connecto
   const fetch = options.fetch ?? createGuardedFetch({
     origins: module.origins,
     credentialOrigins: originsFromCredentials(module, options.credentials),
+    // A module built before uploadHosts existed sends no uploads.
+    uploadHosts: module.uploadHosts ?? [],
   });
   const server = new Server(
     { name: module.vendor, version: options.version ?? '0.0.0' },

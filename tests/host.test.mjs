@@ -22,6 +22,15 @@ test('a module may name its API by an origin field instead of a fixed origin, bu
   assert.throws(() => assertConnectorModule({ ...base, originFields: 'site_url' }, 'acme'), /originFields is not a list/);
 });
 
+test('the module check reads uploadHosts, and accepts a module built before them', () => {
+  assert.doesNotThrow(() => assertConnectorModule({ ...base, uploadHosts: ['.blobstore.apple.com', 'uploads.example.com'] }, 'acme'));
+  assert.doesNotThrow(() => assertConnectorModule({ ...base, uploadHosts: [] }, 'acme'));
+  assert.doesNotThrow(() => assertConnectorModule(base, 'acme'), 'a module built before uploadHosts existed');
+  for (const uploadHosts of ['.blobstore.apple.com', [7], ['.com'], ['Uploads.Example.com'], ['93.184.216.34'], ['uploads.example.com', 'uploads.example.com']]) {
+    assert.throws(() => assertConnectorModule({ ...base, uploadHosts }, 'acme'), /uploadHosts is not a list of distinct host names/, JSON.stringify(uploadHosts));
+  }
+});
+
 test('the CLI reads each credential from <VENDOR>_<CREDENTIAL>, and an OAuth access token from <VENDOR>_ACCESS_TOKEN', () => {
   assert.equal(ACCESS_TOKEN_CREDENTIAL, 'access_token');
   assert.equal(envNameFor('google-ads', 'access_token'), 'GOOGLE_ADS_ACCESS_TOKEN');

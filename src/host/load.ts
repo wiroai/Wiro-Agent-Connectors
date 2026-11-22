@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { uploadHostProblem } from '../core/upload-hosts.js';
 import type { ConnectorModule } from '../types.js';
 
 export const VENDOR_PATTERN = /^[a-z][a-z0-9-]{1,29}$/;
@@ -36,6 +37,11 @@ export function assertConnectorModule(value: unknown, vendor: string): asserts v
     if (!Array.isArray(module.credentials)) problems.push('credentials is missing');
     else if (Array.isArray(originFields) && originFields.some((name) => !module.credentials?.includes(name))) {
       problems.push('an origin field is not one of its credentials');
+    }
+    // A module built before uploadHosts existed sends no uploads.
+    const uploadHosts: unknown = module.uploadHosts ?? [];
+    if (!Array.isArray(uploadHosts) || uploadHosts.some((entry) => uploadHostProblem(entry) !== undefined) || new Set(uploadHosts).size !== uploadHosts.length) {
+      problems.push('uploadHosts is not a list of distinct host names');
     }
     // A module built before requiredCredentials and accountPickers existed has
     // neither: every credential is required, and it offers no picker.

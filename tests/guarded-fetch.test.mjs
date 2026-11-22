@@ -286,6 +286,105 @@ test('a module behind the guard reports a refused image plainly and posts nothin
   assert.deepEqual(apiCalls, [], 'not even a sign-in was sent');
 });
 
+// Upload hosts: the pre-signed addresses a vendor's API hands out for an upload.
+
+const UPLOAD_HOSTS = ['.blobstore.apple.com'];
+const PART = 'https://store-030.blobstore.apple.com/assets-example-030001/part1?uploadId=u1&Signature=REDACTED&partNumber=1';
+
+test('an upload to an upload host goes to the checked address with its method, headers and body, and its reply comes back capped', async () => {
+  const transport = fakeTransport({
+    [PART]: (request) => ({ status: 200, headers: { etag: '"part-1"' }, body: new TextEncoder().encode(`got ${request.body.length}`) }),
+    'https://store-031.blobstore.apple.com/big': { status: 200, headers: {}, body: new Uint8Array(64) },
+  });
+  const fetch = createGuardedFetch({
+    origins: ORIGINS,
+    uploadHosts: UPLOAD_HOSTS,
+    maxResponseBytes: 32,
+    transport,
+    resolve: fakeResolve({ 'store-030.blobstore.apple.com': ['17.253.5.10'], 'store-031.blobstore.apple.com': ['17.253.5.11'] }),
+    apiFetch: async () => {
+      throw new Error('an upload never goes through the plain API fetch');
+    },
+  });
+  const body = Uint8Array.from([1, 2, 3, 4, 5, 6]);
+  const response = await fetch(PART, { method: 'put', headers: { 'Content-Type': 'image/png' }, body });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('etag'), '"part-1"');
+  assert.equal(await response.text(), 'got 6');
+  assert.deepEqual(transport.requests[0], { url: PART, address: '17.253.5.10', method: 'PUT', headers: { 'Content-Type': 'image/png' }, body });
+  const posted = await fetch(PART, { method: 'POST', body: 'text' });
+  assert.equal(posted.status, 200);
+  assert.equal(transport.requests[1].method, 'POST');
+  await refusedWith(fetch('https://store-031.blobstore.apple.com/big', { method: 'PUT', body }), 'TOO_LARGE', /the reply is larger than 32 bytes/);
+});
+
+test('an upload is refused before it is sent: not https, another port, a password, a credential header, too large, or a private address', async () => {
+  const transport = fakeTransport({});
+  const fetch = createGuardedFetch({
+    origins: ORIGINS,
+    uploadHosts: UPLOAD_HOSTS,
+    maxUploadBytes: 8,
+    transport,
+    resolve: fakeResolve({ 'store-030.blobstore.apple.com': ['17.253.5.10'], 'store-666.blobstore.apple.com': ['10.0.0.7'], 'store-667.blobstore.apple.com': ['17.253.5.10', '192.168.1.5'] }),
+  });
+  const body = new Uint8Array(4);
+  const cases = [
+    ['http://store-030.blobstore.apple.com/part', {}, /only https uploads are allowed, not http:/],
+    ['https://store-030.blobstore.apple.com:8443/part', {}, /an upload goes to the default https port only/],
+    ['https://user:pass@store-030.blobstore.apple.com/part', {}, /user name or password/],
+    [PART, { headers: { Authorization: 'Bearer secret' } }, /an upload to store-030\.blobstore\.apple\.com cannot carry the authorization header/],
+    [PART, { headers: { 'proxy-authorization': 'Basic secret' } }, /cannot carry the proxy-authorization header/],
+    [PART, { headers: { Cookie: 'session=secret' } }, /cannot carry the cookie header/],
+    [PART, { body: new Uint8Array(9) }, /the upload is larger than 8 bytes/],
+    [PART, { body: 'nine char' }, /the upload is larger than 8 bytes/],
+    ['https://store-666.blobstore.apple.com/part', {}, /store-666\.blobstore\.apple\.com is not a public internet address/],
+    ['https://store-667.blobstore.apple.com/part', {}, /is not a public internet address/],
+  ];
+  for (const [url, init, message] of cases) {
+    await refusedWith(fetch(url, { method: 'PUT', body, ...init }), 'URL_REFUSED', message);
+  }
+  assert.equal(transport.requests.length, 0, 'nothing was connected to');
+});
+
+test('only a PUT or POST with a body to a listed host is an upload: look-alikes, the bare suffix and other methods stay downloads', async () => {
+  const transport = fakeTransport({
+    'https://store-030.blobstore.apple.com/image.png': { status: 200, headers: { 'content-type': 'image/png' }, body: new Uint8Array([1, 2]) },
+  });
+  const fetch = createGuardedFetch({
+    origins: ORIGINS,
+    uploadHosts: UPLOAD_HOSTS,
+    transport,
+    resolve: fakeResolve({ 'store-030.blobstore.apple.com': ['17.253.5.10'], 'blobstore.apple.com': ['17.253.5.12'], 'evil-blobstore.apple.com': ['93.184.216.34'], 'store-030.blobstore.apple.com.evil.test': ['93.184.216.34'] }),
+  });
+  for (const url of ['https://blobstore.apple.com/part', 'https://evil-blobstore.apple.com/part', 'https://store-030.blobstore.apple.com.evil.test/part']) {
+    await refusedWith(fetch(url, { method: 'PUT', body: 'x' }), 'URL_REFUSED', /only GET and HEAD may go to/);
+  }
+  // Without a body it is no upload.
+  await refusedWith(fetch(PART, { method: 'PUT' }), 'URL_REFUSED', /only GET and HEAD may go to/);
+  await refusedWith(fetch(PART, { method: 'DELETE', body: 'x' }), 'URL_REFUSED', /only GET and HEAD may go to/);
+  assert.equal(transport.requests.length, 0);
+
+  // A GET there is a download as before: no credentials go along.
+  const download = await fetch('https://store-030.blobstore.apple.com/image.png', { headers: { accept: 'image/*', authorization: 'Bearer secret' } });
+  assert.equal(download.status, 200);
+  assert.deepEqual(transport.requests[0].headers, { accept: 'image/*' });
+});
+
+test('a redirect from an upload host comes back as it is and is never followed', async () => {
+  const transport = fakeTransport({ [PART]: { status: 307, headers: { location: 'https://169.254.169.254/latest/meta-data/' } } });
+  const fetch = createGuardedFetch({ origins: ORIGINS, uploadHosts: UPLOAD_HOSTS, transport, resolve: fakeResolve({ 'store-030.blobstore.apple.com': ['17.253.5.10'] }) });
+  const response = await fetch(PART, { method: 'PUT', body: 'x' });
+  assert.equal(response.status, 307);
+  assert.equal(response.headers.get('location'), 'https://169.254.169.254/latest/meta-data/');
+  assert.equal(transport.requests.length, 1);
+});
+
+test('the guard takes only well-formed upload hosts', () => {
+  for (const entry of ['.com', 'Uploads.Example.com', '93.184.216.34', 'https://uploads.example.com']) {
+    assert.throws(() => createGuardedFetch({ origins: ORIGINS, uploadHosts: [entry] }), /^Error: upload host /, entry);
+  }
+});
+
 // Credential origins: an API on a site the user named (an instance, a blog, a shop).
 
 const SITE = 'https://social.example';

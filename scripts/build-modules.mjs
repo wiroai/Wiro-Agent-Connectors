@@ -42,6 +42,7 @@ function check(file, expectedVendor) {
   if (!Array.isArray(module.origins)) problems.push('no origins list');
   if (!Array.isArray(module.originFields)) problems.push('no originFields list');
   else if (!module.origins?.length && !module.originFields.length) problems.push('no origins');
+  if (!Array.isArray(module.uploadHosts)) problems.push('no uploadHosts list');
   if (!Array.isArray(module.credentials)) problems.push('no credentials list');
   if (!Array.isArray(module.requiredCredentials) || !module.requiredCredentials.length) problems.push('no requiredCredentials list');
   if (!Array.isArray(module.accountPickers)) problems.push('no accountPickers list');

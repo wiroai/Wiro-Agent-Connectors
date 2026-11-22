@@ -1178,6 +1178,7 @@ module.exports = {
   vendor: 'devto',                 // ^[a-z][a-z0-9-]{1,29}$
   origins: ['https://dev.to'],     // the fixed API origins it calls
   originFields: [],                // credentials that hold a site or instance URL, e.g. ['instanceurl']
+  uploadHosts: [],                 // hosts its API's own upload addresses are on, e.g. ['.blobstore.apple.com']
   credentials: ['apikey'],         // the names it reads from ctx.credentials
   requiredCredentials: [['apikey']], // what a call needs: every credential of one of these lists
   accountPickers: [],              // the accounts a host lets the user choose, e.g. [{ key: 'pages', ... }]
@@ -1187,7 +1188,7 @@ module.exports = {
 // ctx = { credentials, accounts, fetch, signal, log }
 ```
 
-`ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call, and so is a request to a [credential origin](#credential-origins). Any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address, with no headers but Accept, User-Agent and one byte range (`Range: bytes=FIRST-LAST`, for a module that reads a large file in parts: the `206` reply comes back as it is, and the host's size cap applies to each request). A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
+`ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call, and so is a request to a [credential origin](#credential-origins). A PUT or POST with a body to one of its [upload hosts](#upload-hosts) is an upload. Any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address, with no headers but Accept, User-Agent and one byte range (`Range: bytes=FIRST-LAST`, for a module that reads a large file in parts: the `206` reply comes back as it is, and the host's size cap applies to each request). A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
 
 The stdio CLI is one such host. You can be another: the package exports the modules and the CLI's building blocks.
 
@@ -1218,6 +1219,20 @@ Some services live at an address the user chooses: a Mastodon instance, a WordPr
 - the usual timeout and size cap.
 
 The CLI's guarded fetch does all of this. Every other host must do the same, whether it runs connectors for an agent or on a server; with this package, resolve the origins from the call's credentials and pass them in, as above: `createGuardedFetch({ origins: module.origins, credentialOrigins: originsFromCredentials(module, credentials) })`. A host may refuse more than this, for example its own public addresses.
+
+### Upload hosts
+
+Some APIs take a file at addresses they hand out for each upload, outside the API itself: App Store Connect returns a pre-signed address for each part of an image, on one of Apple's upload servers such as `store-030.blobstore.apple.com`, and the server changes from one upload to the next. A module names the hosts such addresses are on in `uploadHosts`, as narrowly as the vendor documents them. An entry with a leading dot matches every host under it (`.blobstore.apple.com` matches `store-030.blobstore.apple.com`, never `blobstore.apple.com` itself or `evil-blobstore.apple.com`); an entry without one matches that host only. Entries are lowercase host names of at least two labels, never IP addresses, and none twice; the core checks them when the module loads.
+
+A host lets the module send a PUT or POST with a body to an address on such a host, and checks it first:
+
+- https on the default port, with no user name or password in the URL;
+- no `Authorization`, `Proxy-Authorization` or `Cookie` header: the address carries its own signature, and credentials never go there;
+- a body within the host's upload limit (25 MiB in the CLI);
+- every address the host name resolves to must be public, and the connection goes to the address that was checked;
+- redirects are not followed, and the reply is capped and timed like an API reply.
+
+A GET to such a host is still a media download. The CLI's guarded fetch takes the list as `uploadHosts`, as in `createGuardedFetch({ origins: module.origins, uploadHosts: module.uploadHosts, ... })`, and other hosts match an address with the same rule, `isUploadHost`. A module built before `uploadHosts` existed has none and sends no uploads.
 
 ### OAuth access tokens
 
@@ -1260,9 +1275,9 @@ In the CLI, set `CONNECTOR_ACCOUNTS` to that JSON, keyed by the account keys `--
 ## Security
 
 - **Credentials are never stored or logged.** They arrive with each call, from your environment in the CLI. What a connector keeps in memory is short-lived and keyed by a SHA-256 hash of the credentials, never the credentials themselves: a Bluesky session for up to 10 minutes, because Bluesky allows only 30 sign-ins per 5 minutes and 300 per day; for a connector that signs in with a Google service account (Google Calendar, Google Drive, Google Play, Firebase), its access token until 5 minutes before it expires; the Page tokens Facebook Pages and Instagram fetch for 15 minutes, never returned by a tool; the connected profile or channel id of Threads (15 minutes) and YouTube (10 minutes); for Google Ads, the manager account that leads to each account (an hour); and, for Reddit, the rate window of each connection and, for 48 hours, a SHA-256 digest of each post and comment (never its text), so the same one is not sent twice. Keys that sign their own tokens (Google service accounts, App Store Connect) are used with WebCrypto in memory and never leave the call. Log lines carry the connector, tool, HTTP method, status and duration, never arguments, credentials or content.
-- **Origin lock.** A connector only reaches its declared origins and, for a service at an address the user chooses, the https origin of that address; the host refuses any other API URL.
+- **Origin lock.** A connector only reaches its declared origins and, for a service at an address the user chooses, the https origin of that address; the host refuses any other API URL. An upload goes only to the [upload hosts](#upload-hosts) a connector declares, with no credential header.
 - **SSRF guard on media and user-chosen sites.** A media URL must be https, must resolve to public addresses only (no loopback, private, link-local, carrier-grade NAT or reserved ranges, IPv4 and IPv6 alike), and every redirect is checked the same way, at most 5; no credential header is sent with it. An API request to a [credential origin](#credential-origins) passes the same address checks, and its redirects are never followed. Either way, the connection goes to the address that was checked.
-- **Limits.** Requests time out after 30 seconds, API replies are capped at 8 MiB by the CLI and at 4 MiB by the modules (8 MiB for the few calls that need it, such as a long post or a large report), and media downloads at 25 MiB by the CLI. Each connector also keeps to its service's own file limits, which may be lower (Bluesky images: 2,000,000 bytes).
+- **Limits.** Requests time out after 30 seconds, API replies are capped at 8 MiB by the CLI and at 4 MiB by the modules (8 MiB for the few calls that need it, such as a long post or a large report), and media downloads and uploads at 25 MiB by the CLI. Each connector also keeps to its service's own file limits, which may be lower (Bluesky images: 2,000,000 bytes).
 - **Writes are never retried.** When a write gets no clear answer (a timeout, a broken connection, a 5xx), the result is `{ "outcome": "unknown", "check": "<read tool>" }`, so the agent checks before trying again instead of posting twice. Rate limits are passed back with `retryAfter`, never queued.
 - **White-label.** Tool names, descriptions and messages name only the service.
 

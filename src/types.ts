@@ -65,12 +65,14 @@ export interface ConnectorRequestInit {
  * call. A request to the origin of one of its originFields credentials (a site
  * or instance URL the user gave) is an API call too, checked like a media URL:
  * https, public addresses only, connected to the checked address, and its
- * redirects are not followed. Any other URL is a media download (GET only,
- * public https addresses only, no headers but Accept, User-Agent and one byte
- * range as `Range: bytes=FIRST-LAST`, whose 206 reply comes back as it is; the
- * host's size cap applies to each request). It resolves to a standard
- * Response or rejects; a rejection whose `code` is "URL_REFUSED" means nothing
- * was sent.
+ * redirects are not followed. A PUT or POST with a body to a host in its
+ * uploadHosts is an upload, checked the same way, on the default https port
+ * and with no Authorization, Proxy-Authorization or Cookie header. Any other
+ * URL is a media download (GET only, public https addresses only, no headers
+ * but Accept, User-Agent and one byte range as `Range: bytes=FIRST-LAST`,
+ * whose 206 reply comes back as it is; the host's size cap applies to each
+ * request). It resolves to a standard Response or rejects; a rejection whose
+ * `code` is "URL_REFUSED" means nothing was sent.
  */
 export type ConnectorFetch = (url: string, init?: ConnectorRequestInit) => Promise<Response>;
 
@@ -134,6 +136,17 @@ export interface ConnectorModule {
    * their SSRF rules to it.
    */
   originFields: string[];
+  /**
+   * The hosts the module may send an upload to: a PUT or POST with a body to
+   * an address its vendor's API returned, such as a pre-signed part address
+   * (empty when unused). An entry with a leading dot matches every host under
+   * it (".blobstore.apple.com" matches store-030.blobstore.apple.com, not
+   * blobstore.apple.com), one without only that host; lowercase host names of
+   * at least two labels, no IP addresses, none twice. Hosts send no
+   * credentials there, check its addresses like a media URL's and never follow
+   * its redirects. A module built before it existed has none.
+   */
+  uploadHosts: string[];
   /** The ctx.credentials names the module reads, e.g. ["api_key"]. */
   credentials: string[];
   /**

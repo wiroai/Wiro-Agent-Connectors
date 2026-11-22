@@ -17,6 +17,8 @@ export { isPublicAddress } from './ip.js';
 // The rule that turns a site or instance URL credential into an origin, for hosts with their own fetch.
 export { parseSiteUrl, siteOrigin } from '../core/origins.js';
 export type { SiteUrl } from '../core/origins.js';
+// The rule that matches an address to a module's upload hosts, likewise.
+export { isUploadHost, uploadHostProblem } from '../core/upload-hosts.js';
 export { assertConnectorModule, DEFAULT_VENDORS_DIR, listVendors, loadConnector, VENDOR_PATTERN } from './load.js';
 export { createConnectorServer, serveStdio } from './server.js';
 export type { ConnectorServerOptions } from './server.js';
