@@ -15,7 +15,7 @@
 // Image uploads go to the address LinkedIn's initializeUpload returns, on
 // https://www.linkedin.com (or https://api.linkedin.com), with the same token.
 
-import { apiTools, defineConnector, ToolFailure, truncate, type ApiRequest, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, OutcomeUnknown, ToolFailure, truncate, type ApiRequest, type ToolHelpers } from '../../core/index.js';
 import { sniffImage } from './image.js';
 import { fromLittle, toLittle } from './little.js';
 
@@ -185,9 +185,26 @@ const AUTHOR_SCHEMA = {
   type: 'string' as const,
   enum: ['organization', 'member'],
   description:
-    'organization posts as the LinkedIn Page of the connection\'s organization ID; member posts as the member who signed in. '
-    + 'Default: organization when an organization ID is set, otherwise member.',
+    'organization posts as the LinkedIn Page of the connection\'s organization ID; member posts as the member who signed in, which '
+    + 'needs the w_member_social permission (a connection may have only the Page permissions). Default: organization when an '
+    + 'organization ID is set, otherwise member.',
 };
+
+/** Where to look for a member's own posts: LinkedIn shows them to an app only with r_member_social, which it grants to few. */
+const MEMBER_POSTS_WHERE = 'look at the Activity section of the member\'s LinkedIn profile';
+
+/** The start of the next page, from the "next" link LinkedIn sends with a page. */
+function nextLinkStart(links: unknown[]): number | undefined {
+  const next = links.find((link) => (link as { rel?: unknown } | null)?.rel === 'next') as { href?: unknown } | undefined;
+  if (typeof next?.href !== 'string') return undefined;
+  try {
+    const value = new URL(next.href, 'https://api.linkedin.com').searchParams.get('start');
+    const start = Number(value);
+    return value !== null && value !== '' && Number.isSafeInteger(start) && start >= 0 ? start : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** LinkedIn's Rest.li methods for the generic tools: PATCH becomes a partial update, DELETE names itself. */
 function restliRequest(request: ApiRequest): ApiRequest {
@@ -259,7 +276,7 @@ const connector = defineConnector({
       description:
         "Lists the posts of the connection's organization (Page), newest first, with each post's URN, link, text, content type, "
         + 'visibility and times. author: member lists the member\'s own posts instead, which LinkedIn allows only to apps it approved '
-        + 'for r_member_social. Pass nextCursor back as cursor for more.',
+        + 'for r_member_social. A page can hold fewer posts than count while more follow: pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -286,19 +303,24 @@ const connector = defineConnector({
           errors: {
             403: author.kind === 'organization'
               ? 'LinkedIn refused to list the organization\'s posts: the connection needs the r_organization_social permission and a role on that Page'
-              : 'LinkedIn lists a member\'s own posts only to apps it approved for the r_member_social permission',
+              : `LinkedIn lists a member's own posts only to apps it approved for the r_member_social permission. To see whether a member post went out, ${MEMBER_POSTS_WHERE}`,
           },
         });
         const elements: unknown[] = Array.isArray(data?.elements) ? data.elements : [];
-        const links: any[] = Array.isArray(data?.paging?.links) ? data.paging.links : [];
-        const more = links.some((link) => link?.rel === 'next') || elements.length >= count;
+        const links: unknown[] = Array.isArray(data?.paging?.links) ? data.paging.links : [];
+        // LinkedIn may send fewer posts than count while more follow; its "next" link says where the next page starts.
+        const hasNext = links.some((link) => (link as { rel?: unknown } | null)?.rel === 'next');
+        const following = nextLinkStart(links) ?? (hasNext || elements.length >= count ? start + count : undefined);
         const here = (offset: number) => h.makeCursor({ u: author.urn, s: start, n: count, b: sortBy, o: offset });
         return h.page({
           key: 'posts',
           items: elements.map(trimPost).slice(skip),
-          extra: { author: author.urn },
+          extra: compact({
+            author: author.urn,
+            note: !elements.length && following !== undefined && following > start ? 'LinkedIn sent no posts on this page but says more follow: pass nextCursor to go on.' : undefined,
+          }),
           resumeAt: (index) => here(skip + index),
-          ...(more && elements.length ? { nextPage: h.makeCursor({ u: author.urn, s: start + elements.length, n: count, b: sortBy, o: 0 }) } : {}),
+          ...(following !== undefined && following > start ? { nextPage: h.makeCursor({ u: author.urn, s: following, n: count, b: sortBy, o: 0 }) } : {}),
         });
       },
     },
@@ -331,7 +353,8 @@ const connector = defineConnector({
         'Publishes a post on LinkedIn right away, as the organization (Page) or as the member: text up to 3,000 characters, '
         + 'with #hashtags and @[Name](urn:li:organization:123) mentions; optionally up to 20 images from public https URLs '
         + '(JPEG, PNG or GIF, with alt text), or an article link with its title, description and thumbnail image (LinkedIn does not read the page for them). '
-        + 'Returns the post URN and its link. LinkedIn has no drafts here: the post goes live.',
+        + 'Returns the post URN and its link. LinkedIn has no drafts here: the post goes live. A member post whose outcome is unclear '
+        + 'cannot be checked with list_posts on most apps: look at the member\'s LinkedIn profile instead.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -401,21 +424,32 @@ const connector = defineConnector({
           content = { article: compact({ source: args.article.url, title: args.article.title, description: args.article.description, thumbnail }) };
         }
 
-        const response = await h.api({
-          method: 'POST',
-          path: '/rest/posts',
-          json: compact({
-            author: author.urn,
-            commentary: toLittle(args.text),
-            visibility: args.visibility,
-            distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
-            content,
-            lifecycleState: 'PUBLISHED',
-            isReshareDisabledByAuthor: args.disable_reshare,
-          }),
-          write: true,
-          errors: { 403: refusedPost(author.kind), 422: 'LinkedIn did not accept the post' },
-        });
+        let response: Awaited<ReturnType<ToolHelpers['api']>>;
+        try {
+          response = await h.api({
+            method: 'POST',
+            path: '/rest/posts',
+            json: compact({
+              author: author.urn,
+              commentary: toLittle(args.text),
+              visibility: args.visibility,
+              distribution: { feedDistribution: 'MAIN_FEED', targetEntities: [], thirdPartyDistributionChannels: [] },
+              content,
+              lifecycleState: 'PUBLISHED',
+              isReshareDisabledByAuthor: args.disable_reshare,
+            }),
+            write: true,
+            errors: { 403: refusedPost(author.kind), 422: 'LinkedIn did not accept the post' },
+          });
+        } catch (error) {
+          if (error instanceof OutcomeUnknown && author.kind === 'member') {
+            throw new OutcomeUnknown(
+              `${error.message} LinkedIn lists a member's posts only to apps it approved for r_member_social, so list_posts may not show it: `
+                + `before posting again, ${MEMBER_POSTS_WHERE}.`,
+            );
+          }
+          throw error;
+        }
         const header = response.headers.get('x-restli-id') ?? response.headers.get('x-linkedin-id');
         let id: string | undefined;
         try {
@@ -463,11 +497,13 @@ const connector = defineConnector({
         'The LinkedIn REST API on https://api.linkedin.com, with the connection\'s token and the LinkedIn-Version and Rest.li 2.0 headers: '
         + 'paths start with /rest/ (such as /rest/organizationAcls with q=roleAssignee, or /rest/socialActions/{post URN}/comments) or /v2/ '
         + '(such as /v2/userinfo), with URNs URL-encoded in the path. PATCH is sent as a Rest.li partial update (POST with '
-        + 'X-RestLi-Method: PARTIAL_UPDATE and a {"patch": {"$set": {...}}} body). Reference: https://learn.microsoft.com/linkedin/.',
+        + 'X-RestLi-Method: PARTIAL_UPDATE and a {"patch": {"$set": {...}}} body). A create answers 201 with the new id in the '
+        + 'x-restli-id header, which the result returns. Reference: https://learn.microsoft.com/linkedin/.',
       guard: (request) => {
         if (!/^\/(rest|v2)\//.test(request.path)) throw new ToolFailure('LinkedIn API paths start with /rest/ or /v2/. Nothing was sent.');
       },
       send: (request, h) => h.api(restliRequest(request)),
+      responseHeaders: ['x-restli-id', 'x-linkedin-id'],
     }),
   ],
 });

@@ -238,6 +238,30 @@ test('list_posts finds the organization\'s posts, turns little text back into pl
   assert.equal(fetch.calls[1].query.count, '2');
 });
 
+test('list_posts pages where LinkedIn\'s next link says, even after a short or empty page', async () => {
+  const page = (elements, href) => ({ paging: { start: 0, count: 10, links: href ? [{ type: 'application/json', rel: 'next', href }] : [] }, elements });
+  const replies = [
+    // Fewer posts than count while more follow: the next page starts at 10, not 2.
+    page(byAuthor.elements, '/rest/posts?author=urn%3Ali%3Aorganization%3A12345678&count=10&q=author&sortBy=LAST_MODIFIED&start=10'),
+    // An empty page that still has a next link goes on.
+    page([], '/rest/posts?author=urn%3Ali%3Aorganization%3A12345678&count=10&q=author&sortBy=LAST_MODIFIED&start=20'),
+    // A short page without a next link is the last one.
+    page(byAuthor.elements.slice(0, 1)),
+  ];
+  const { module, fetch, ctx } = setup(linkedin({ 'GET https://api.linkedin.com/rest/posts': () => jsonResponse(200, replies[fetch.calls.length - 1]) }));
+  const first = await callTool(module, 'list_posts', {}, ctx);
+  assert.equal(first.payload.posts.length, 2);
+  const second = await callTool(module, 'list_posts', { cursor: first.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[1].query.start, '10');
+  assert.deepEqual(second.payload.posts, []);
+  assert.match(second.payload.note, /LinkedIn sent no posts on this page but says more follow: pass nextCursor to go on\./);
+  const third = await callTool(module, 'list_posts', { cursor: second.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[2].query.start, '20');
+  assert.equal(third.payload.posts.length, 1);
+  assert.equal(third.payload.nextCursor, undefined);
+  assert.equal(third.payload.note, undefined);
+});
+
 test('get_post reads one post as its author, and delete_post deletes it', async () => {
   const read = setup(linkedin({ 'GET https://api.linkedin.com/rest/posts/urn%3Ali%3AugcPost%3A7300000000000000003': () => jsonResponse(200, onePost) }));
   const got = await callTool(read.module, 'get_post', { post_id: 'urn:li:ugcPost:7300000000000000003' }, read.ctx);
@@ -298,6 +322,18 @@ test('a post or delete without a clear answer is reported as unknown, sent once,
   }
 });
 
+test('a member post without a clear answer points to the member\'s profile, since list_posts cannot list it on most apps', async () => {
+  const { module, fetch, ctx } = setup(linkedin({ 'POST https://api.linkedin.com/rest/posts': () => jsonResponse(504, { message: 'Gateway timeout' }) }));
+  const { payload } = await callTool(module, 'create_post', { text: 'Hi', author: 'member' }, ctx);
+  assert.equal(payload.outcome, 'unknown');
+  assert.match(payload.error, /LinkedIn lists a member's posts only to apps it approved for r_member_social, so list_posts may not show it: before posting again, look at the Activity section of the member's LinkedIn profile\./);
+  assert.equal(fetch.calls.filter((call) => call.path === '/rest/posts').length, 1);
+
+  const closed = setup(linkedin({ 'GET https://api.linkedin.com/rest/posts': () => jsonResponse(403, fixture(import.meta.url, 'error-403.json')) }));
+  const listed = await callTool(closed.module, 'list_posts', { author: 'member' }, closed.ctx);
+  assert.match(listed.payload.error, /^LinkedIn lists a member's own posts only to apps it approved for the r_member_social permission\. To see whether a member post went out, look at the Activity section of the member's LinkedIn profile \(HTTP 403\)/);
+});
+
 test('a failed image upload posts nothing and says so', async () => {
   const { module, fetch, ctx } = setup(linkedin({ 'PUT https://www.linkedin.com/dms-uploads/sp/v2/C4E10AQFexample/uploaded-image/0': () => jsonResponse(500, { message: 'upload failed' }) }));
   const { payload, isError } = await callTool(module, 'create_post', { text: 'x', images: [{ url: 'https://images.example.com/a.png' }] }, ctx);
@@ -321,6 +357,11 @@ test('api_get and api_request reach /rest/ and /v2/ only, with Rest.li methods f
 
   await callTool(module, 'api_request', { method: 'DELETE', path: '/rest/socialActions/urn%3Ali%3Ashare%3A1/comments/2' }, ctx);
   assert.equal(fetch.calls[2].headers['x-restli-method'], 'DELETE');
+
+  // A Rest.li create answers 201 with an empty body: the new id is in x-restli-id, and the result carries it.
+  const comments = setup(() => new Response(null, { status: 201, headers: { 'x-restli-id': 'urn:li:comment:(urn:li:activity:7300000000000000009,7300000000000000123)' } }));
+  const created = await callTool(comments.module, 'api_request', { method: 'POST', path: '/rest/socialActions/urn%3Ali%3Ashare%3A7300000000000000009/comments', json: { actor: `urn:li:organization:${ORG}`, message: { text: 'Thanks!' } } }, comments.ctx);
+  assert.deepEqual(created.payload, { status: 201, headers: { 'x-restli-id': 'urn:li:comment:(urn:li:activity:7300000000000000009,7300000000000000123)' } });
 
   const outside = await callTool(module, 'api_get', { path: '/oauth/v2/accessToken' }, ctx);
   assert.match(outside.payload.error, /LinkedIn API paths start with \/rest\/ or \/v2\/\. Nothing was sent\./);

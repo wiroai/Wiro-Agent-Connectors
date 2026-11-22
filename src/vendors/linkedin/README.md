@@ -14,10 +14,12 @@ Post text is sent in LinkedIn's "little" format: characters LinkedIn reserves, s
 
 **`access_token`**: an OAuth 2.0 access token of the member, from your own LinkedIn app. A host that connects LinkedIn for you runs this sign-in and refreshes the token; the connector never refreshes or stores it. To get one yourself:
 
-1. Open [LinkedIn Developers → My apps](https://www.linkedin.com/developers/apps) and create an app linked to your LinkedIn Page.
-2. Under **Products**, add **Sign In with LinkedIn using OpenID Connect** (`openid`, `profile`), **Share on LinkedIn** (`w_member_social`, to post as the member) and, to post as the Page, the **Community Management API** (`w_organization_social`, `r_organization_social`; LinkedIn reviews this product).
-3. On the **Auth** tab, add your redirect URL and copy the client ID and secret.
-4. Send the member to `https://www.linkedin.com/oauth/v2/authorization` with those scopes, and exchange the returned code at `https://www.linkedin.com/oauth/v2/accessToken`. Access tokens last 60 days.
+1. Open [LinkedIn Developers → My apps](https://www.linkedin.com/developers/apps) and create a **new** app linked to your LinkedIn Page (an admin of the Page verifies the app).
+2. To post as the Page, request the **Community Management API** under **Products** first, before adding any other product: LinkedIn offers it only to an app that has no other product yet, reviews the request, and grants it to registered organizations. It brings `w_organization_social`, `r_organization_social` and `w_member_social`.
+3. Then add **Sign In with LinkedIn using OpenID Connect** (`openid`, `profile`) if LinkedIn offers it for that app: `get_profile`, and posting as the member, read the member's id through it.
+4. To post only as yourself, no review is needed: an app with **Share on LinkedIn** (`w_member_social`) and **Sign In with LinkedIn using OpenID Connect** is enough.
+5. On the **Auth** tab, add your redirect URL and copy the client ID and secret.
+6. Send the member to `https://www.linkedin.com/oauth/v2/authorization` with the scopes the app has (for a Page, `w_organization_social r_organization_social`, plus `openid profile` when the app has them), and exchange the returned code at `https://www.linkedin.com/oauth/v2/accessToken`. Access tokens last 60 days. Asking for a scope the app does not have makes LinkedIn refuse the sign-in.
 
 To revoke it, the member removes the app at LinkedIn → **Settings & Privacy** → **Data privacy** → **Permitted services**. The app owner can also reset the client secret on the app's **Auth** tab, which ends every token of the app.
 
@@ -30,12 +32,12 @@ To revoke it, the member removes the app at LinkedIn → **Settings & Privacy** 
 | Tool | Kind | What it does |
 | --- | --- | --- |
 | `get_profile` | read | The member who signed in: id, person URN, name, photo, locale, and the Page the connection posts for. |
-| `list_posts` | read | The Page's posts, newest first, with URN, link, text, content type, visibility and times; the member's own posts with `author: "member"` (LinkedIn allows that only to apps approved for `r_member_social`). Paged with a cursor. |
+| `list_posts` | read | The Page's posts, newest first, with URN, link, text, content type, visibility and times; the member's own posts with `author: "member"` (LinkedIn allows that only to apps approved for `r_member_social`, which it rarely grants). Paged with a cursor, where LinkedIn's next link says: a page can hold fewer posts than asked while more follow. |
 | `get_post` | read | One post by its URN, as its author sees it. |
-| `create_post` | create | Publishes right away, as the Page or the member: text up to 3,000 characters, optionally up to 20 images (JPEG, PNG or GIF from public https URLs, with alt text) or an article card. Every image is uploaded before the post is made. Returns the post URN and link. |
+| `create_post` | create | Publishes right away, as the Page or the member (`w_member_social`): text up to 3,000 characters, optionally up to 20 images (JPEG, PNG or GIF from public https URLs, with alt text) or an article card. Every image is uploaded before the post is made. Returns the post URN and link. |
 | `delete_post` | delete | Deletes one post by its URN, for good. |
 | `api_get` | read | Any other GET under `/rest/` or `/v2/`, with the version headers, such as `/rest/organizationAcls?q=roleAssignee`. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE under `/rest/` or `/v2/`; PATCH is sent as a Rest.li partial update. Sent once, never retried. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE under `/rest/` or `/v2/`; PATCH is sent as a Rest.li partial update, and a create returns the new id from LinkedIn's `x-restli-id` header. Sent once, never retried. |
 
 ## Limits
 
@@ -43,7 +45,7 @@ To revoke it, the member removes the app at LinkedIn → **Settings & Privacy** 
 - A post goes live at once; LinkedIn's API has no drafts. `CONNECTIONS` visibility is for member posts only.
 - LinkedIn retires each API version about a year after its release; `202611` is supported until late 2027.
 - LinkedIn's daily rate limits apply per member and per app; a 429 comes back with `retryAfter` when LinkedIn sends one.
-- Writes are never retried: an unclear outcome comes back as unknown, with `list_posts` (or `get_post`) to check.
+- Writes are never retried: an unclear outcome comes back as unknown, with `list_posts` (or `get_post`) to check. A member post cannot be listed on most apps, so its unclear outcome points to the Activity section of the member's LinkedIn profile instead.
 
 ## README rows
 
