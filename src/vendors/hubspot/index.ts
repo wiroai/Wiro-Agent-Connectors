@@ -11,6 +11,7 @@
 // and single sends; and files. api_get and api_request reach the rest.
 
 import { apiTools, defineConnector, OutcomeUnknown, ToolFailure, type ToolDefinition, type ToolHelpers } from '../../core/index.js';
+import { withScopeAdvice } from './scopes.js';
 import { compact, multipart, nameFromUrl, trimEmail, trimFile, trimProperty, trimRecord, typeFromName } from './shape.js';
 
 type JsonSchema = ToolDefinition['inputSchema'];
@@ -194,7 +195,8 @@ const connector = defineConnector({
   requiredCredentials: [['access_token']],
   credentialLabels: { access_token: 'HubSpot access token', portalid: 'HubSpot portal ID' },
   authHeaders: (credentials) => ({ authorization: `Bearer ${credentials['access_token']}` }),
-  tools: [
+  // A refusal for a scope the sign-in did not grant names the scopes the call needs (scopes.ts).
+  tools: withScopeAdvice([
     {
       name: 'get_account',
       kind: 'read',
@@ -955,7 +957,7 @@ const connector = defineConnector({
           write: true,
           errors: {
             404: 'HubSpot has no marketing email with that id',
-            403: 'HubSpot refused to publish it (it needs Marketing Hub Enterprise or the transactional email add-on, and the marketing-email scope)',
+            403: 'HubSpot refused to publish it (publishing needs Marketing Hub Enterprise or the transactional email add-on)',
             400: 'HubSpot did not publish the email',
           },
         });
@@ -1108,7 +1110,7 @@ const connector = defineConnector({
         if (routedParts(request.segments)[0] === 'oauth') throw new ToolFailure('HubSpot\'s OAuth endpoints are not available here. Nothing was sent.');
       },
     }),
-  ],
+  ]),
 });
 
 export = connector;
