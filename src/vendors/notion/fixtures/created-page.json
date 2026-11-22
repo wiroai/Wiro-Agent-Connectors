@@ -1,0 +1,13 @@
+{
+  "object": "page",
+  "id": "7a1c5e2d-0000-4000-8000-000000000020",
+  "created_time": "2026-11-22T10:00:00.000Z",
+  "last_edited_time": "2026-11-22T10:00:00.000Z",
+  "parent": { "type": "page_id", "page_id": "1429989f-e8ac-4eff-bc8f-57f56486db54" },
+  "in_trash": false,
+  "properties": {
+    "title": { "id": "title", "type": "title", "title": [{ "type": "text", "text": { "content": "Meeting notes" }, "plain_text": "Meeting notes" }] }
+  },
+  "url": "https://www.notion.so/Meeting-notes-7a1c5e2d000040008000000000000020",
+  "request_id": "4f1b3a6e-0000-4000-8000-000000000010"
+}
