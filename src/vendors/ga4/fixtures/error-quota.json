@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 429,
+    "message": "Exhausted property tokens per hour for a project per property. These quota tokens will return in under an hour.",
+    "status": "RESOURCE_EXHAUSTED"
+  }
+}

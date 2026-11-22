@@ -1,0 +1,13 @@
+{
+  "name": "properties/300100100/metadata",
+  "dimensions": [
+    { "apiName": "date", "uiName": "Date", "description": "The date of the event, formatted as YYYYMMDD.", "category": "Time" },
+    { "apiName": "sessionSource", "uiName": "Session source", "description": "The source that initiated a session on your website or app.", "category": "Traffic source" },
+    { "apiName": "customEvent:plan_tier", "uiName": "Plan Tier", "description": "An event scoped custom dimension for plan_tier.", "customDefinition": true, "category": "Custom" }
+  ],
+  "metrics": [
+    { "apiName": "sessions", "uiName": "Sessions", "description": "The number of sessions that began on your site or app.", "type": "TYPE_INTEGER", "category": "Session" },
+    { "apiName": "totalRevenue", "uiName": "Total revenue", "description": "The sum of revenue from purchases, subscriptions, and advertising.", "type": "TYPE_CURRENCY", "category": "Revenue" },
+    { "apiName": "purchaseRevenue", "uiName": "Purchase revenue", "description": "The sum of revenue from purchases.", "type": "TYPE_CURRENCY", "category": "Revenue" }
+  ]
+}

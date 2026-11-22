@@ -1,0 +1,12 @@
+{
+  "keyEvents": [
+    {
+      "name": "properties/300100100/keyEvents/6001001",
+      "eventName": "purchase",
+      "createTime": "2025-02-11T09:14:03.510Z",
+      "deletable": false,
+      "custom": false,
+      "countingMethod": "ONCE_PER_EVENT"
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "dimensionCompatibilities": [
+    { "dimensionMetadata": { "apiName": "date", "uiName": "Date" }, "compatibility": "COMPATIBLE" },
+    { "dimensionMetadata": { "apiName": "itemName", "uiName": "Item name" }, "compatibility": "INCOMPATIBLE" },
+    { "dimensionMetadata": { "apiName": "country", "uiName": "Country" }, "compatibility": "COMPATIBLE" }
+  ],
+  "metricCompatibilities": [
+    { "metricMetadata": { "apiName": "sessions", "uiName": "Sessions" }, "compatibility": "COMPATIBLE" },
+    { "metricMetadata": { "apiName": "itemRevenue", "uiName": "Item revenue" }, "compatibility": "INCOMPATIBLE" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "read": { "tool": "list_properties", "args": {} },
+  "write": {
+    "tool": "api_request",
+    "args": {
+      "method": "POST",
+      "origin": "https://analyticsadmin.googleapis.com",
+      "path": "/v1beta/properties/123456789/keyEvents",
+      "json": { "eventName": "connector_smoke_test", "countingMethod": "ONCE_PER_EVENT" }
+    },
+    "note": "Put one of your own property IDs in the path first. It marks the event name connector_smoke_test as a key event on that property: remove it in Google Analytics, Admin, Data display, Key events, or with api_request DELETE on the name it returns (/v1beta/properties/<id>/keyEvents/<key_event_id>)."
+  }
+}
