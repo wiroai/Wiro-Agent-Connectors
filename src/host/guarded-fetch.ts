@@ -365,7 +365,8 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
     for (const [name, value] of Object.entries(init.headers ?? {})) {
       const key = name.toLowerCase();
       if (!MEDIA_HEADERS.has(key)) continue;
-      if (key === 'range' && !BYTE_RANGE.test(value)) refuse('a media download may ask for one byte range only, as bytes=FIRST-LAST');
+      // One Range header: a second name for it ("Range" and "range") is refused too, never picked from.
+      if (key === 'range' && (headers['range'] !== undefined || !BYTE_RANGE.test(value))) refuse('a media download may ask for one byte range only, as bytes=FIRST-LAST');
       headers[key] = value;
     }
 

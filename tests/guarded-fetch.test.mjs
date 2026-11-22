@@ -212,10 +212,12 @@ test('a media download passes one byte range on and hands back the 206 reply, ca
   await refusedWith(fetch('https://cdn.test/film.mp4'), 'TOO_LARGE');
   assert.equal(transport.requests.length, 2);
 
-  // Anything but one byte range is refused before it is sent.
-  for (const range of ['bytes=0-1,4-7', 'bytes=-8', 'items=0-7', 'bytes=0-7\r\nx-api-key: secret']) {
+  // Anything but one byte range is refused before it is sent: whitespace around it is not trimmed away.
+  for (const range of ['bytes=0-1,4-7', 'bytes=-8', 'items=0-7', 'bytes=0-7\r\nx-api-key: secret', 'bytes=0-1\n', 'bytes=0-1 ', '\tbytes=0-1']) {
     await refusedWith(fetch('https://cdn.test/film.mp4', { headers: { range } }), 'URL_REFUSED', /one byte range only/);
   }
+  // Two names for the header carry two ranges: refused, not one of them picked.
+  await refusedWith(fetch('https://cdn.test/film.mp4', { headers: { Range: 'bytes=0-1', range: 'bytes=5-6' } }), 'URL_REFUSED', /one byte range only/);
   assert.equal(transport.requests.length, 2, 'nothing more was sent');
 });
 
