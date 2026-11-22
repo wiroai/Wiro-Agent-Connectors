@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "id": "1001",
+      "name": "Example Bakery",
+      "tasks": ["ANALYZE", "ADVERTISE", "MODERATE", "CREATE_CONTENT", "MANAGE"],
+      "access_token": "EAAPageTokenForBakery0001",
+      "instagram_business_account": { "id": "17841400000000001", "username": "example.bakery", "name": "Example Bakery" }
+    },
+    {
+      "id": "1002",
+      "name": "Example Cafe",
+      "tasks": ["ANALYZE"],
+      "access_token": "EAAPageTokenForCafe0002"
+    },
+    {
+      "id": "1003",
+      "name": "Example Studio",
+      "tasks": ["ANALYZE"],
+      "access_token": "EAAPageTokenForStudio0003",
+      "instagram_business_account": { "id": "17841400000000003", "username": "example.studio", "name": "Example Studio" }
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "QVFIUmJlZm9yZQ", "after": "QVFIUmFmdGVy" },
+    "next": "https://graph.facebook.com/v26.0/me/accounts?limit=50&after=QVFIUmFmdGVy"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "data": [
+    {
+      "id": "17900000000000002",
+      "caption": "Fresh loaves today #bakery",
+      "media_type": "CAROUSEL_ALBUM",
+      "media_product_type": "FEED",
+      "permalink": "https://www.instagram.com/p/DAbCdEfGhIk/",
+      "timestamp": "2026-11-20T08:00:00+0000",
+      "like_count": 120,
+      "comments_count": 8
+    },
+    {
+      "id": "17900000000000003",
+      "caption": "How we shape a baguette",
+      "media_type": "VIDEO",
+      "media_product_type": "REELS",
+      "permalink": "https://www.instagram.com/reel/DAbCdEfGhIl/",
+      "timestamp": "2026-11-18T08:00:00+0000",
+      "like_count": 340,
+      "comments_count": 21
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "QVFIUmM", "after": "QVFIUmQ" },
+    "next": "https://graph.facebook.com/v26.0/17841400000000001/media?limit=2&after=QVFIUmQ"
+  }
+}

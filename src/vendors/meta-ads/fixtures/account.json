@@ -1,0 +1,1 @@
+{ "account_id": "1234567890", "name": "Example Bakery Ads", "account_status": 1, "disable_reason": 0, "user_tasks": ["ANALYZE", "ADVERTISE"], "currency": "USD", "timezone_name": "America/Los_Angeles", "amount_spent": "1567800", "balance": "0", "spend_cap": "5000000", "min_daily_budget": 100, "id": "act_1234567890" }

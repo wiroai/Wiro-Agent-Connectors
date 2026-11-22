@@ -1,0 +1,7 @@
+{
+  "data": [
+    { "id": "1001", "name": "Example Bakery", "category": "Bakery", "tasks": ["ADVERTISE", "ANALYZE", "CREATE_CONTENT"] },
+    { "id": "1002", "name": "Example Cafe", "category": "Cafe", "tasks": ["ANALYZE"] }
+  ],
+  "paging": { "cursors": { "before": "QVFIUnBhMQ", "after": "QVFIUnBhMg" } }
+}

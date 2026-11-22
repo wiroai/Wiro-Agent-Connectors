@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "list_accounts", "args": { "limit": 10 } },
+  "write": {
+    "tool": "publish_image",
+    "args": { "image_url": "https://example.com/connector-smoke-test.jpg", "caption": "Connector smoke test {{timestamp}}" },
+    "note": "Replace image_url with a public JPEG first. This publishes a public post on the only account chosen in CONNECTOR_ACCOUNTS (or set account_id); delete it in the Instagram app."
+  }
+}

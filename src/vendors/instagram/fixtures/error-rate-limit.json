@@ -1,0 +1,8 @@
+{
+  "error": {
+    "message": "(#80002) There have been too many calls to this Instagram account. Wait a bit and try again. For more info, please refer to https://developers.facebook.com/docs/graph-api/overview/rate-limiting.",
+    "type": "OAuthException",
+    "code": 80002,
+    "fbtrace_id": "AQ3xExampleTrace02"
+  }
+}

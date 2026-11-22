@@ -1,0 +1,11 @@
+{
+  "data": [
+    { "account_id": "1234567890", "name": "Example Bakery Ads", "account_status": 1, "currency": "USD", "timezone_name": "America/Los_Angeles", "user_tasks": ["DRAFT", "ANALYZE", "ADVERTISE", "MANAGE"], "id": "act_1234567890" },
+    { "account_id": "2345678901", "name": "Example Reports Only", "account_status": 1, "currency": "EUR", "timezone_name": "Europe/Berlin", "user_tasks": ["ANALYZE"], "id": "act_2345678901" },
+    { "account_id": "3456789012", "name": "Example Old Account", "account_status": 2, "currency": "USD", "timezone_name": "America/New_York", "user_tasks": ["ANALYZE", "ADVERTISE"], "id": "act_3456789012" }
+  ],
+  "paging": {
+    "cursors": { "before": "QVFIUmFjYzE", "after": "QVFIUmFjYzI" },
+    "next": "https://graph.facebook.com/v26.0/me/adaccounts?limit=50&after=QVFIUmFjYzI"
+  }
+}

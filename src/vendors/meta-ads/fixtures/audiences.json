@@ -1,0 +1,5 @@
+{
+  "data": [
+    { "id": "238000000000000001", "name": "Website visitors 30 days", "subtype": "WEBSITE", "approximate_count_lower_bound": 12000, "approximate_count_upper_bound": 14100, "data_source": { "type": "EVENT_BASED", "sub_type": "WEB_PIXEL_HITS" }, "delivery_status": { "code": 200, "description": "This audience is ready for use." }, "operation_status": { "code": 200, "description": "Normal" }, "time_updated": 1795300000 }
+  ]
+}

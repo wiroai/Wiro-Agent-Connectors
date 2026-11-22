@@ -1,0 +1,24 @@
+{
+  "data": [
+    {
+      "campaign_id": "120200000000000001",
+      "campaign_name": "Bread_Traffic_US_2026-11",
+      "spend": "156.78",
+      "impressions": "45230",
+      "reach": "32100",
+      "clicks": "1234",
+      "ctr": "2.728277",
+      "cpc": "0.127050",
+      "cpm": "3.466283",
+      "frequency": "1.409034",
+      "actions": [{ "action_type": "link_click", "value": "1234" }, { "action_type": "landing_page_view", "value": "987" }],
+      "cost_per_action_type": [{ "action_type": "link_click", "value": "0.12705" }],
+      "date_start": "2026-11-14",
+      "date_stop": "2026-11-20"
+    }
+  ],
+  "paging": {
+    "cursors": { "before": "MAZDZD", "after": "MQZDZD" },
+    "next": "https://graph.facebook.com/v26.0/act_1234567890/insights?limit=1&after=MQZDZD"
+  }
+}
