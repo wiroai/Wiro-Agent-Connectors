@@ -1,0 +1,1 @@
+{ "scopes": ["alerts.read", "asm.groups.read", "mail.send", "marketing.read", "marketing.write", "messages.read", "stats.read", "suppression.read", "suppression.delete", "templates.read", "templates.create", "user.account.read", "verified_senders.read"] }

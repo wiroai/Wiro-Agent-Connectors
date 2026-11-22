@@ -1,0 +1,22 @@
+{
+  "id": "27c21bbf-a12c-440b-b8bf-c526975328ca",
+  "name": "November newsletter",
+  "status": "draft",
+  "categories": ["newsletter"],
+  "send_at": null,
+  "send_to": { "list_ids": ["ca7a3796-e8a8-4029-9ccb-df8937940562"], "segment_ids": [], "all": false },
+  "updated_at": "2026-11-21T09:00:00Z",
+  "created_at": "2026-11-21T09:00:00Z",
+  "email_config": {
+    "subject": "What is new in November",
+    "html_content": "<html><body><p>Hello {{first_name}}</p><a href=\"{{{unsubscribe}}}\">Unsubscribe</a></body></html>",
+    "plain_content": "Hello",
+    "generate_plain_content": false,
+    "editor": "code",
+    "suppression_group_id": 12,
+    "custom_unsubscribe_url": null,
+    "sender_id": 123456,
+    "ip_pool": null
+  },
+  "warnings": []
+}

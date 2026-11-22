@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_account", "args": {} },
+  "write": {
+    "tool": "create_list",
+    "args": { "name": "Connector smoke test {{timestamp}}" },
+    "note": "Creates an empty Marketing Campaigns list. Delete it with delete_list, or in SendGrid under Marketing, Contacts."
+  }
+}
