@@ -1,0 +1,52 @@
+name: Bug report
+description: A connector does something wrong, or fails.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! Never paste API keys, passwords or tokens here.
+        For a security problem, use private vulnerability reporting instead: the **Security** tab, then **Report a vulnerability**.
+  - type: input
+    id: connector
+    attributes:
+      label: Connector
+      placeholder: devto
+    validations:
+      required: true
+  - type: input
+    id: tool
+    attributes:
+      label: Tool
+      placeholder: create_draft_article
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: "The output of `npx -y @wiro-ai/wiro-agent-connectors --version`."
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: Claude Desktop, Claude Code, Cursor, your own host
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The arguments you passed (without secrets) and the result you got.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log lines
+      description: The connector's stderr lines, if you have them. They never contain credentials or arguments.
+      render: text

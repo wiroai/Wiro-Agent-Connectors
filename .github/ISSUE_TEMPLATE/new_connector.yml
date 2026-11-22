@@ -1,0 +1,52 @@
+name: New connector request
+description: Ask for a connector for a service that has no official MCP server.
+labels: ["new connector"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Connectors cover services without an official MCP server. Please check that the service has none, or tell us what its server lacks.
+        Want to build it yourself? [CONTRIBUTING.md](https://github.com/wiroai/Wiro-Agent-Connectors/blob/main/CONTRIBUTING.md) walks you through it.
+  - type: input
+    id: service
+    attributes:
+      label: Service
+      description: Its name and website.
+    validations:
+      required: true
+  - type: input
+    id: api-docs
+    attributes:
+      label: API documentation
+      description: A link to the service's API reference.
+    validations:
+      required: true
+  - type: textarea
+    id: tools
+    attributes:
+      label: Tools you need
+      description: What an agent should be able to do, one per line, e.g. "list my orders", "save a draft".
+    validations:
+      required: true
+  - type: dropdown
+    id: auth
+    attributes:
+      label: How the API signs in
+      options:
+        - API key or token
+        - User name and app password
+        - OAuth
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: official-mcp
+    attributes:
+      label: Official MCP server
+      description: Does the service have one? If it does, what does it lack?
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Building it
+      options:
+        - label: I would like to build this connector myself.
