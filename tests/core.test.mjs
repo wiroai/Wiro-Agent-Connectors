@@ -13,8 +13,10 @@ const {
   encodeCursor,
   fitPage,
   OUTPUT_LIMIT_BYTES,
+  parseSiteUrl,
   requireAccounts,
   retryAfterSeconds,
+  siteOrigin,
   ToolFailure,
   validateArguments,
 } = core;
@@ -125,9 +127,45 @@ test('a connector definition is checked when the module loads', () => {
   assert.throws(() => defineConnector({ ...base, tools: [tool, tool] }), /defined twice/);
   assert.throws(() => defineConnector({ ...base, tools: [{ ...tool, inputSchema: { type: 'object', properties: {} } }] }), /additionalProperties: false/);
   assert.throws(() => defineConnector({ ...base, tools: [tool, { ...tool, name: 'add_x', kind: 'create' }] }), /needs check: the name of a read tool/);
+  assert.throws(() => defineConnector({ ...base, origins: [] }), /at least one origin or origin field is required/);
+  assert.throws(() => defineConnector({ ...base, originFields: ['site_url'] }), /origin field site_url must be one of the credentials/);
+  assert.throws(() => defineConnector({ ...base, credentials: ['site_url'], originFields: ['site_url', 'site_url'] }), /origin field site_url is listed twice/);
+  assert.doesNotThrow(() => defineConnector({ ...base, origins: [], credentials: ['site_url', 'api_key'], originFields: ['site_url'] }));
   const module = defineConnector(base);
-  assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'credentials', 'tools', 'call']);
+  assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'originFields', 'credentials', 'tools', 'call']);
+  assert.deepEqual(module.originFields, []);
   assert.ok(Object.isFrozen(module) && Object.isFrozen(module.tools[0].annotations));
+});
+
+test('a site or instance URL credential becomes an https origin, or a plain reason why not', () => {
+  const ok = [
+    ['social.example', 'https://social.example'],
+    [' Social.Example ', 'https://social.example'],
+    ['https://social.example/@alice', 'https://social.example'],
+    ['HTTPS://Blog.Example/wp/', 'https://blog.example'],
+    ['https://blog.example:8443/', 'https://blog.example:8443'],
+    ['https://blog.example:443', 'https://blog.example'],
+    ['https://bücher.example', 'https://xn--bcher-kva.example'],
+  ];
+  for (const [value, origin] of ok) {
+    const site = parseSiteUrl(value);
+    assert.equal(site.ok, true, value);
+    assert.equal(site.origin, origin, value);
+    assert.equal(siteOrigin(value), origin, value);
+  }
+  const refused = [
+    ['', 'is empty'],
+    ['http://social.example', 'must be an https address, not http://'],
+    ['ftp://social.example', 'must be an https address, not ftp://'],
+    ['https://user:secret@social.example', 'must not contain a user name or password'],
+    ['https://', 'is not a valid address (expected one like https://example.com)'],
+    ['social example', 'is not a valid address (expected one like https://example.com)'],
+    ['javascript:alert(1)', 'is not a valid address (expected one like https://example.com)'],
+  ];
+  for (const [value, problem] of refused) {
+    assert.deepEqual(parseSiteUrl(value), { ok: false, problem }, value);
+    assert.equal(siteOrigin(value), undefined, value);
+  }
 });
 
 function connector(run, kind = 'read') {
@@ -197,4 +235,85 @@ test('an unknown tool and a host without fetch get plain errors', async () => {
   assert.equal(payload.error, 'Unknown tool "nope". Acme tools: read_x.');
   const noFetch = await callTool(module, 'read_x', {}, { credentials: { api_key: 'k' }, accounts: {}, log() {} });
   assert.match(noFetch.payload.error, /no fetch function/);
+});
+
+const READ_SCHEMA = { type: 'object', properties: {}, additionalProperties: false };
+
+/** A connector whose API is on the site the user names in site_url (and, with `origins`, on fixed origins too). */
+function siteConnector(run, { origins = [], normalizeCredentials } = {}) {
+  return defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins,
+    originFields: ['site_url'],
+    credentials: ['site_url', 'api_key'],
+    credentialLabels: { site_url: 'Acme site URL' },
+    authHeaders: (credentials) => ({ authorization: `Bearer ${credentials.api_key}` }),
+    ...(normalizeCredentials ? { normalizeCredentials } : {}),
+    tools: [{ name: 'read_x', kind: 'read', title: 'Read', description: 'Reads.', inputSchema: READ_SCHEMA, run }],
+  });
+}
+
+test('an origin field lets each call reach the https origin of its own site URL', async () => {
+  const module = siteConnector(async (args, h) => {
+    await h.api({ path: '/api/v1/me' });
+    return { origins: h.origins, site: h.originOf('site_url') };
+  });
+  assert.deepEqual(module.origins, []);
+  assert.deepEqual(module.originFields, ['site_url']);
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  for (const [value, origin] of [['Social.Example', 'https://social.example'], ['https://blog.example/wp/', 'https://blog.example']]) {
+    const { ctx } = makeContext({ credentials: { site_url: value, api_key: 'k' }, fetch });
+    const { payload, isError } = await callTool(module, 'read_x', {}, ctx);
+    assert.equal(isError, false, payload.error);
+    assert.deepEqual(payload, { origins: [origin], site: origin });
+    assert.equal(fetch.calls.at(-1).url, `${origin}/api/v1/me`, 'the default origin is the site, with no fixed origin');
+    assert.equal(fetch.calls.at(-1).headers.authorization, 'Bearer k');
+  }
+});
+
+test('with fixed origins too, h.api reaches the site by its origin and nothing else', async () => {
+  const module = siteConnector(async (args, h) => {
+    await h.api({ path: '/token' });
+    await h.api({ path: '/wp-json/wp/v2/posts', origin: h.originOf('site_url') });
+    await h.api({ path: '/x', origin: 'https://other.example' });
+  }, { origins: ['https://auth.acme.test'] });
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  const { ctx, logs } = makeContext({ credentials: { site_url: 'blog.example', api_key: 'k' }, fetch });
+  const { isError } = await callTool(module, 'read_x', {}, ctx);
+  assert.equal(isError, true);
+  assert.deepEqual(fetch.calls.map((call) => call.url), ['https://auth.acme.test/token', 'https://blog.example/wp-json/wp/v2/posts']);
+  assert.match(logs.at(-1), /unexpected Error/, 'the undeclared origin was never requested');
+});
+
+test('a site URL that is not https, or that carries a password, is refused before anything is sent', async () => {
+  const module = siteConnector(async (args, h) => h.api({ path: '/' }));
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  const cases = [
+    ['http://blog.example', 'Acme is not connected correctly: the Acme site URL must be an https address, not http://. Nothing was sent to Acme.'],
+    ['https://admin:hunter2@blog.example', 'Acme is not connected correctly: the Acme site URL must not contain a user name or password. Nothing was sent to Acme.'],
+    ['not a site', 'Acme is not connected correctly: the Acme site URL is not a valid address (expected one like https://example.com). Nothing was sent to Acme.'],
+  ];
+  for (const [value, message] of cases) {
+    const { ctx } = makeContext({ credentials: { site_url: value, api_key: 'k' }, fetch });
+    const { payload, isError, text } = await callTool(module, 'read_x', {}, ctx);
+    assert.equal(isError, true);
+    assert.equal(payload.error, message);
+    assert.equal(text.includes('hunter2'), false, 'the password is never repeated');
+  }
+  const missing = await callTool(module, 'read_x', {}, makeContext({ credentials: { site_url: '  ', api_key: 'k' }, fetch }).ctx);
+  assert.equal(missing.payload.error, 'Acme is not connected: the Acme site URL is missing.');
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('the origin comes from the value the host passed, whatever normalizeCredentials makes of it', async () => {
+  const module = siteConnector(async (args, h) => {
+    await h.api({ path: '/' });
+    return { value: h.credentials.site_url };
+  }, { normalizeCredentials: (credentials) => ({ ...credentials, site_url: 'https://elsewhere.example' }) });
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  const { ctx } = makeContext({ credentials: { site_url: 'blog.example', api_key: 'k' }, fetch });
+  const { payload } = await callTool(module, 'read_x', {}, ctx);
+  assert.equal(payload.value, 'https://elsewhere.example');
+  assert.equal(fetch.calls[0].url, 'https://blog.example/', 'hosts resolve the same value, so they agree on it');
 });

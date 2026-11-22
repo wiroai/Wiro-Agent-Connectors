@@ -42,7 +42,7 @@ if (missing.length) {
   process.exit(1);
 }
 const accounts = host.accountsFromEnv(process.env);
-const fetch = host.createGuardedFetch({ origins: module.origins });
+const fetch = host.createGuardedFetch({ origins: module.origins, credentialOrigins: host.originsFromCredentials(module, credentials) });
 const now = new Date().toISOString();
 const fill = (value) => JSON.parse(JSON.stringify(value).replaceAll('{{timestamp}}', now));
 

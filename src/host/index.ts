@@ -3,9 +3,20 @@
 
 export { ACCOUNTS_ENV, accountsFromEnv, credentialsFromEnv, envNameFor } from './env.js';
 export type { EnvCredentials } from './env.js';
-export { ConnectorFetchError, createGuardedFetch } from './guarded-fetch.js';
-export type { ConnectorFetchErrorCode, GuardedFetchOptions, MediaReply, MediaTransport, ResolvedAddress } from './guarded-fetch.js';
+export { ConnectorFetchError, createGuardedFetch, originsFromCredentials } from './guarded-fetch.js';
+export type {
+  ConnectorFetchErrorCode,
+  GuardedFetchOptions,
+  MediaReply,
+  MediaTransport,
+  PinnedReply,
+  PinnedTransport,
+  ResolvedAddress,
+} from './guarded-fetch.js';
 export { isPublicAddress } from './ip.js';
+// The rule that turns a site or instance URL credential into an origin, for hosts with their own fetch.
+export { parseSiteUrl, siteOrigin } from '../core/origins.js';
+export type { SiteUrl } from '../core/origins.js';
 export { assertConnectorModule, DEFAULT_VENDORS_DIR, listVendors, loadConnector, VENDOR_PATTERN } from './load.js';
 export { createConnectorServer, serveStdio } from './server.js';
 export type { ConnectorServerOptions } from './server.js';

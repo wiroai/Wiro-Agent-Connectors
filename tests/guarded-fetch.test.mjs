@@ -8,7 +8,8 @@ import { callTool, loadModule, makeContext } from './helpers.mjs';
 // test touches the network.
 
 const require = createRequire(import.meta.url);
-const { createGuardedFetch, isPublicAddress } = require('../dist/host/index.js');
+const { createGuardedFetch, isPublicAddress, originsFromCredentials } = require('../dist/host/index.js');
+const { defineConnector } = require('../build/core.js');
 
 const ORIGINS = ['https://api.vendor.test'];
 
@@ -25,7 +26,7 @@ function fakeResolve(table) {
 function fakeTransport(routes) {
   const requests = [];
   const transport = async (request) => {
-    requests.push({ url: request.url.toString(), address: request.address.address, headers: request.headers, method: request.method });
+    requests.push({ url: request.url.toString(), address: request.address.address, headers: request.headers, method: request.method, body: request.body });
     const route = routes[request.url.toString()];
     if (!route) throw new Error(`no route for ${request.url}`);
     const reply = typeof route === 'function' ? route(request) : route;
@@ -207,4 +208,158 @@ test('a module behind the guard reports a refused image plainly and posts nothin
   assert.equal(isError, true);
   assert.match(payload.error, /The image URL was refused \(images\.attacker\.test is not a public internet address\)\. Use a public https URL\. Nothing was changed\./);
   assert.deepEqual(apiCalls, [], 'not even a sign-in was sent');
+});
+
+// Credential origins: an API on a site the user named (an instance, a blog, a shop).
+
+const SITE = 'https://social.example';
+const encoder = new TextEncoder();
+
+test('originsFromCredentials resolves a connection\'s site URLs with the modules\' own rule', () => {
+  const module = { originFields: ['instance_url', 'shop_url'] };
+  assert.deepEqual(
+    originsFromCredentials(module, { instance_url: 'Social.Example', shop_url: 'https://shop.example/admin', api_key: 'k' }),
+    ['https://social.example', 'https://shop.example'],
+  );
+  assert.deepEqual(originsFromCredentials(module, { instance_url: 'http://social.example', shop_url: 'https://user:pw@shop.example' }), [], 'refused values are left out');
+  assert.deepEqual(originsFromCredentials(module, {}), []);
+  assert.deepEqual(originsFromCredentials({}, { instance_url: 'social.example' }), [], 'a module without originFields');
+});
+
+test('a credential origin given to the guard must be an https origin', () => {
+  for (const origin of ['http://social.example', 'https://social.example/api', 'social.example']) {
+    assert.throws(() => createGuardedFetch({ origins: ORIGINS, credentialOrigins: [origin] }), /must be an https origin/, origin);
+  }
+});
+
+test('an API request to a credential origin on a non-public address is refused, and nothing is sent', async () => {
+  const transport = fakeTransport({});
+  const fetch = createGuardedFetch({
+    origins: ORIGINS,
+    credentialOrigins: ['https://intranet.example', 'https://mixed.example', 'https://127.0.0.1', 'https://[fd00::1]', 'https://169.254.169.254', SITE],
+    transport,
+    resolve: fakeResolve({ 'intranet.example': ['10.0.0.7'], 'mixed.example': ['93.184.216.34', '192.168.1.5'], 'social.example': ['93.184.216.34'] }),
+    apiFetch: async () => {
+      throw new Error('a credential origin never goes through the plain API fetch');
+    },
+  });
+  for (const url of ['https://intranet.example/api', 'https://mixed.example/api', 'https://127.0.0.1/api', 'https://[fd00::1]/api', 'https://169.254.169.254/latest/meta-data/']) {
+    await refusedWith(fetch(url, { method: 'POST', headers: { authorization: 'Bearer secret' }, body: '{}' }), 'URL_REFUSED', /is not a public internet address/);
+  }
+  await refusedWith(fetch('https://user:pass@social.example/api'), 'URL_REFUSED', /user name or password/);
+  await refusedWith(fetch('https://unlisted.example/api', { method: 'POST', body: '{}' }), 'URL_REFUSED', /not an API origin/);
+  assert.equal(transport.requests.length, 0, 'nothing was connected to');
+});
+
+test('an API request to a credential origin goes to the checked address with its method, headers and body', async () => {
+  const transport = fakeTransport({
+    [`${SITE}/api/v1/statuses?visibility=public`]: { status: 200, headers: { 'content-type': 'application/json' }, body: encoder.encode('{"id":"110"}') },
+    [`${SITE}/api/v1/statuses/110`]: { status: 204, headers: {} },
+  });
+  const fetch = createGuardedFetch({ origins: ORIGINS, credentialOrigins: [SITE], transport, resolve: fakeResolve({ 'social.example': ['93.184.216.34', '2606:4700::6810:84e5'] }) });
+  const response = await fetch(`${SITE}/api/v1/statuses?visibility=public`, {
+    method: 'POST',
+    headers: { authorization: 'Bearer k', 'content-type': 'application/json' },
+    body: '{"status":"hello"}',
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { id: '110' });
+  assert.deepEqual(transport.requests[0], {
+    url: `${SITE}/api/v1/statuses?visibility=public`,
+    address: '93.184.216.34',
+    method: 'POST',
+    headers: { authorization: 'Bearer k', 'content-type': 'application/json' },
+    body: '{"status":"hello"}',
+  });
+  const deleted = await fetch(`${SITE}/api/v1/statuses/110`, { method: 'delete', headers: { authorization: 'Bearer k' } });
+  assert.equal(deleted.status, 204);
+  assert.equal(transport.requests[1].method, 'DELETE');
+});
+
+test('a redirect from a credential origin comes back as it is and is never followed', async () => {
+  const transport = fakeTransport({
+    [`${SITE}/api/v1/me`]: { status: 302, headers: { location: 'https://169.254.169.254/latest/meta-data/' }, body: encoder.encode('moved') },
+  });
+  const fetch = createGuardedFetch({ origins: ORIGINS, credentialOrigins: [SITE], transport, resolve: fakeResolve({ 'social.example': ['93.184.216.34'] }) });
+  const response = await fetch(`${SITE}/api/v1/me`, { headers: { authorization: 'Bearer k' } });
+  assert.equal(response.status, 302);
+  assert.equal(response.headers.get('location'), 'https://169.254.169.254/latest/meta-data/');
+  assert.equal(transport.requests.length, 1);
+});
+
+test('a credential origin reply is capped and timed out like any API reply', async () => {
+  const transport = fakeTransport({
+    [`${SITE}/big`]: { status: 200, headers: {}, body: new Uint8Array(64) },
+    [`${SITE}/declared`]: { status: 200, headers: { 'content-length': '999999' }, body: new Uint8Array(1) },
+  });
+  const capped = createGuardedFetch({ origins: ORIGINS, credentialOrigins: [SITE], maxResponseBytes: 32, transport, resolve: fakeResolve({ 'social.example': ['93.184.216.34'] }) });
+  await refusedWith(capped(`${SITE}/big`), 'TOO_LARGE', /the reply is larger than 32 bytes/);
+  await refusedWith(capped(`${SITE}/declared`), 'TOO_LARGE');
+
+  const hanging = createGuardedFetch({
+    origins: ORIGINS,
+    credentialOrigins: [SITE],
+    timeoutMs: 50,
+    resolve: fakeResolve({ 'social.example': ['93.184.216.34'] }),
+    transport: ({ signal }) => new Promise((resolve, reject) => {
+      const alive = setTimeout(() => {}, 5000);
+      signal.addEventListener('abort', () => {
+        clearTimeout(alive);
+        reject(signal.reason);
+      });
+    }),
+  });
+  await refusedWith(hanging(`${SITE}/slow`, { method: 'POST', body: '{}' }), 'TIMEOUT');
+});
+
+test('a fixed origin keeps the plain API path even when a credential names it too', async () => {
+  const seen = [];
+  const fetch = createGuardedFetch({
+    origins: ORIGINS,
+    credentialOrigins: [ORIGINS[0]],
+    apiFetch: async (url) => {
+      seen.push(String(url));
+      return new Response('{}');
+    },
+    transport: fakeTransport({}),
+    resolve: fakeResolve({}),
+  });
+  await fetch(`${ORIGINS[0]}/v1/things`);
+  assert.deepEqual(seen, [`${ORIGINS[0]}/v1/things`]);
+});
+
+test('a module with an origin field, behind the guard: a private site is refused, a public one is reached', async () => {
+  const module = defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins: [],
+    originFields: ['instance_url'],
+    credentials: ['instance_url', 'access_token'],
+    authHeaders: (credentials) => ({ authorization: `Bearer ${credentials.access_token}` }),
+    tools: [{
+      name: 'get_me',
+      kind: 'read',
+      title: 'Get me',
+      description: 'Reads the account.',
+      inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      run: async (args, h) => (await h.api({ path: '/api/v1/accounts/verify_credentials' })).data,
+    }],
+  });
+  const transport = fakeTransport({ [`${SITE}/api/v1/accounts/verify_credentials`]: { status: 200, headers: { 'content-type': 'application/json' }, body: encoder.encode('{"acct":"alice"}') } });
+  const resolve = fakeResolve({ 'social.example': ['93.184.216.34'], 'intranet.example': ['10.0.0.7'] });
+  const run = async (instanceUrl) => {
+    const credentials = { instance_url: instanceUrl, access_token: 'token-1' };
+    const fetch = createGuardedFetch({ origins: module.origins, credentialOrigins: originsFromCredentials(module, credentials), transport, resolve });
+    return callTool(module, 'get_me', {}, makeContext({ credentials, fetch }).ctx);
+  };
+
+  const refused = await run('https://intranet.example');
+  assert.equal(refused.isError, true);
+  assert.equal(refused.payload.error, 'The request to Acme was blocked before it was sent (intranet.example is not a public internet address).');
+  assert.equal(transport.requests.length, 0);
+
+  const reached = await run('social.example');
+  assert.equal(reached.isError, false, reached.payload.error);
+  assert.deepEqual(reached.payload, { acct: 'alice' });
+  assert.equal(transport.requests[0].headers.authorization, 'Bearer token-1');
 });

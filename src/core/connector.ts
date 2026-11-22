@@ -8,6 +8,7 @@ import type {
 } from '../types.js';
 import { OutcomeUnknown, ToolFailure, type FailureDetails } from './errors.js';
 import { createHttp, type ApiRequest, type ApiResponse, type MediaOptions, type MediaResult } from './http.js';
+import { parseSiteUrl } from './origins.js';
 import { decodeCursor, encodeCursor, fitPage, shrinkToFit, type PageInput } from './output.js';
 import { validateArguments } from './schema.js';
 
@@ -39,7 +40,14 @@ export interface ToolHelpers {
   /** The call's credentials, trimmed (and normalized by the connector, if it says how). */
   readonly credentials: Readonly<Record<string, string>>;
   readonly ctx: ToolContext;
-  /** One request to one of the module's origins. Never retried. */
+  /**
+   * The API origins this call may reach: the module's origins, then the https
+   * origins of its originFields credentials. The first one is h.api's default.
+   */
+  readonly origins: readonly string[];
+  /** The https origin a credential named in originFields gave for this call, e.g. "https://mastodon.social". */
+  originOf(credential: string): string;
+  /** One request to one of this call's origins. Never retried. */
   api(request: ApiRequest): Promise<ApiResponse>;
   /** Downloads a file from a public https URL through ctx.fetch (the host applies its SSRF guard). */
   media(url: string, options: MediaOptions): Promise<MediaResult>;
@@ -68,7 +76,15 @@ export interface ConnectorDefinition {
   vendor: string;
   /** The service's own name, the only name tool texts use, e.g. "dev.to". */
   label: string;
+  /** The fixed https origins of the vendor's API. May be empty when originFields names the API's site. */
   origins: string[];
+  /**
+   * Credentials whose value is a site or instance URL, e.g. ["instance_url"]:
+   * each call may also reach the https origin of that value (see
+   * parseSiteUrl). It is resolved from the value the host passed, before
+   * normalizeCredentials, so hosts and the module agree on it.
+   */
+  originFields?: string[];
   credentials: string[];
   /** Words for each credential in messages, e.g. { api_key: "dev.to API key" }. */
   credentialLabels?: Record<string, string>;
@@ -93,7 +109,8 @@ function assertDefinition(def: ConnectorDefinition): void {
   };
   if (!VENDOR_PATTERN.test(def.vendor)) problem('vendor must match ^[a-z][a-z0-9-]{1,29}$');
   if (!def.label?.trim()) problem('label is required');
-  if (!def.origins.length) problem('at least one origin is required');
+  const originFields = def.originFields ?? [];
+  if (!def.origins.length && !originFields.length) problem('at least one origin or origin field is required');
   for (const origin of def.origins) {
     let url: URL | undefined;
     try {
@@ -105,6 +122,10 @@ function assertDefinition(def: ConnectorDefinition): void {
   }
   for (const name of def.credentials) {
     if (!CREDENTIAL_PATTERN.test(name)) problem(`credential ${name} must match ^[a-z][a-z0-9_]*$`);
+  }
+  for (const [index, name] of originFields.entries()) {
+    if (!def.credentials.includes(name)) problem(`origin field ${name} must be one of the credentials`);
+    if (originFields.indexOf(name) !== index) problem(`origin field ${name} is listed twice`);
   }
   const names = new Set<string>();
   for (const tool of def.tools) {
@@ -172,12 +193,20 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
         // a broken logger never fails a call
       }
     };
-    let credentials = trimmed(ctx.credentials);
-    if (def.normalizeCredentials) credentials = def.normalizeCredentials(credentials);
+    const given = trimmed(ctx.credentials);
+    const credentials = def.normalizeCredentials ? def.normalizeCredentials({ ...given }) : given;
     const missing = def.credentials.filter((name) => !credentials[name]);
     if (missing.length) {
       return failure(`${label} is not connected: the ${missing.map(credentialLabel).join(' and ')} ${missing.length > 1 ? 'are' : 'is'} missing.`);
     }
+    // Credential origins are this call's only: they come from the values the host passed.
+    const fieldOrigins = new Map<string, string>();
+    for (const name of def.originFields ?? []) {
+      const site = parseSiteUrl(given[name] ?? '');
+      if (!site.ok) return failure(`${label} is not connected correctly: the ${credentialLabel(name)} ${site.problem}. Nothing was sent to ${label}.`);
+      fieldOrigins.set(name, site.origin);
+    }
+    const origins = [...new Set([...def.origins, ...fieldOrigins.values()])];
 
     const parsed = validateArguments(tool.inputSchema, args);
     if (!parsed.ok) return failure(`Invalid arguments for ${tool.name}: ${parsed.issues.join('; ')}. Nothing was sent to ${label}.`);
@@ -189,7 +218,7 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
       label,
       tool: tool.name,
       readOnly: tool.kind === 'read',
-      origins: def.origins,
+      origins,
       credentialLabel: def.credentials.map(credentialLabel).join(' and '),
       ctx,
       authHeaders: () => def.authHeaders?.(frozenCredentials) ?? {},
@@ -202,6 +231,12 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
       tool: tool.name,
       credentials: frozenCredentials,
       ctx,
+      origins: Object.freeze([...origins]),
+      originOf: (credential) => {
+        const origin = fieldOrigins.get(credential);
+        if (!origin) throw new Error(`${credential} is not an origin field`);
+        return origin;
+      },
       api: http.api,
       media: http.media,
       page: (input) => fitPage(input),
@@ -241,6 +276,7 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
   return deepFreeze({
     vendor: def.vendor,
     origins: [...def.origins],
+    originFields: [...(def.originFields ?? [])],
     credentials: [...def.credentials],
     tools: descriptors,
     call,

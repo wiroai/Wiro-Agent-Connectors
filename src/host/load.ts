@@ -28,8 +28,15 @@ export function assertConnectorModule(value: unknown, vendor: string): asserts v
   if (!module || typeof module !== 'object') problems.push('it exports no object');
   else {
     if (module.vendor !== vendor) problems.push(`vendor is ${JSON.stringify(module.vendor)}`);
-    if (!Array.isArray(module.origins) || !module.origins.length) problems.push('origins is missing');
+    // A module built before originFields existed has none.
+    const originFields: unknown = module.originFields ?? [];
+    if (!Array.isArray(module.origins)) problems.push('origins is missing');
+    if (!Array.isArray(originFields)) problems.push('originFields is not a list');
+    else if (Array.isArray(module.origins) && !module.origins.length && !originFields.length) problems.push('it names no origins');
     if (!Array.isArray(module.credentials)) problems.push('credentials is missing');
+    else if (Array.isArray(originFields) && originFields.some((name) => !module.credentials?.includes(name))) {
+      problems.push('an origin field is not one of its credentials');
+    }
     if (!Array.isArray(module.tools)) problems.push('tools is missing');
     if (typeof module.call !== 'function') problems.push('call is missing');
   }

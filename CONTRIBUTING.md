@@ -32,6 +32,7 @@ By contributing you agree that your work is released under the [MIT License](./L
    - `vendor`: the folder name.
    - `label`: the service's own name. Every message uses it.
    - `origins`: the exact https origins of its API, e.g. `["https://api.acme.com"]`. The host refuses every other API URL.
+   - `originFields`, only when the API lives at an address the user gives (a Mastodon instance, a WordPress site, a shop): the credentials that hold it, e.g. `["instance_url"]`. Each call may then reach the https origin of that value, with `h.api({ origin: h.originOf("instance_url"), path })`, or with `h.api({ path })` when `origins` is empty. The core and every host resolve the value the same way (`parseSiteUrl`), and hosts check the address like a media URL and never follow its redirects. Leave these values alone in `normalizeCredentials`: the origin is read from the value as given.
    - `credentials`: the names the module reads, in snake_case. The CLI reads each one from `<VENDOR>_<CREDENTIAL>`, e.g. `ACME_API_KEY`. Add `credentialLabels` for the messages.
    - `authHeaders`: how the credentials go on each API request.
 
@@ -74,7 +75,7 @@ The build and the tests enforce most of these, so `npm test` tells you early.
 
 - **No runtime dependencies.** A module imports only from `src/core` and its own folder: no npm package and no Node module. The build bundles it into one file, `dist/vendors/<vendor>.js`, and fails on anything else.
 - **All HTTP goes through `ctx.fetch`**, by way of `h.api` and `h.media`. Never call `fetch` yourself, and use no `console`, `process` or `Buffer`: stdout belongs to the MCP protocol, and modules run on web-standard globals only. Tests run every module in a sandbox that has none of them.
-- **Declare origins and credentials.** `origins` lists exactly the API origins the module calls, and `credentials` every credential it reads.
+- **Declare origins and credentials.** `origins` lists exactly the fixed API origins the module calls, `originFields` the credentials that hold an API address the user chooses, and `credentials` every credential it reads.
 - **Honest annotations.** Choose the kind that matches what the tool does. A read tool can only send GET requests; a non-GET request that changes nothing (a sign-in, a search sent by POST) is marked `safe: true`.
 - **No write retries.** Nothing is retried, writes least of all; an unclear write outcome is reported as unknown, with the read tool to check.
 - **Tool texts name only the service.** No other product, company or brand in tool names, titles, descriptions, results or error messages. A test scans every module and every error it can return.
@@ -90,7 +91,7 @@ Keep pull requests focused, add or update tests with every behavior change, and 
 
 - [ ] `npm run typecheck` and `npm test` pass.
 - [ ] The module imports nothing but `src/core` and its own folder.
-- [ ] Every request goes through `h.api` or `h.media`; `origins` lists exactly the API origins.
+- [ ] Every request goes through `h.api` or `h.media`; `origins` lists exactly the API origins, and `originFields` every credential that holds an API address.
 - [ ] `credentials` lists every credential, and the README documents its environment variables.
 - [ ] Each tool has the kind that matches what it does, so its annotations are true.
 - [ ] Write tools mark their change with `write: true`, name a `check` read tool, and retry nothing.

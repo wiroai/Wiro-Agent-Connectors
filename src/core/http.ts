@@ -14,7 +14,11 @@ export interface ApiRequest {
   method?: HttpMethod;
   /** A path on the origin, starting with "/". */
   path: string;
-  /** One of the module's origins; the first one by default. */
+  /**
+   * One of the call's origins (h.origins): the module's origins, or the
+   * origin of an originFields credential (h.originOf). By default the first
+   * module origin, or the first credential origin when the module has none.
+   */
   origin?: string;
   query?: Record<string, string | number | boolean | undefined | null>;
   headers?: Record<string, string>;
@@ -60,6 +64,7 @@ export interface HttpEnvironment {
   label: string;
   tool: string;
   readOnly: boolean;
+  /** The origins this call may reach; the first is the default. */
   origins: readonly string[];
   credentialLabel: string;
   ctx: ToolContext;

@@ -1,7 +1,8 @@
 import dns from 'node:dns';
 import https from 'node:https';
 import net from 'node:net';
-import type { ConnectorFetch, ConnectorRequestInit } from '../types.js';
+import { parseSiteUrl } from '../core/origins.js';
+import type { ConnectorFetch, ConnectorModule, ConnectorRequestInit } from '../types.js';
 import { isPublicAddress } from './ip.js';
 
 // The host side of ctx.fetch, used by the stdio CLI. Modules get the same
@@ -9,6 +10,12 @@ import { isPublicAddress } from './ip.js';
 // - A URL on one of the module's origins is an API request: any method, the
 //   module's headers and body, redirects not followed, a timeout and a size cap
 //   on the reply.
+// - A URL on a credential origin (the https origin of a site or instance URL
+//   the user gave in one of the module's originFields credentials) is an API
+//   request to an address the user chose, so it is checked like a media URL
+//   first: https only, no user name or password in the URL, every address the
+//   name resolves to must be public, the connection goes to the address that
+//   was checked, and redirects are not followed.
 // - Any other URL is a media download: GET or HEAD without a body, https only,
 //   no headers but Accept and User-Agent (so credentials never leave for it),
 //   only to public addresses after DNS resolution, every redirect checked the
@@ -29,25 +36,35 @@ export interface ResolvedAddress {
   family: number;
 }
 
-export interface MediaReply {
+export interface PinnedReply {
   status: number;
   headers: Record<string, string | string[] | undefined>;
   body: AsyncIterable<Uint8Array>;
   destroy(): void;
 }
 
-/** One HTTPS request to an already checked address. */
-export type MediaTransport = (request: {
+/** One HTTPS request to an address that was already checked: a media download, or an API request to a credential origin. */
+export type PinnedTransport = (request: {
   url: URL;
   address: ResolvedAddress;
-  method: 'GET' | 'HEAD';
+  method: string;
   headers: Record<string, string>;
+  body?: string | Uint8Array;
   signal: AbortSignal;
-}) => Promise<MediaReply>;
+}) => Promise<PinnedReply>;
+
+/** The names of 0.1.0. */
+export type MediaReply = PinnedReply;
+export type MediaTransport = PinnedTransport;
 
 export interface GuardedFetchOptions {
   /** The module's origins. */
   origins: readonly string[];
+  /**
+   * The https origins of this connection's originFields credentials (see
+   * originsFromCredentials). API requests may go there, after the SSRF checks.
+   */
+  credentialOrigins?: readonly string[];
   /** Per request, API and media alike (default 30 s). */
   timeoutMs?: number;
   /** The largest API reply (default 8 MiB). */
@@ -55,10 +72,12 @@ export interface GuardedFetchOptions {
   /** The largest media download (default 25 MiB). */
   maxMediaBytes?: number;
   maxRedirects?: number;
-  /** Replacements for tests: the API fetch, the DNS lookup and the media transport. */
+  /** Replacements for tests: the API fetch, the DNS lookup and the HTTPS transport to checked addresses. */
   apiFetch?: typeof fetch;
   resolve?: (hostname: string) => Promise<ResolvedAddress[]>;
-  mediaTransport?: MediaTransport;
+  transport?: PinnedTransport;
+  /** The name of `transport` in 0.1.0. */
+  mediaTransport?: PinnedTransport;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -73,20 +92,41 @@ function refuse(message: string): never {
   throw new ConnectorFetchError('URL_REFUSED', message);
 }
 
+/**
+ * The https origins of a connection's originFields credentials, resolved with
+ * the rule the modules use (parseSiteUrl). A value that is not a usable site
+ * address is left out: the module refuses those calls itself, before sending.
+ * Pass the result to createGuardedFetch as credentialOrigins.
+ */
+export function originsFromCredentials(
+  module: Pick<ConnectorModule, 'originFields'> | { originFields?: readonly string[] },
+  credentials: Readonly<Record<string, string | undefined>>,
+): string[] {
+  const origins: string[] = [];
+  for (const name of module.originFields ?? []) {
+    const value = credentials[name];
+    const site = typeof value === 'string' ? parseSiteUrl(value) : undefined;
+    if (site?.ok && !origins.includes(site.origin)) origins.push(site.origin);
+  }
+  return origins;
+}
+
 async function systemResolve(hostname: string): Promise<ResolvedAddress[]> {
   return dns.promises.lookup(hostname, { all: true, verbatim: true });
 }
 
 /** HTTPS to the checked address only: the socket's lookup returns it, so DNS cannot change it in between. */
-const httpsTransport: MediaTransport = ({ url, address, method, headers, signal }) => new Promise((resolve, reject) => {
+const httpsTransport: PinnedTransport = ({ url, address, method, headers, body, signal }) => new Promise((resolve, reject) => {
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
+  const outgoing = { ...headers };
+  if (body !== undefined) outgoing['content-length'] = String(typeof body === 'string' ? Buffer.byteLength(body) : body.byteLength);
   const request = https.request({
     protocol: 'https:',
     hostname,
     port: url.port || 443,
     path: `${url.pathname}${url.search}`,
     method,
-    headers,
+    headers: outgoing,
     signal,
     agent: false,
     ...(net.isIP(hostname) ? {} : { servername: hostname }),
@@ -103,7 +143,7 @@ const httpsTransport: MediaTransport = ({ url, address, method, headers, signal 
     });
   });
   request.on('error', reject);
-  request.end();
+  request.end(body);
 });
 
 function timeoutSignal(timeoutMs: number, outer: AbortSignal | undefined): { signal: AbortSignal; timedOut: () => boolean } {
@@ -148,14 +188,71 @@ function toHeaders(raw: Record<string, string | string[] | undefined>): Headers 
   return headers;
 }
 
+/** Reads a reply up to `maxBytes`: `what` names it in the error, "file" or "reply". */
+async function readReply(reply: PinnedReply, maxBytes: number, what: string): Promise<Uint8Array> {
+  const tooLarge = () => new ConnectorFetchError('TOO_LARGE', `the ${what} is larger than ${maxBytes} bytes`);
+  const declared = Number(reply.headers['content-length']);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    reply.destroy();
+    throw tooLarge();
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for await (const chunk of reply.body) {
+    total += chunk.byteLength;
+    if (total > maxBytes) {
+      reply.destroy();
+      throw tooLarge();
+    }
+    chunks.push(chunk);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch {
   const origins = new Set(options.origins);
+  const credentialOrigins = new Set<string>();
+  for (const origin of options.credentialOrigins ?? []) {
+    let url: URL | undefined;
+    try {
+      url = new URL(origin);
+    } catch {
+      // reported below
+    }
+    if (!url || url.protocol !== 'https:' || url.origin !== origin) throw new Error(`credential origin ${origin} must be an https origin like https://example.com`);
+    if (!origins.has(origin)) credentialOrigins.add(origin);
+  }
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const maxResponseBytes = options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES;
   const maxMediaBytes = options.maxMediaBytes ?? DEFAULT_MAX_MEDIA_BYTES;
   const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
   const resolve = options.resolve ?? systemResolve;
-  const transport = options.mediaTransport ?? httpsTransport;
+  const transport = options.transport ?? options.mediaTransport ?? httpsTransport;
+
+  /** The address to connect to: every address of the host must be public. */
+  async function publicAddress(url: URL): Promise<ResolvedAddress> {
+    const hostname = url.hostname.replace(/^\[|\]$/g, '');
+    let addresses: ResolvedAddress[];
+    if (net.isIP(hostname)) {
+      addresses = [{ address: hostname, family: net.isIP(hostname) }];
+    } else {
+      try {
+        addresses = await resolve(hostname);
+      } catch {
+        throw new ConnectorFetchError('NETWORK', `${hostname} could not be resolved`);
+      }
+    }
+    if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address))) {
+      refuse(`${hostname} is not a public internet address`);
+    }
+    return addresses[0] as ResolvedAddress;
+  }
 
   async function api(url: URL, init: ConnectorRequestInit): Promise<Response> {
     const apiFetch = options.apiFetch ?? globalThis.fetch;
@@ -181,6 +278,35 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
     return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
   }
 
+  /** An API request to a credential origin: checked like a media URL, sent to the checked address, never redirected. */
+  async function credentialApi(url: URL, init: ConnectorRequestInit): Promise<Response> {
+    if (url.username || url.password) refuse('URLs with a user name or password are not allowed');
+    const method = (init.method ?? 'GET').toUpperCase();
+    const timer = timeoutSignal(timeoutMs, init.signal);
+    try {
+      const address = await publicAddress(url);
+      const reply = await transport({
+        url,
+        address,
+        method,
+        headers: { ...init.headers },
+        ...(init.body !== undefined ? { body: init.body } : {}),
+        signal: timer.signal,
+      });
+      if (reply.status < 200 || reply.status > 599) {
+        reply.destroy();
+        throw new ConnectorFetchError('NETWORK', `an invalid HTTP status (${reply.status})`);
+      }
+      const empty = NULL_BODY_STATUSES.has(reply.status) || method === 'HEAD';
+      if (empty) reply.destroy();
+      const bytes = empty ? null : await readReply(reply, maxResponseBytes, 'reply');
+      // A redirect comes back as it is: an API request is never sent on to another address.
+      return new Response(bytes, { status: reply.status, headers: toHeaders(reply.headers) });
+    } catch (error) {
+      throw failure(error, timer.timedOut(), init.signal);
+    }
+  }
+
   async function media(start: URL, init: ConnectorRequestInit): Promise<Response> {
     const method = (init.method ?? 'GET').toUpperCase();
     if (method !== 'GET' && method !== 'HEAD') refuse(`only GET and HEAD may go to ${start.origin}, which is not an API origin of this connector`);
@@ -196,22 +322,9 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
       for (let hop = 0; ; hop++) {
         if (url.protocol !== 'https:') refuse(`only https URLs can be downloaded, not ${url.protocol}`);
         if (url.username || url.password) refuse('URLs with a user name or password are not allowed');
-        const hostname = url.hostname.replace(/^\[|\]$/g, '');
-        let addresses: ResolvedAddress[];
-        if (net.isIP(hostname)) {
-          addresses = [{ address: hostname, family: net.isIP(hostname) }];
-        } else {
-          try {
-            addresses = await resolve(hostname);
-          } catch {
-            throw new ConnectorFetchError('NETWORK', `${hostname} could not be resolved`);
-          }
-        }
-        if (!addresses.length || addresses.some((item) => !isPublicAddress(item.address))) {
-          refuse(`${hostname} is not a public internet address`);
-        }
+        const address = await publicAddress(url);
 
-        const reply = await transport({ url, address: addresses[0] as ResolvedAddress, method: method as 'GET' | 'HEAD', headers, signal: timer.signal });
+        const reply = await transport({ url, address, method, headers, signal: timer.signal });
         if (REDIRECTS.has(reply.status)) {
           reply.destroy();
           const location = reply.headers['location'];
@@ -225,33 +338,10 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
           throw new ConnectorFetchError('NETWORK', `an invalid HTTP status (${reply.status})`);
         }
 
-        const declared = Number(reply.headers['content-length']);
-        if (Number.isFinite(declared) && declared > maxMediaBytes) {
-          reply.destroy();
-          throw new ConnectorFetchError('TOO_LARGE', `the file is larger than ${maxMediaBytes} bytes`);
-        }
-        const chunks: Uint8Array[] = [];
-        let total = 0;
-        if (method === 'GET') {
-          for await (const chunk of reply.body) {
-            total += chunk.byteLength;
-            if (total > maxMediaBytes) {
-              reply.destroy();
-              throw new ConnectorFetchError('TOO_LARGE', `the file is larger than ${maxMediaBytes} bytes`);
-            }
-            chunks.push(chunk);
-          }
-        } else {
-          reply.destroy();
-        }
-        const bytes = new Uint8Array(total);
-        let offset = 0;
-        for (const chunk of chunks) {
-          bytes.set(chunk, offset);
-          offset += chunk.byteLength;
-        }
-        const status = reply.status;
-        return new Response(NULL_BODY_STATUSES.has(status) || method === 'HEAD' ? null : bytes, { status, headers: toHeaders(reply.headers) });
+        const empty = NULL_BODY_STATUSES.has(reply.status) || method === 'HEAD';
+        if (empty) reply.destroy();
+        const bytes = empty ? null : await readReply(reply, maxMediaBytes, 'file');
+        return new Response(bytes, { status: reply.status, headers: toHeaders(reply.headers) });
       }
     } catch (error) {
       throw failure(error, timer.timedOut(), init.signal);
@@ -266,6 +356,7 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
       refuse('not a valid URL');
     }
     if (origins.has(url.origin)) return api(url, init);
+    if (credentialOrigins.has(url.origin)) return credentialApi(url, init);
     return media(url, init);
   };
 }

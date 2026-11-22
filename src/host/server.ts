@@ -2,12 +2,12 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolResult, ConnectorAccounts, ConnectorFetch, ConnectorModule } from '../types.js';
-import { createGuardedFetch } from './guarded-fetch.js';
+import { createGuardedFetch, originsFromCredentials } from './guarded-fetch.js';
 
 export interface ConnectorServerOptions {
   credentials: Record<string, string>;
   accounts: ConnectorAccounts;
-  /** Defaults to a guarded fetch locked to the module's origins. */
+  /** Defaults to a guarded fetch locked to the module's origins and the origins of its originFields credentials. */
   fetch?: ConnectorFetch;
   /** Where log lines go (default: stderr). Never stdout: that is the protocol. */
   log?: (text: string) => void;
@@ -27,7 +27,10 @@ function errorResult(message: string): CallToolResult {
  */
 export function createConnectorServer(module: ConnectorModule, options: ConnectorServerOptions): Server {
   const log = options.log ?? ((text: string) => process.stderr.write(`${text}\n`));
-  const fetch = options.fetch ?? createGuardedFetch({ origins: module.origins });
+  const fetch = options.fetch ?? createGuardedFetch({
+    origins: module.origins,
+    credentialOrigins: originsFromCredentials(module, options.credentials),
+  });
   const server = new Server(
     { name: module.vendor, version: options.version ?? '0.0.0' },
     { capabilities: { tools: {} } },

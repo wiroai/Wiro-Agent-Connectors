@@ -125,7 +125,8 @@ A connector is one CommonJS file, `dist/vendors/<vendor>.js`, built from `src/ve
 ```js
 module.exports = {
   vendor: 'devto',                 // ^[a-z][a-z0-9-]{1,29}$
-  origins: ['https://dev.to'],     // the only API origins it calls
+  origins: ['https://dev.to'],     // the fixed API origins it calls
+  originFields: [],                // credentials that hold a site or instance URL, e.g. ['instance_url']
   credentials: ['api_key'],        // the names it reads from ctx.credentials
   tools: [{ name, title, description, inputSchema, annotations }],
   async call(toolName, args, ctx) {} // returns an MCP CallToolResult
@@ -133,23 +134,37 @@ module.exports = {
 // ctx = { credentials, accounts, fetch, signal, log }
 ```
 
-`ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call; any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address. A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
+`ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call, and so is a request to a [credential origin](#credential-origins). Any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address. A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
 
 The stdio CLI is one such host. You can be another: the package exports the modules and the CLI's building blocks.
 
 ```js
-const { loadConnector, createGuardedFetch } = require('@wiro-ai/wiro-agent-connectors');
+const { loadConnector, createGuardedFetch, originsFromCredentials } = require('@wiro-ai/wiro-agent-connectors');
 
 const devto = loadConnector('devto'); // or require('@wiro-ai/wiro-agent-connectors/vendors/devto')
+const credentials = { api_key: process.env.DEVTO_API_KEY };
 const result = await devto.call('list_my_articles', { per_page: 5 }, {
-  credentials: { api_key: process.env.DEVTO_API_KEY },
+  credentials,
   accounts: null, // no account lock
-  fetch: createGuardedFetch({ origins: devto.origins }),
+  // The module's origins, plus the sites its originFields credentials name (none for dev.to).
+  fetch: createGuardedFetch({ origins: devto.origins, credentialOrigins: originsFromCredentials(devto, credentials) }),
   log: (line) => console.error(line),
 });
 ```
 
 Results are a single JSON text block, trimmed to the fields an agent needs and kept under 32 KB. A longer list comes back in pages: pass `nextCursor` back as `cursor`. Errors come back as results with `isError: true` and a sentence that says what happened, plus the vendor's HTTP `status` and, for a rate limit, `retryAfter` in seconds.
+
+### Credential origins
+
+Some services live at an address the user chooses: a Mastodon instance, a WordPress site, a shop. A module names the credentials that hold such an address in `originFields`. On every call, the module and the host turn each of those values into an https origin with the same rule, `parseSiteUrl`: a bare host such as `mastodon.social` gets `https://`, a path is ignored, and a value that is not https or that carries a user name or password is refused (the module then answers with the reason and sends nothing). The module may send API requests to that origin, for that call only. Because the user, not the module, chose the address, the host checks it like a media URL before anything is sent:
+
+- https only, and no user name or password in the URL;
+- every address the host name resolves to must be public: no loopback, private, link-local, carrier-grade NAT or reserved ranges, IPv4 and IPv6 alike;
+- the connection goes to the address that was checked, so DNS cannot change it in between;
+- redirects are not followed: a 3xx reply goes back to the module as it is;
+- the usual timeout and size cap.
+
+The CLI's guarded fetch does all of this. Every other host must do the same, whether it runs connectors for an agent or on a server; with this package, resolve the origins from the call's credentials and pass them in, as above: `createGuardedFetch({ origins: module.origins, credentialOrigins: originsFromCredentials(module, credentials) })`. A host may refuse more than this, for example its own public addresses.
 
 ### Account lock
 
@@ -158,8 +173,8 @@ Tools that act on one of several accounts (pages, ad accounts, channels) check t
 ## Security
 
 - **Credentials are never stored or logged.** They arrive with each call, from your environment in the CLI. The one thing kept in memory is a Bluesky session token, for up to 10 minutes, keyed by a SHA-256 hash of the credentials, because Bluesky allows only 30 sign-ins per 5 minutes and 300 per day. Log lines carry the connector, tool, HTTP method, status and duration, never arguments, credentials or content.
-- **Origin lock.** A connector only reaches its declared origins; the host refuses any other API URL.
-- **SSRF guard on media.** A media URL must be https, must resolve to public addresses only (no loopback, private, link-local, carrier-grade NAT or reserved ranges, IPv4 and IPv6 alike), and every redirect is checked the same way, at most 5. The connection goes to the address that was checked, and no credential header is sent with it.
+- **Origin lock.** A connector only reaches its declared origins and, for a service at an address the user chooses, the https origin of that address; the host refuses any other API URL.
+- **SSRF guard on media and user-chosen sites.** A media URL must be https, must resolve to public addresses only (no loopback, private, link-local, carrier-grade NAT or reserved ranges, IPv4 and IPv6 alike), and every redirect is checked the same way, at most 5; no credential header is sent with it. An API request to a [credential origin](#credential-origins) passes the same address checks, and its redirects are never followed. Either way, the connection goes to the address that was checked.
 - **Limits.** Requests time out after 30 seconds, API replies are capped at 8 MiB by the CLI and 4 MiB by the modules, and media downloads at 25 MiB (Bluesky images at 2,000,000 bytes).
 - **Writes are never retried.** When a write gets no clear answer (a timeout, a broken connection, a 5xx), the result is `{ "outcome": "unknown", "check": "<read tool>" }`, so the agent checks before trying again instead of posting twice. Rate limits are passed back with `retryAfter`, never queued.
 - **White-label.** Tool names, descriptions and messages name only the service.

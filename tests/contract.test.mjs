@@ -23,14 +23,17 @@ test('every vendor folder was built, and nothing else', () => {
 });
 
 for (const folder of folders) {
-  test(`${folder}: exports exactly { vendor, origins, credentials, tools, call }`, () => {
+  test(`${folder}: exports exactly { vendor, origins, originFields, credentials, tools, call }`, () => {
     const { module } = loadModule(folder);
-    assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'credentials', 'tools', 'call']);
+    assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'originFields', 'credentials', 'tools', 'call']);
     assert.match(module.vendor, /^[a-z][a-z0-9-]{1,29}$/);
     if (folder !== '_template') assert.equal(module.vendor, folder);
     for (const origin of module.origins) assert.equal(new URL(origin).origin, origin);
     for (const origin of module.origins) assert.ok(origin.startsWith('https://'), origin);
     for (const name of module.credentials) assert.match(name, /^[a-z][a-z0-9_]*$/);
+    assert.ok(Array.isArray(module.originFields), 'originFields is a list, empty when unused');
+    for (const name of module.originFields) assert.ok(module.credentials.includes(name), `origin field ${name} is a credential`);
+    assert.ok(module.origins.length > 0 || module.originFields.length > 0, 'it names where it may connect');
     assert.equal(typeof module.call, 'function');
   });
 

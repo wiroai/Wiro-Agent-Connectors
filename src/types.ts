@@ -62,9 +62,12 @@ export interface ConnectorRequestInit {
 
 /**
  * The host's guarded fetch. A request to one of the module's origins is an API
- * call; any other URL is a media download (GET only, public https addresses
- * only). It resolves to a standard Response or rejects; a rejection whose
- * `code` is "URL_REFUSED" means nothing was sent.
+ * call. A request to the origin of one of its originFields credentials (a site
+ * or instance URL the user gave) is an API call too, checked like a media URL:
+ * https, public addresses only, connected to the checked address, and its
+ * redirects are not followed. Any other URL is a media download (GET only,
+ * public https addresses only). It resolves to a standard Response or rejects;
+ * a rejection whose `code` is "URL_REFUSED" means nothing was sent.
  */
 export type ConnectorFetch = (url: string, init?: ConnectorRequestInit) => Promise<Response>;
 
@@ -87,8 +90,15 @@ export interface ToolContext {
 export interface ConnectorModule {
   /** ^[a-z][a-z0-9-]{1,29}$, equal to the file name. */
   vendor: string;
-  /** The only API origins the module calls, e.g. ["https://dev.to"]. */
+  /** The fixed API origins the module calls, e.g. ["https://dev.to"]. */
   origins: string[];
+  /**
+   * Credentials whose value is a site or instance URL, e.g. ["instance_url"]
+   * (empty when unused). Per call, the module may also reach the https origin
+   * of each such value; hosts resolve it the same way (parseSiteUrl) and apply
+   * their SSRF rules to it.
+   */
+  originFields: string[];
   /** The ctx.credentials names the module reads, e.g. ["api_key"]. */
   credentials: string[];
   tools: ToolDescriptor[];

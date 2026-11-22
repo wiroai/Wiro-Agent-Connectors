@@ -39,7 +39,9 @@ function check(file, expectedVendor) {
   const { module } = loadSandboxed(file);
   const problems = [];
   if (module.vendor !== expectedVendor) problems.push(`vendor is ${JSON.stringify(module.vendor)}, expected ${JSON.stringify(expectedVendor)}`);
-  if (!Array.isArray(module.origins) || !module.origins.length) problems.push('no origins');
+  if (!Array.isArray(module.origins)) problems.push('no origins list');
+  if (!Array.isArray(module.originFields)) problems.push('no originFields list');
+  else if (!module.origins?.length && !module.originFields.length) problems.push('no origins');
   if (!Array.isArray(module.credentials)) problems.push('no credentials list');
   if (!Array.isArray(module.tools) || !module.tools.length) problems.push('no tools');
   if (typeof module.call !== 'function') problems.push('no call function');

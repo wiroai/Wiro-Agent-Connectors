@@ -29,6 +29,11 @@ const connector = defineConnector({
   label: 'Example',
   // The only origins the module may call. The host refuses any other API URL.
   origins: ['https://api.example.com'],
+  // Only when the API lives at an address the user gives (an instance, a
+  // site, a shop): the credential that holds it, also listed in credentials,
+  // e.g. originFields: ['site_url']. Reach it with
+  // h.api({ origin: h.originOf('site_url'), path }).
+  originFields: [],
   // Names the module reads from ctx.credentials. All are required.
   credentials: ['api_key'],
   credentialLabels: { api_key: 'Example API key' },
@@ -108,5 +113,5 @@ const connector = defineConnector({
   ],
 });
 
-// Exported as the module itself: { vendor, origins, credentials, tools, call }.
+// Exported as the module itself: { vendor, origins, originFields, credentials, tools, call }.
 export = connector;
