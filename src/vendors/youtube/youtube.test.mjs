@@ -129,6 +129,7 @@ test('list_videos reads the uploads list, then the videos, and pages on without 
   assert.equal(fetch.calls[1].query.maxResults, '3');
   assert.equal(fetch.calls[2].query.id, `${V1},${V2},${V3}`);
   assert.equal(fetch.calls[2].query.part, 'snippet,statistics,contentDetails,status');
+  assert.equal(fetch.calls[2].query.maxResults, undefined, 'videos.list takes no maxResults with id');
   assert.deepEqual(payload.videos[0], {
     id: V1,
     title: 'How we edit a short film',
@@ -153,7 +154,9 @@ test('list_videos reads the uploads list, then the videos, and pages on without 
 test('get_videos gives the full details and names the ids it could not find', async () => {
   const { module, fetch, ctx } = setup(youtube());
   const { payload } = await callTool(module, 'get_videos', { video_ids: [V2, 'zzzzzzzzzzz'] }, ctx);
-  assert.equal(fetch.calls[0].query.id, `${V2},zzzzzzzzzzz`);
+  assert.deepEqual(pathsOf(fetch), ['GET /youtube/v3/channels', 'GET /youtube/v3/videos'], 'the connected channel is checked against the choice first');
+  assert.equal(fetch.calls[1].query.id, `${V2},zzzzzzzzzzz`);
+  assert.equal(fetch.calls[1].query.maxResults, undefined);
   assert.deepEqual(payload.not_found, ['zzzzzzzzzzz']);
   const [video] = payload.videos;
   assert.equal(video.description, 'About Winter teaser.');
@@ -434,6 +437,7 @@ test('api_get and api_request keep to the YouTube paths and the channel choice',
   }));
   const comments = await callTool(module, 'api_get', { path: '/youtube/v3/commentThreads', query: { part: 'snippet', videoId: V1 } }, ctx);
   assert.equal(comments.isError, false, comments.payload.error);
+  assert.equal(fetch.calls[0].query.part, 'id', 'the connected channel is checked against the choice first');
   const foreign = await callTool(module, 'api_get', { path: '/youtube/v3/search', query: { part: 'snippet', channelId: OTHER } }, ctx);
   assert.match(foreign.payload.error, new RegExp(`The channel ${OTHER} is not among the channels chosen`));
   const owner = await callTool(module, 'api_get', { path: '/youtube/v3/videos', query: { id: V1, onBehalfOfContentOwner: 'x' } }, ctx);
@@ -442,17 +446,67 @@ test('api_get and api_request keep to the YouTube paths and the channel choice',
   assert.match(upload.payload.error, /start with \/youtube\/v3\//);
   const report = await callTool(module, 'api_get', { origin: ANALYTICS, path: '/v2/reports', query: { ids: `channel==${OTHER}`, startDate: '2026-01-01', endDate: '2026-01-31', metrics: 'views' } }, ctx);
   assert.match(report.payload.error, new RegExp(`The channel ${OTHER} is not among`));
-  assert.deepEqual(pathsOf(fetch), ['GET /youtube/v3/commentThreads']);
+  assert.deepEqual(pathsOf(fetch), ['GET /youtube/v3/channels', 'GET /youtube/v3/commentThreads']);
 
   const deleted = await callTool(module, 'api_request', { method: 'DELETE', path: '/youtube/v3/videos', query: { id: V3 } }, ctx);
   assert.equal(deleted.isError, false, deleted.payload.error);
-  assert.deepEqual(pathsOf(fetch).slice(1), ['GET /youtube/v3/channels', 'DELETE /youtube/v3/videos'], 'a write checks the connected channel first');
+  assert.deepEqual(pathsOf(fetch).slice(2), ['DELETE /youtube/v3/videos'], 'the connected channel was checked once and kept');
 
   const broken = setup(youtube({ [`POST ${API}/youtube/v3/comments`]: () => jsonResponse(500, { error: { message: 'Backend Error' } }) }), null);
   const unknown = await callTool(broken.module, 'api_request', { method: 'POST', path: '/youtube/v3/comments', query: { part: 'snippet' }, json: { snippet: { parentId: 'abc', textOriginal: 'Thanks!' } } }, broken.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(broken.fetch.calls.length, 1);
+});
+
+test('without the connected channel chosen, nothing it alone can see is read', async () => {
+  // A fresh connection with nothing chosen, and a choice left from another channel's sign-in.
+  for (const accounts of [{}, { channels: [OTHER] }]) {
+    const { module, fetch, ctx } = setup(youtube({ [`GET ${API}/youtube/v3/commentThreads`]: () => jsonResponse(200, { items: [] }) }), accounts);
+    for (const [tool, args] of [
+      ['get_videos', { video_ids: [V2] }],
+      ['list_playlist_items', { playlist_id: 'PLexamplePlaylistTwo0000' }],
+      ['api_get', { path: '/youtube/v3/videos', query: { part: 'snippet,status', id: V2 } }],
+      ['api_get', { path: '/youtube/v3/playlistItems', query: { part: 'snippet', playlistId: UP } }],
+      ['api_get', { path: '/youtube/v3/commentThreads', query: { part: 'snippet', videoId: V2 } }],
+      ['api_get', { path: '/youtube/v3/channels', query: { part: 'snippet', forHandle: '@examplestudio' } }],
+    ]) {
+      const { payload } = await callTool(module, tool, args, ctx);
+      assert.match(payload.error, new RegExp(`The channel ${CH} is not among the channels chosen for this connection`), `${tool} ${JSON.stringify(accounts)}`);
+    }
+    assert.deepEqual(pathsOf(fetch), ['GET /youtube/v3/channels'], 'only the connected channel was read');
+    assert.equal(fetch.calls[0].query.part, 'id');
+  }
+});
+
+test('a cursor cannot point list_videos at another channel\'s uploads', async () => {
+  const OTHER_UP = 'UUzyxwvutsrqponmlkjihgfe';
+  const { module, fetch, ctx } = setup(youtube({
+    [`GET ${API}/youtube/v3/channels`]: (request) => jsonResponse(200, request.query.id === OTHER
+      ? { items: [{ id: OTHER, contentDetails: { relatedPlaylists: { uploads: OTHER_UP } } }] }
+      : fx('channel-id.json')),
+    [`GET ${API}/youtube/v3/playlistItems`]: () => jsonResponse(200, { items: [] }),
+  }), { channels: [OTHER] });
+  // The connected channel's uploads list (with its private videos), labelled as the chosen channel's.
+  const crafted = Buffer.from(JSON.stringify({ t: 'list_videos', u: UP, p: 'EAAaBlBUOkNESQ', o: 0, n: 500 })).toString('base64url');
+  const { payload, isError } = await callTool(module, 'list_videos', { cursor: crafted }, ctx);
+  assert.equal(isError, false, payload.error);
+  const read = fetch.calls.find((call) => call.path === '/youtube/v3/playlistItems');
+  assert.equal(read.query.playlistId, OTHER_UP, 'the uploads list was read again for the chosen channel');
+  assert.equal(read.query.pageToken, undefined, 'the page of another list is not used');
+  assert.equal(read.query.maxResults, '25', 'the page size stays within 1 to 50');
+  assert.equal(fetch.calls.some((call) => call.query.playlistId === UP), false);
+});
+
+test('get_analytics_report takes no currency: revenue metrics need a scope this connection does not ask for', async () => {
+  const { module, ctx } = setup(youtube());
+  const report = module.tools.find((tool) => tool.name === 'get_analytics_report');
+  assert.equal(report.inputSchema.properties.currency, undefined);
+  const { payload } = await callTool(module, 'get_analytics_report', { start_date: '2026-03-01', end_date: '2026-04-01', currency: 'USD' }, ctx);
+  assert.match(payload.error, /Invalid arguments/);
+  const generic = module.tools.find((tool) => tool.name === 'api_get');
+  assert.doesNotMatch(generic.description, /commentThreads with/);
+  assert.match(generic.description, /youtube\.force-ssl/);
 });
 
 test('log lines carry no token and no arguments', async () => {

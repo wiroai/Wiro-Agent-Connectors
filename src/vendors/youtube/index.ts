@@ -4,13 +4,19 @@
 // Credential: `access_token`, an OAuth 2.0 access token of the Google account
 // (or Brand Account) of the channel, with the scopes
 // https://www.googleapis.com/auth/youtube and
-// https://www.googleapis.com/auth/yt-analytics.readonly. The host refreshes
-// it; the module sends it to https://www.googleapis.com/youtube/v3/,
+// https://www.googleapis.com/auth/yt-analytics.readonly. Comments and
+// captions need https://www.googleapis.com/auth/youtube.force-ssl, and
+// revenue metrics yt-analytics-monetary.readonly, which these are not. The
+// host refreshes the token; the module sends it to
+// https://www.googleapis.com/youtube/v3/,
 // https://www.googleapis.com/upload/youtube/v3/ and
 // https://youtubeanalytics.googleapis.com/v2/ only.
 //
-// Account picker `channels` (list_channels). Uploads take the video from a
-// public https URL and send it through YouTube's resumable upload.
+// Account picker `channels` (list_channels). The sign-in acts as one channel
+// and sees its private videos and playlists: with a channel choice in place,
+// anything that could reach them, and every write, needs that channel chosen.
+// Uploads take the video from a public https URL and send it through
+// YouTube's resumable upload, in one request.
 
 import {
   allowedAccounts,
@@ -26,15 +32,17 @@ import {
   type ToolHelpers,
 } from '../../core/index.js';
 import { ownChannel, requireOwnChannel, resolveChannel } from './channel.js';
-import { compact, count, googleApi, utcTime } from './google.js';
+import { compact, count, cursorNumber, googleApi, utcTime } from './google.js';
 import { durationSeconds, sniffImage, sniffVideo } from './media.js';
 
 type Schema = ToolDefinition['inputSchema'];
 
 const API = 'https://www.googleapis.com';
 const ANALYTICS = 'https://youtubeanalytics.googleapis.com';
-/** The largest video upload_video downloads; a host may allow less. */
+/** The largest video upload_video downloads; hosts allow less (this package's CLI 25 MiB). */
 const MAX_VIDEO_BYTES = 256 * 1024 * 1024;
+/** The highest offset or index a list cursor may carry. */
+const MAX_OFFSET = 100_000;
 const MAX_THUMBNAIL_BYTES = 2 * 1024 * 1024;
 const VIDEO_PARTS = 'snippet,statistics,contentDetails,status';
 const UPLOAD_NOTE =
@@ -235,20 +243,26 @@ async function readVideo(h: ToolHelpers, videoId: string, parts: string): Promis
 async function videoDetails(h: ToolHelpers, ids: string[]): Promise<Map<string, any>> {
   const byId = new Map<string, any>();
   if (!ids.length) return byId;
-  const { data } = await googleApi(h, { path: '/youtube/v3/videos', query: { part: VIDEO_PARTS, id: ids.join(','), maxResults: 50 } });
+  const { data } = await googleApi(h, { path: '/youtube/v3/videos', query: { part: VIDEO_PARTS, id: ids.join(',') } });
   for (const video of Array.isArray(data?.items) ? data.items : []) if (typeof video?.id === 'string') byId.set(video.id, video);
   return byId;
 }
 
-/** One page of a channel's uploads, as video resources in upload order. */
+/**
+ * One page of a channel's uploads, as video resources in upload order. A
+ * cursor's uploads list is used only when it is the channel's own (UU and the
+ * id after UC); otherwise it is read again, and the cursor's page only counts
+ * when the list read is the cursor's.
+ */
 async function uploadsPage(h: ToolHelpers, state: Record<string, unknown> | null, channelId: string, size: number) {
-  let uploads = typeof state?.['u'] === 'string' ? state['u'] : undefined;
+  const carried = typeof state?.['u'] === 'string' ? state['u'] : undefined;
+  let uploads = carried === `UU${channelId.slice(2)}` ? carried : undefined;
   if (!uploads) {
     const { data } = await googleApi(h, { path: '/youtube/v3/channels', query: { part: 'contentDetails', id: channelId } });
     uploads = data?.items?.[0]?.contentDetails?.relatedPlaylists?.uploads;
     if (typeof uploads !== 'string' || !uploads) throw new ToolFailure(`YouTube found no channel ${channelId} or no uploads list for it.`);
   }
-  const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
+  const pageToken = carried === uploads && typeof state?.['p'] === 'string' ? state['p'] : undefined;
   const { data } = await googleApi(h, {
     path: '/youtube/v3/playlistItems',
     query: { part: 'contentDetails', playlistId: uploads, maxResults: size, pageToken },
@@ -301,10 +315,11 @@ function day(offsetDays: number): string {
 }
 
 /**
- * The channel lock for the generic tools: a channel a request names
- * (channelId, a channels id, an analytics channel==ID) must be chosen, and a
- * request that acts as the connected channel (every write, mine=true,
- * channel==MINE) needs that channel chosen. Content-owner requests are refused.
+ * The channel lock for the generic tools. Every request goes with the
+ * sign-in of the connected channel, which sees that channel's private videos,
+ * playlists and captions: with a channel choice in place, that channel must
+ * be chosen, and a channel a request names (channelId, a channels id, an
+ * analytics channel==ID) too. Content-owner requests are refused.
  */
 async function guard(request: ApiToolRequest, h: ToolHelpers): Promise<void> {
   const base = request.origin === ANALYTICS ? '/v2/' : '/youtube/v3/';
@@ -314,24 +329,19 @@ async function guard(request: ApiToolRequest, h: ToolHelpers): Promise<void> {
   }
   if (h.ctx.accounts === null) return;
   const named = new Set<string>();
-  let actsAsOwn = request.method !== 'GET';
   for (const name of ['channelId', 'allThreadsRelatedToChannelId']) for (const value of request.query[name] ?? []) named.add(value);
   if (request.origin !== ANALYTICS && request.segments[2] === 'channels') {
     for (const value of request.query['id'] ?? []) for (const id of value.split(',')) if (id.trim()) named.add(id.trim());
-  }
-  for (const flag of ['mine', 'forMine', 'myRating', 'managedByMe', 'mySubscribers', 'home']) {
-    if ((request.query[flag] ?? []).some((value) => value !== 'false')) actsAsOwn = true;
   }
   if (request.origin === ANALYTICS) {
     for (const value of request.query['ids'] ?? []) {
       const match = /^channel==(.+)$/.exec(value);
       if (!match) throw new ToolFailure('Analytics requests here take ids=channel==CHANNEL_ID (or channel==MINE). Nothing was sent.');
-      if (match[1] === 'MINE') actsAsOwn = true;
-      else named.add(match[1] as string);
+      if (match[1] !== 'MINE') named.add(match[1] as string);
     }
   }
   if (named.size) requireAccounts(h.ctx.accounts, 'channels', [...named], 'channel');
-  if (actsAsOwn) await requireOwnChannel(h);
+  await requireOwnChannel(h);
 }
 
 const connector = defineConnector({
@@ -365,7 +375,7 @@ const connector = defineConnector({
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         const { data } = await googleApi(h, {
           path: '/youtube/v3/channels',
           query: { part: 'snippet,statistics,contentDetails', mine: true, maxResults: 50, pageToken },
@@ -409,8 +419,8 @@ const connector = defineConnector({
       inputSchema: { type: 'object', properties: { channel_id: CHANNEL_ID, page_size: PAGE_SIZE, cursor: CURSOR }, additionalProperties: false },
       async run(args: { channel_id?: string; page_size: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const size = typeof state?.['n'] === 'number' ? state['n'] : args.page_size;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const size = cursorNumber(state, 'n', args.page_size, 1, 50);
         const channelId = await resolveChannel(h, args.channel_id);
         const page = await uploadsPage(h, state, channelId, size);
         return h.page({
@@ -441,7 +451,9 @@ const connector = defineConnector({
       },
       async run(args: { video_ids: string[]; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        // The sign-in sees its channel's private videos: with a choice in place, that channel must be chosen.
+        await requireOwnChannel(h);
         const details = await videoDetails(h, args.video_ids);
         const found = args.video_ids.filter((id) => details.has(id));
         const missing = args.video_ids.filter((id) => !details.has(id));
@@ -476,8 +488,8 @@ const connector = defineConnector({
       async run(args: { channel_id?: string; query?: string; order: string; published_after?: string; published_before?: string; max_results: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const size = typeof state?.['n'] === 'number' ? state['n'] : args.max_results;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const size = cursorNumber(state, 'n', args.max_results, 1, 50);
         const channelId = await resolveChannel(h, args.channel_id);
         const { data } = await googleApi(h, {
           path: '/youtube/v3/search',
@@ -518,8 +530,9 @@ const connector = defineConnector({
         'Uploads a video (regular or Short) from a public https URL to the connected channel, with its title, description, tags, '
         + 'category, languages, visibility or scheduled release, audience setting and synthetic-media label, through YouTube\'s '
         + 'resumable upload. A vertical or square video of 3 minutes or less becomes a Short. Returns the video id and link. Upload '
-        + 'each video once: when the outcome is unclear, look for it with list_videos first. Videos larger than the host\'s download '
-        + `limit (at most ${formatNumber(MAX_VIDEO_BYTES)} bytes) are refused.`,
+        + 'each video once: when the outcome is unclear, look for it with list_videos first. The whole file is downloaded and sent in '
+        + 'one request, so it must fit the host\'s download limit, often 25 to 50 MB (never more than '
+        + `${formatNumber(MAX_VIDEO_BYTES)} bytes): a larger video is refused before anything reaches YouTube.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -722,8 +735,8 @@ const connector = defineConnector({
       async run(args: { channel_id?: string; page_size: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const size = typeof state?.['n'] === 'number' ? state['n'] : args.page_size;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const size = cursorNumber(state, 'n', args.page_size, 1, 50);
         const channelId = await resolveChannel(h, args.channel_id);
         // The connected channel lists its private playlists only through mine=true.
         const mine = channelId === (await ownChannel(h));
@@ -755,8 +768,10 @@ const connector = defineConnector({
       async run(args: { playlist_id: string; page_size: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const size = typeof state?.['n'] === 'number' ? state['n'] : args.page_size;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const size = cursorNumber(state, 'n', args.page_size, 1, 50);
+        // The sign-in sees its channel's private playlists: with a choice in place, that channel must be chosen.
+        await requireOwnChannel(h);
         const { data } = await googleApi(h, {
           path: '/youtube/v3/playlistItems',
           query: { part: 'snippet,contentDetails,status', playlistId: args.playlist_id, maxResults: size, pageToken },
@@ -870,7 +885,6 @@ const connector = defineConnector({
           filters: { type: 'string', maxLength: 2000, pattern: '^[A-Za-z0-9=,;:_.\\-]+$', description: 'Your own report\'s filters, such as "video==VIDEO_ID" or "country==US".' },
           sort: { type: 'string', maxLength: 200, pattern: '^-?[A-Za-z0-9]+(,-?[A-Za-z0-9]+)*$', description: 'Your own report\'s sort, such as "-views"; a minus sorts high to low.' },
           max_results: { type: 'integer', minimum: 1, maximum: 200, description: 'Rows per page (top video reports allow up to 200).' },
-          currency: { type: 'string', pattern: '^[A-Z]{3}$', description: 'Currency of revenue metrics, such as USD.' },
           cursor: { type: 'string', description: 'nextCursor from the previous result (with the same report).' },
         },
         required: ['start_date', 'end_date'],
@@ -878,11 +892,11 @@ const connector = defineConnector({
       },
       async run(args: {
         channel_id?: string; start_date: string; end_date: string; report?: string; video_id?: string; metrics?: string[];
-        dimensions?: string[]; filters?: string; sort?: string; max_results?: number; currency?: string; cursor?: string;
+        dimensions?: string[]; filters?: string; sort?: string; max_results?: number; cursor?: string;
       }, h) {
         const state = h.cursor(args.cursor);
-        const startIndex = typeof state?.['i'] === 'number' ? state['i'] : 1;
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const startIndex = cursorNumber(state, 'i', 1, 1, 1_000_000);
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         if (args.report && (args.metrics || args.dimensions || args.filters || args.sort)) {
           throw new ToolFailure('Give either report or your own metrics, dimensions, filters and sort, not both. Nothing was sent.');
         }
@@ -909,7 +923,6 @@ const connector = defineConnector({
             sort: preset ? preset.sort : args.sort,
             maxResults,
             startIndex: maxResults ? startIndex : undefined,
-            currency: args.currency,
           },
           errors: { 400: 'YouTube Analytics did not accept the report: check the metrics, dimensions and filters together' },
         });
@@ -960,8 +973,8 @@ const connector = defineConnector({
       },
       async run(args: { channel_id?: string; ad_format: string; min_views: number; min_view_percentage: number; days: number; page_size: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const size = typeof state?.['n'] === 'number' ? state['n'] : args.page_size;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+        const size = cursorNumber(state, 'n', args.page_size, 1, 50);
         const format = AD_FORMATS[args.ad_format] as { min?: number; max?: number; words: string };
         const channelId = await resolveChannel(h, args.channel_id);
         const page = await uploadsPage(h, state, channelId, size);
@@ -1034,15 +1047,15 @@ const connector = defineConnector({
         });
       },
     },
-    // The rest of the YouTube Data and Analytics APIs: comments, captions, deletes, channel settings.
+    // The rest of the YouTube Data and Analytics APIs: deletes, playlist changes, channel settings.
     ...apiTools({
       label: 'YouTube',
       description:
-        'The YouTube Data API v3 on https://www.googleapis.com (paths start with /youtube/v3/, such as /youtube/v3/commentThreads with '
-        + 'videoId and part in query, or /youtube/v3/videos with id to delete a video) and the YouTube Analytics API v2 on '
-        + 'https://youtubeanalytics.googleapis.com (/v2/reports with ids=channel==CHANNEL_ID). With a channel choice in place, a '
-        + 'channel the request names must be chosen, and writes need the connected channel chosen. '
-        + 'Reference: https://developers.google.com/youtube/v3/docs.',
+        'The YouTube Data API v3 on https://www.googleapis.com (paths start with /youtube/v3/, such as /youtube/v3/videos with id in '
+        + 'query to delete a video, /youtube/v3/playlistItems with id to take a video out of a playlist, or /youtube/v3/channels with '
+        + 'part=brandingSettings) and the YouTube Analytics API v2 on https://youtubeanalytics.googleapis.com (/v2/reports with '
+        + 'ids=channel==CHANNEL_ID). Comments and captions need a token with the youtube.force-ssl scope. With a channel choice in '
+        + 'place, the connected channel and any channel a request names must be chosen. Reference: https://developers.google.com/youtube/v3/docs.',
       originArgument: 'The API host: https://www.googleapis.com (default) or https://youtubeanalytics.googleapis.com.',
       methods: ['POST', 'PUT', 'DELETE'],
       guard,

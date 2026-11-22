@@ -12,7 +12,7 @@ A [YouTube](https://www.youtube.com) channel through the [YouTube Data API v3](h
 | --- | --- | --- |
 | `youtube` | `YOUTUBE_ACCESS_TOKEN` | An OAuth access token with the scopes `https://www.googleapis.com/auth/youtube` and `https://www.googleapis.com/auth/yt-analytics.readonly`, from your own Google Cloud OAuth client (see below). |
 
-`access_token` (`YOUTUBE_ACCESS_TOKEN` in the CLI) is an OAuth 2.0 access token of the Google account, or the Brand Account, that owns the channel, with the scopes `https://www.googleapis.com/auth/youtube` (manage the channel; it includes reading) and `https://www.googleapis.com/auth/yt-analytics.readonly` (Analytics reports). A host that signs in with your OAuth app passes its current token on every call and refreshes it; the connector never stores it. Google access tokens last one hour, and the CLI does not refresh them.
+`access_token` (`YOUTUBE_ACCESS_TOKEN` in the CLI) is an OAuth 2.0 access token of the Google account, or the Brand Account, that owns the channel, with the scopes `https://www.googleapis.com/auth/youtube` (manage the channel; it includes reading) and `https://www.googleapis.com/auth/yt-analytics.readonly` (Analytics reports). Comments and captions take `https://www.googleapis.com/auth/youtube.force-ssl` instead, and revenue metrics `https://www.googleapis.com/auth/yt-analytics-monetary.readonly`: the steps below do not add them, and a token without them gets HTTP 403 on those calls. A host that signs in with your OAuth app passes its current token on every call and refreshes it; the connector never stores it. Google access tokens last one hour, and the CLI does not refresh them.
 
 ### Get one, step by step
 
@@ -33,7 +33,7 @@ Open the channel account's [third-party connections](https://myaccount.google.co
 | --- | --- | --- |
 | `channels` | The channels the agent may work on (one or more) | `list_channels` |
 
-A sign-in acts as one channel, and every write lands on it. With a choice in place (`CONNECTOR_ACCOUNTS={"channels":["UC..."]}` in the CLI), tools refuse a channel outside it before sending anything, writes need the connected channel chosen, and `channel_id` may be left out when one channel is chosen. Without one, channel tools use the connected channel.
+A sign-in acts as one channel: every write lands on it, and it sees that channel's private and unlisted videos and private playlists. With a choice in place (`CONNECTOR_ACCOUNTS={"channels":["UC..."]}` in the CLI), tools refuse a channel outside it before sending anything; writes, `get_videos`, `list_playlist_items` and every `api_get` or `api_request` need the connected channel chosen (so nothing works until it is, or after a sign-in as another channel); and `channel_id` may be left out when one channel is chosen. Without one, channel tools use the connected channel.
 
 ## Tools
 
@@ -53,13 +53,14 @@ A sign-in acts as one channel, and every write lands on it. With a choice in pla
 | `add_to_playlist` | create | Adds a video to a playlist, at the end or at a position. |
 | `get_analytics_report` | read | An Analytics report: daily figures (the default), top videos, retention for a video, traffic sources, countries, devices, demographics, or your own metrics, dimensions, filters and sort. |
 | `screen_videos_for_ads` | read | Checks uploads for video ads: visibility, audience, views, length for the ad format, average view percentage. |
-| `api_get` | read | Any other GET under `/youtube/v3/` or the Analytics `/v2/` API, such as comment threads or captions. |
-| `api_request` | write | A POST, PUT or DELETE under `/youtube/v3/`, such as replying to a comment or deleting a video. Sent once, never retried. |
+| `api_get` | read | Any other GET under `/youtube/v3/` or the Analytics `/v2/` API, such as video categories or a channel's branding settings. |
+| `api_request` | write | A POST, PUT or DELETE under `/youtube/v3/`, such as deleting a video or taking it out of a playlist. Sent once, never retried. |
 
 ## Limits
 
 - YouTube gives a project 10,000 quota units a day by default; a search costs 100 of them (YouTube's [quota calculator](https://developers.google.com/youtube/v3/determine_quota_cost) lists the rest). A quota error comes back as HTTP 403 with YouTube's words.
-- `upload_video` downloads the video into memory and sends it in one request of the resumable upload, so a video can be as large as the host's media download limit (25 MiB in this package's CLI) and at most 256 MiB. Larger videos are refused.
+- `upload_video` downloads the whole video into memory and sends it in one request of the resumable upload, so it must fit the host's media download limit: 25 MiB in this package's CLI, often 25 to 50 MB in other hosts, which may also limit how long one call runs; the module takes at most 256 MiB. A larger video is refused before anything reaches YouTube. Uploading larger videos in chunks needs downloads by byte range, which the module interface does not offer yet.
+- Comment threads, comments and captions need the `youtube.force-ssl` scope, and revenue metrics `yt-analytics-monetary.readonly`; the setup steps do not add them (see Credentials).
 - Titles take at most 100 characters and descriptions 5,000 bytes, neither with `<` or `>`; tags take 500 characters in all. A scheduled release needs `privacy_status: "private"` and a future `publish_at`.
 - Videos uploaded through a project that has not passed YouTube's audit stay private, whatever was asked; `update_video` warns when YouTube kept a video private.
 - Thumbnails: JPEG or PNG under 2 MB, on a verified channel.
