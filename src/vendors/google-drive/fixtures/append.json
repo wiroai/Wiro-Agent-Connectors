@@ -1,0 +1,11 @@
+{
+  "spreadsheetId": "5SheetLeads0000000000000000000000",
+  "tableRange": "Sheet1!A1:C4",
+  "updates": {
+    "spreadsheetId": "5SheetLeads0000000000000000000000",
+    "updatedRange": "Sheet1!A5:C6",
+    "updatedRows": 2,
+    "updatedColumns": 3,
+    "updatedCells": 6
+  }
+}

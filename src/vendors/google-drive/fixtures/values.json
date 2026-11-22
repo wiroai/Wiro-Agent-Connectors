@@ -1,0 +1,10 @@
+{
+  "range": "Sheet1!A1:C4",
+  "majorDimension": "ROWS",
+  "values": [
+    ["Date", "Name", "Score"],
+    ["2026-05-11", "Jane Doe", "42"],
+    ["2026-05-12", "John Roe", "17"],
+    ["2026-05-13", "Ana Lima"]
+  ]
+}
