@@ -1185,7 +1185,7 @@ module.exports = {
   tools: [{ name, title, description, inputSchema, annotations }],
   async call(toolName, args, ctx) {} // returns an MCP CallToolResult
 };
-// ctx = { credentials, accounts, fetch, signal, log }
+// ctx = { credentials, accounts, fetch, signal, log, files }
 ```
 
 `ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call, and so is a request to a [credential origin](#credential-origins). A PUT or POST with a body to one of its [upload hosts](#upload-hosts) is an upload. Any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address, with no headers but Accept, User-Agent and one byte range (`Range: bytes=FIRST-LAST`, for a module that reads a large file in parts: the `206` reply comes back as it is, and the host's size cap applies to each request). A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
@@ -1206,7 +1206,7 @@ const result = await devto.call('list_my_articles', { per_page: 5 }, {
 });
 ```
 
-Results are a single JSON text block, trimmed to the fields an agent needs and kept under 32 KB. A longer list comes back in pages: pass `nextCursor` back as `cursor`. Errors come back as results with `isError: true` and a sentence that says what happened, plus the vendor's HTTP `status` and, for a rate limit, `retryAfter` in seconds.
+Results are one JSON text block, trimmed to the fields an agent needs and kept under 32 KB, followed by one embedded resource for each [file](#files) a tool hands back (most tools hand none). A longer list comes back in pages: pass `nextCursor` back as `cursor`. Errors come back as results with `isError: true` and a sentence that says what happened, plus the vendor's HTTP `status` and, for a rate limit, `retryAfter` in seconds.
 
 ### Credential origins
 
@@ -1233,6 +1233,16 @@ A host lets the module send a PUT or POST with a body to an address on such a ho
 - redirects are not followed, and the reply is capped and timed like an API reply.
 
 A GET to such a host is still a media download. The CLI's guarded fetch takes the list as `uploadHosts`, as in `createGuardedFetch({ origins: module.origins, uploadHosts: module.uploadHosts, ... })`, and other hosts match an address with the same rule, `isUploadHost`. A module built before `uploadHosts` existed has none and sends no uploads.
+
+### Files
+
+A tool can hand files to its host with its result, such as a file stored in Google Drive or a PDF export of a Google Doc. The result keeps its JSON text block first and adds one MCP embedded resource per file:
+
+```json
+{ "type": "resource", "resource": { "uri": "attachment:///Q3%20report.pdf", "mimeType": "application/pdf", "blob": "<the bytes in base64>" } }
+```
+
+The `uri` is `attachment:///` followed by the file's name, percent-encoded. A host that takes files says so on every call with `ctx.files = { maxBytes }`, the most bytes the files of one call may hold in all; a host that leaves it out takes none. A tool checks that limit (`h.fileLimit()`) before it downloads anything, refuses with a plain sentence when the host takes no files, and hands each file over with `h.file({ name, mimeType, bytes })`. The CLI takes 25 MiB of files a call and passes the blocks on to its MCP client unchanged. A host that runs connectors for an agent may instead save each file where the agent works, and show the model where it went in place of the block.
 
 ### OAuth access tokens
 
@@ -1277,7 +1287,7 @@ In the CLI, set `CONNECTOR_ACCOUNTS` to that JSON, keyed by the account keys `--
 - **Credentials are never stored or logged.** They arrive with each call, from your environment in the CLI. What a connector keeps in memory is short-lived and keyed by a SHA-256 hash of the credentials, never the credentials themselves: a Bluesky session for up to 10 minutes, because Bluesky allows only 30 sign-ins per 5 minutes and 300 per day; for a connector that signs in with a Google service account (Google Calendar, Google Drive, Google Play, Firebase), its access token until 5 minutes before it expires; the Page tokens Facebook Pages and Instagram fetch for 15 minutes, never returned by a tool; the connected profile or channel id of Threads (15 minutes) and YouTube (10 minutes); for Google Ads, the manager account that leads to each account (an hour); and, for Reddit, the rate window of each connection and, for 48 hours, a SHA-256 digest of each post and comment (never its text), so the same one is not sent twice. Keys that sign their own tokens (Google service accounts, App Store Connect) are used with WebCrypto in memory and never leave the call. Log lines carry the connector, tool, HTTP method, status and duration, never arguments, credentials or content.
 - **Origin lock.** A connector only reaches its declared origins and, for a service at an address the user chooses, the https origin of that address; the host refuses any other API URL. An upload goes only to the [upload hosts](#upload-hosts) a connector declares, with no credential header.
 - **SSRF guard on media and user-chosen sites.** A media URL must be https, must resolve to public addresses only (no loopback, private, link-local, carrier-grade NAT or reserved ranges, IPv4 and IPv6 alike), and every redirect is checked the same way, at most 5; no credential header is sent with it. An API request to a [credential origin](#credential-origins) passes the same address checks, and its redirects are never followed. Either way, the connection goes to the address that was checked.
-- **Limits.** Requests time out after 30 seconds, API replies are capped at 8 MiB by the CLI and at 4 MiB by the modules (8 MiB for the few calls that need it, such as a long post or a large report), and media downloads and uploads at 25 MiB by the CLI. Each connector also keeps to its service's own file limits, which may be lower (Bluesky images: 2,000,000 bytes).
+- **Limits.** Requests time out after 30 seconds. The CLI caps API replies, media downloads and uploads at 25 MiB each, and the files a call hands back at 25 MiB in all; the modules read API replies up to 4 MiB (8 MiB for the few calls that need it, such as a long post or a large report, and up to the host's file limit for a file a tool hands back). Each connector also keeps to its service's own file limits, which may be lower (Bluesky images: 2,000,000 bytes).
 - **Writes are never retried.** When a write gets no clear answer (a timeout, a broken connection, a 5xx), the result is `{ "outcome": "unknown", "check": "<read tool>" }`, so the agent checks before trying again instead of posting twice. Rate limits are passed back with `retryAfter`, never queued.
 - **White-label.** Tool names, descriptions and messages name only the service.
 

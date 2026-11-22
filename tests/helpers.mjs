@@ -94,21 +94,47 @@ export function fakeFetch(handler) {
   return fetch;
 }
 
-/** A tool context with recorded log lines. accounts defaults to {} (a host with nothing selected). */
-export function makeContext({ credentials = {}, accounts = {}, fetch, signal } = {}) {
+/**
+ * A tool context with recorded log lines. accounts defaults to {} (a host with
+ * nothing selected); files, such as { maxBytes: 1024 }, only when given (a host
+ * that takes files).
+ */
+export function makeContext({ credentials = {}, accounts = {}, fetch, signal, files } = {}) {
   const logs = [];
   const ctx = { credentials, accounts, fetch, log: (line) => logs.push(String(line)) };
   if (signal) ctx.signal = signal;
+  if (files) ctx.files = files;
   return { ctx, logs };
 }
 
-/** Calls a tool and returns the plain result, its parsed JSON payload, and isError. */
+const ATTACHMENT = 'attachment:///';
+
+/** An embedded resource that carries a file, as the core makes it. */
+function isFileBlock(block) {
+  const resource = block?.resource;
+  return block?.type === 'resource' && Object.keys(block).length === 2
+    && typeof resource?.uri === 'string' && resource.uri.startsWith(ATTACHMENT)
+    && typeof resource.mimeType === 'string' && typeof resource.blob === 'string'
+    && Buffer.from(resource.blob, 'base64').toString('base64') === resource.blob;
+}
+
+/**
+ * Calls a tool and returns the plain result, its parsed JSON payload, isError,
+ * and the files it handed back ({ name, mimeType, bytes }), which follow the
+ * one JSON text block as embedded resources.
+ */
 export async function callTool(module, name, args, ctx) {
   const result = JSON.parse(JSON.stringify(await module.call(name, args, ctx)));
-  if (!Array.isArray(result.content) || result.content.length !== 1 || result.content[0].type !== 'text') {
+  const [first, ...blocks] = Array.isArray(result.content) ? result.content : [];
+  if (first?.type !== 'text' || !blocks.every(isFileBlock) || (result.isError === true && blocks.length)) {
     throw new Error(`unexpected result shape: ${JSON.stringify(result).slice(0, 200)}`);
   }
-  return { result, payload: JSON.parse(result.content[0].text), isError: result.isError === true, text: result.content[0].text };
+  const files = blocks.map(({ resource }) => ({
+    name: decodeURIComponent(resource.uri.slice(ATTACHMENT.length)),
+    mimeType: resource.mimeType,
+    bytes: new Uint8Array(Buffer.from(resource.blob, 'base64')),
+  }));
+  return { result, payload: JSON.parse(first.text), isError: result.isError === true, text: first.text, files };
 }
 
 /** UTF-8 size of a result's text. */

@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
 // The host building blocks other programs use: the module check, the
 // environment mapping of the CLI, and what its --list prints.
 
 const require = createRequire(import.meta.url);
-const { ACCESS_TOKEN_CREDENTIAL, assertConnectorModule, credentialsFromEnv, envNameFor } = require('../dist/host/index.js');
+const { ACCESS_TOKEN_CREDENTIAL, assertConnectorModule, createConnectorServer, credentialsFromEnv, DEFAULT_MAX_FILE_BYTES, envNameFor } = require('../dist/host/index.js');
 const { describeConnector, describeNeeded } = require('../dist/host/describe.js');
 const { defineConnector } = require('../build/core.js');
 
@@ -124,3 +126,55 @@ test('--list: variables and tools as before; the alternatives and account picker
 function plainDefinition() {
   return { vendor: 'acme', label: 'Acme', origins: ['https://api.acme.test'], credentials: ['api_key'], tools: [readTool('read_x')] };
 }
+
+/** A client connected to a server in memory. */
+async function connected(server) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: 'host-test', version: '1.0.0' });
+  await client.connect(clientTransport);
+  return client;
+}
+
+test('the CLI server gives each call a 25 MiB file limit and passes the files a tool hands back to its client unchanged', async () => {
+  const pdf = new TextEncoder().encode('%PDF-1.7 report');
+  const limits = [];
+  const module = defineConnector({
+    ...plainDefinition(),
+    tools: [{
+      name: 'export_report',
+      kind: 'read',
+      title: 'Export',
+      description: 'Hands back the report.',
+      inputSchema: READ,
+      run: async (args, h) => {
+        limits.push(h.fileLimit());
+        return { file: h.file({ name: 'Q3 report.pdf', mimeType: 'application/pdf', bytes: pdf }) };
+      },
+    }],
+  });
+  const client = await connected(createConnectorServer(module, { credentials: { api_key: 'k' }, accounts: null, log: () => {} }));
+  try {
+    const result = await client.callTool({ name: 'export_report', arguments: {} });
+    assert.equal(DEFAULT_MAX_FILE_BYTES, 25 * 1024 * 1024);
+    assert.deepEqual(limits, [DEFAULT_MAX_FILE_BYTES]);
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(result.content, [
+      { type: 'text', text: JSON.stringify({ file: { name: 'Q3 report.pdf', mimeType: 'application/pdf', size: pdf.length } }) },
+      { type: 'resource', resource: { uri: 'attachment:///Q3%20report.pdf', mimeType: 'application/pdf', blob: Buffer.from(pdf).toString('base64') } },
+    ]);
+  } finally {
+    await client.close();
+  }
+
+  // A server set to take no files gives the call none, and the tool says so.
+  const none = await connected(createConnectorServer(module, { credentials: { api_key: 'k' }, accounts: null, log: () => {}, maxFileBytes: null }));
+  try {
+    const refused = await none.callTool({ name: 'export_report', arguments: {} });
+    assert.equal(refused.isError, true);
+    assert.deepEqual(refused.content, [{ type: 'text', text: JSON.stringify({ error: 'This host takes no files, so export_report cannot hand one back.' }) }]);
+    assert.deepEqual(limits, [DEFAULT_MAX_FILE_BYTES, null]);
+  } finally {
+    await none.close();
+  }
+});

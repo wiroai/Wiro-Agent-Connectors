@@ -285,6 +285,86 @@ test('an unknown tool and a host without fetch get plain errors', async () => {
   assert.match(noFetch.payload.error, /no fetch function/);
 });
 
+test('a tool hands files to a host that takes them: one embedded resource each, after the JSON text', async () => {
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const module = connector(async (args, h) => {
+    const limit = h.fileLimit();
+    const image = h.file({ name: 'Q3 report/final.png', mimeType: 'IMAGE/PNG; charset=binary', bytes: png });
+    const notes = h.file({ name: ' notes.txt\n', mimeType: 'not a type', bytes: new TextEncoder().encode('hi') });
+    return { limit, image, notes };
+  });
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  const { ctx } = makeContext({ credentials: { api_key: 'k' }, fetch, files: { maxBytes: 64 } });
+  const raw = await module.call('read_x', {}, ctx);
+  assert.deepEqual(raw.content.map((block) => block.type), ['text', 'resource', 'resource'], 'the JSON text first');
+  assert.deepEqual(raw.content[1], {
+    type: 'resource',
+    resource: { uri: 'attachment:///Q3%20report_final.png', mimeType: 'image/png', blob: Buffer.from(png).toString('base64') },
+  });
+  const { payload, files, isError } = await callTool(module, 'read_x', {}, ctx);
+  assert.equal(isError, false);
+  assert.deepEqual(payload, {
+    limit: 64,
+    image: { name: 'Q3 report_final.png', mimeType: 'image/png', size: 8 },
+    notes: { name: 'notes.txt', mimeType: 'application/octet-stream', size: 2 },
+  });
+  assert.deepEqual(files.map(({ name, mimeType, bytes }) => [name, mimeType, [...bytes]]), [
+    ['Q3 report_final.png', 'image/png', [...png]],
+    ['notes.txt', 'application/octet-stream', [0x68, 0x69]],
+  ]);
+  assert.equal(fetch.calls.length, 0);
+
+  // A long name keeps its extension.
+  const long = connector(async (args, h) => h.file({ name: `${'x'.repeat(300)}.pdf`, mimeType: 'application/pdf', bytes: png }));
+  const cut = await callTool(long, 'read_x', {}, ctx);
+  assert.equal(cut.payload.name, `${'x'.repeat(196)}.pdf`);
+});
+
+test('a host without ctx.files takes no file, the files of one call keep within its limit, and an error carries none', async () => {
+  const limitOf = connector(async (args, h) => ({ limit: h.fileLimit() }));
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  for (const files of [undefined, { maxBytes: 0 }, { maxBytes: -5 }, { maxBytes: 1.5 }, { maxBytes: '64' }, {}]) {
+    const { payload } = await callTool(limitOf, 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch, files }).ctx);
+    assert.deepEqual(payload, { limit: null }, JSON.stringify(files));
+  }
+  const bytes = (size) => new Uint8Array(size);
+  const hand = (...sizes) => connector(async (args, h) => {
+    for (const size of sizes) h.file({ name: 'a.bin', mimeType: 'application/octet-stream', bytes: bytes(size) });
+    return { ok: true };
+  });
+  const none = await callTool(hand(1), 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch }).ctx);
+  assert.equal(none.payload.error, 'This host takes no files, so read_x cannot hand one back.');
+  const ctx = makeContext({ credentials: { api_key: 'k' }, fetch, files: { maxBytes: 64 } }).ctx;
+  const one = await callTool(hand(65), 'read_x', {}, ctx);
+  assert.equal(one.payload.error, 'The file has 65 bytes, more than the 64 bytes this host takes.');
+  const two = await callTool(hand(40, 30), 'read_x', {}, ctx);
+  assert.equal(two.payload.error, 'The files of this call have 70 bytes in all, more than the 64 bytes this host takes from one call.');
+  assert.deepEqual([one.files, two.files], [[], []], 'an error hands back no file');
+  const exact = await callTool(hand(40, 24), 'read_x', {}, ctx);
+  assert.deepEqual(exact.files.map((file) => file.bytes.length), [40, 24]);
+
+  const late = connector(async (args, h) => {
+    h.file({ name: 'a.bin', mimeType: 'application/octet-stream', bytes: bytes(4) });
+    throw new ToolFailure('Something else failed.');
+  });
+  const failed = await callTool(late, 'read_x', {}, ctx);
+  assert.deepEqual([failed.isError, failed.payload.error, failed.files], [true, 'Something else failed.', []]);
+});
+
+test('a binary request returns the reply\'s bytes unparsed, and an error reply is still read for its message', async () => {
+  const file = Uint8Array.from([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x31, 0x7d, 0xff, 0x00]);
+  const module = connector(async (args, h) => {
+    const { data } = await h.api({ path: '/files/1', binary: true, maxBytes: 64 });
+    return { bytes: data instanceof Uint8Array, values: [...data] };
+  });
+  const ok = await callTool(module, 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: fakeFetch(() => new Response(file, { headers: { 'content-type': 'application/json' } })) }).ctx);
+  assert.deepEqual(ok.payload, { bytes: true, values: [...file] }, 'not parsed, even when it looks like JSON');
+  const missing = await callTool(module, 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: fakeFetch(() => jsonResponse(404, { message: 'No such file' })) }).ctx);
+  assert.equal(missing.payload.error, 'Acme found nothing there (HTTP 404): No such file.');
+  const big = await callTool(module, 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: fakeFetch(() => new Response(new Uint8Array(65))) }).ctx);
+  assert.equal(big.payload.error, 'Acme answered HTTP 200, but the reply could not be read (the reply is larger than 64 bytes).');
+});
+
 const READ_SCHEMA = { type: 'object', properties: {}, additionalProperties: false };
 
 /** A connector whose API is on the site the user names in site_url (and, with `origins`, on fixed origins too). */

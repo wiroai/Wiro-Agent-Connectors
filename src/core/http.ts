@@ -41,6 +41,12 @@ export interface ApiRequest {
   /** Adds the module's auth headers (default true). */
   auth?: boolean;
   maxBytes?: number;
+  /**
+   * For a file download: a successful reply comes back as its bytes, a
+   * Uint8Array in `data`, not parsed. An error reply is still read for its
+   * message.
+   */
+  binary?: boolean;
   /** A sentence per HTTP status that replaces the generic one. */
   errors?: Partial<Record<number, string>>;
 }
@@ -48,6 +54,7 @@ export interface ApiRequest {
 export interface ApiResponse {
   status: number;
   headers: Headers;
+  /** The reply as JSON or text; for a binary request, its bytes. */
   data: any;
 }
 
@@ -298,7 +305,7 @@ export function createHttp(env: HttpEnvironment) {
       }
       throw new ToolFailure(`${label} answered HTTP ${response.status}, but the reply could not be read (${describe(error)}).${response.ok ? '' : nothingChanged}`);
     }
-    const data = parseBody(bytes, response.headers.get('content-type'));
+    const data = request.binary && response.ok ? bytes : parseBody(bytes, response.headers.get('content-type'));
     if (response.ok) return { status: response.status, headers: response.headers, data };
     throw failureFor(response.status, response.headers, data, request);
   }

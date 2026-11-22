@@ -58,10 +58,17 @@ async function run(label, step) {
     accounts,
     fetch,
     log: (line) => process.stderr.write(`  ${line}\n`),
+    files: { maxBytes: host.DEFAULT_MAX_FILE_BYTES },
   });
-  const text = result.content?.[0]?.text ?? '';
+  const [first, ...files] = result.content ?? [];
+  const text = first?.text ?? '';
   process.stdout.write(`${label} ${step.tool}: ${result.isError ? 'ERROR' : 'ok'} (${Date.now() - started}ms)\n`);
-  process.stdout.write(`${text.length > 2000 ? `${text.slice(0, 2000)}…` : text}\n\n`);
+  process.stdout.write(`${text.length > 2000 ? `${text.slice(0, 2000)}…` : text}\n`);
+  // A file the tool handed back: its name, type and size.
+  for (const { resource } of files) {
+    process.stdout.write(`file: ${decodeURIComponent(resource.uri.replace(/^attachment:\/\/\//, ''))} (${resource.mimeType}, ${Buffer.from(resource.blob, 'base64').length} bytes)\n`);
+  }
+  process.stdout.write('\n');
   return !result.isError;
 }
 

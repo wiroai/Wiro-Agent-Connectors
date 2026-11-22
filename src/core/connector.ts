@@ -9,10 +9,12 @@ import type {
 } from '../types.js';
 import { andList, orList, requiredAlternatives, unmetAlternatives } from './credentials.js';
 import { OutcomeUnknown, ToolFailure, type FailureDetails } from './errors.js';
+import { fileLimitOf, fileName, fileType, resourceBlock, type FileInfo, type FileOut } from './files.js';
 import { createHttp, type ApiRequest, type ApiResponse, type MediaOptions, type MediaResult } from './http.js';
 import { parseSiteUrl } from './origins.js';
 import { decodeCursor, encodeCursor, fitPage, shrinkToFit, type PageInput } from './output.js';
 import { validateArguments } from './schema.js';
+import { formatNumber } from './text.js';
 import { uploadHostProblem } from './upload-hosts.js';
 
 /**
@@ -75,6 +77,19 @@ export interface ToolHelpers {
   cursor(cursor: string | undefined): Record<string, unknown> | null;
   /** A cursor carrying `state`, for this tool only. */
   makeCursor(state: Record<string, string | number>): string;
+  /**
+   * The most bytes of files this call may hand to its host (ctx.files), or
+   * null when the host takes no files. Check it before downloading anything:
+   * with null, refuse with a plain sentence and send nothing.
+   */
+  fileLimit(): number | null;
+  /**
+   * Hands a file to the host with this call's result, where it follows the
+   * JSON text as an MCP embedded resource. A ToolFailure when the host takes
+   * no files, or when the call's files would pass its limit. Returns the
+   * file's name, type and size, for the JSON result.
+   */
+  file(file: FileOut): FileInfo;
   /** A log line for the host. Never pass arguments or credentials. */
   log(text: string): void;
 }
@@ -284,8 +299,14 @@ function copyPicker(picker: AccountPicker): AccountPicker {
   };
 }
 
-function result(payload: Record<string, unknown>, isError: boolean): CallToolResult {
-  return { content: [{ type: 'text', text: JSON.stringify(payload) }], ...(isError ? { isError: true } : {}) };
+/** A file handed to the host, with its bytes, until the result carries it. */
+type HandedFile = FileInfo & { bytes: Uint8Array };
+
+function result(payload: Record<string, unknown>, isError: boolean, files: readonly HandedFile[] = []): CallToolResult {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(payload) }, ...files.map(resourceBlock)],
+    ...(isError ? { isError: true } : {}),
+  };
 }
 
 function failure(message: string, details: FailureDetails = {}): CallToolResult {
@@ -364,6 +385,9 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
 
     const frozenCredentials = Object.freeze({ ...credentials });
     let writeSent = false;
+    const fileLimit = fileLimitOf(ctx);
+    const files: HandedFile[] = [];
+    let fileBytes = 0;
     const http = createHttp({
       vendor: def.vendor,
       label,
@@ -394,6 +418,20 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
       page: (input) => fitPage(input),
       cursor: (cursor) => decodeCursor(tool.name, cursor),
       makeCursor: (state) => encodeCursor(tool.name, state),
+      fileLimit: () => fileLimit,
+      file: ({ name, mimeType, bytes }) => {
+        if (fileLimit === null) throw new ToolFailure(`This host takes no files, so ${tool.name} cannot hand one back.`);
+        const total = fileBytes + bytes.byteLength;
+        if (total > fileLimit) {
+          throw new ToolFailure(files.length
+            ? `The files of this call have ${formatNumber(total)} bytes in all, more than the ${formatNumber(fileLimit)} bytes this host takes from one call.`
+            : `The file has ${formatNumber(bytes.byteLength)} bytes, more than the ${formatNumber(fileLimit)} bytes this host takes.`);
+        }
+        fileBytes = total;
+        const info = { name: fileName(name), mimeType: fileType(mimeType), size: bytes.byteLength };
+        files.push({ ...info, bytes });
+        return { ...info };
+      },
       log,
     };
 
@@ -402,7 +440,7 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
       const fitted = shrinkToFit(data ?? {});
       if (!fitted) return failure(`The ${label} result was too large to return. Ask for fewer items.`);
       const payload = fitted.value as Record<string, unknown>;
-      return result(fitted.truncated && typeof payload === 'object' ? { ...payload, truncated: true } : payload, false);
+      return result(fitted.truncated && typeof payload === 'object' ? { ...payload, truncated: true } : payload, false, files);
     } catch (error) {
       if (error instanceof OutcomeUnknown) {
         return result({

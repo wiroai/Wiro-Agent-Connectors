@@ -46,9 +46,23 @@ export interface TextContent {
   text: string;
 }
 
-/** An MCP CallToolResult. Modules return a single JSON text block. */
+/**
+ * A file a tool hands to its host: an MCP embedded resource whose uri is
+ * "attachment:///" and the file's name, percent-encoded, and whose blob holds
+ * the bytes in base64.
+ */
+export interface EmbeddedResource {
+  type: 'resource';
+  resource: { uri: string; mimeType: string; blob: string };
+}
+
+/**
+ * An MCP CallToolResult. Modules return one JSON text block first, then one
+ * embedded resource per file the tool hands to its host (most tools hand none,
+ * and an error never does).
+ */
 export interface CallToolResult {
-  content: TextContent[];
+  content: Array<TextContent | EmbeddedResource>;
   isError?: boolean;
 }
 
@@ -94,6 +108,12 @@ export interface ToolContext {
   fetch: ConnectorFetch;
   signal?: AbortSignal;
   log(text: string): void;
+  /**
+   * Given by a host that takes files with a result: the most bytes the files
+   * of one call may hold in all (the stdio CLI: 25 MiB). A host that takes no
+   * files leaves it out, and tools then hand none back.
+   */
+  files?: { maxBytes: number };
 }
 
 /**

@@ -81,7 +81,7 @@ export interface GuardedFetchOptions {
   uploadHosts?: readonly string[];
   /** Per request, API and media alike (default 30 s). */
   timeoutMs?: number;
-  /** The largest API reply (default 8 MiB). */
+  /** The largest API reply (default 25 MiB, as large as a file a call hands back may be). */
   maxResponseBytes?: number;
   /** The largest media download (default 25 MiB). */
   maxMediaBytes?: number;
@@ -97,7 +97,9 @@ export interface GuardedFetchOptions {
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+// A file a tool hands back may come from an API origin (a stored file's
+// download), so an API reply may be as large as the CLI's file limit.
+const DEFAULT_MAX_RESPONSE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 5;

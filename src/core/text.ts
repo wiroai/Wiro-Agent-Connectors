@@ -16,12 +16,17 @@ export function utf8Decode(bytes: Uint8Array): string {
   return decoder.decode(bytes);
 }
 
-export function base64UrlEncode(bytes: Uint8Array): string {
+/** Standard base64, padded, as MCP's blob fields take it. */
+export function base64Encode(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i += 0x8000) {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  return btoa(binary);
+}
+
+export function base64UrlEncode(bytes: Uint8Array): string {
+  return base64Encode(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 export function base64UrlDecode(text: string): Uint8Array {

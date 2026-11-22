@@ -4,6 +4,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import type { CallToolResult, ConnectorAccounts, ConnectorFetch, ConnectorModule } from '../types.js';
 import { createGuardedFetch, originsFromCredentials } from './guarded-fetch.js';
 
+/** The most bytes of files one call may hand back through the CLI. */
+export const DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024;
+
 export interface ConnectorServerOptions {
   credentials: Record<string, string>;
   accounts: ConnectorAccounts;
@@ -14,6 +17,12 @@ export interface ConnectorServerOptions {
   /** Answer for a credential the host knows is missing, e.g. naming the environment variable. */
   missingCredentials?: string;
   version?: string;
+  /**
+   * The most bytes of files one call may hand back (default 25 MiB), given to
+   * each call as ctx.files. They reach the MCP client unchanged, as embedded
+   * resources after the JSON text. null takes no files.
+   */
+  maxFileBytes?: number | null;
 }
 
 function errorResult(message: string): CallToolResult {
@@ -23,10 +32,12 @@ function errorResult(message: string): CallToolResult {
 /**
  * An MCP server for one connector module. The server is named after the
  * vendor, lists the module's tools as they are, and runs every call through
- * module.call with a fresh context.
+ * module.call with a fresh context. A tool's result goes back as it is, with
+ * the files it hands back.
  */
 export function createConnectorServer(module: ConnectorModule, options: ConnectorServerOptions): Server {
   const log = options.log ?? ((text: string) => process.stderr.write(`${text}\n`));
+  const maxFileBytes = options.maxFileBytes === undefined ? DEFAULT_MAX_FILE_BYTES : options.maxFileBytes;
   const fetch = options.fetch ?? createGuardedFetch({
     origins: module.origins,
     credentialOrigins: originsFromCredentials(module, options.credentials),
@@ -54,6 +65,7 @@ export function createConnectorServer(module: ConnectorModule, options: Connecto
           fetch,
           signal: extra.signal,
           log,
+          ...(maxFileBytes ? { files: { maxBytes: maxFileBytes } } : {}),
         });
       } catch {
         // A module returns its errors as results; a throw is a bug, and its message stays out of the reply.
