@@ -1,0 +1,11 @@
+{
+  "kind": "calendar#calendar",
+  "etag": "\"d2l0aG91dC1yZWFsLWV0YWc\"",
+  "id": "bookings@group.calendar.google.com",
+  "summary": "Bookings",
+  "description": "Appointments booked by phone",
+  "timeZone": "Europe/Istanbul",
+  "conferenceProperties": {
+    "allowedConferenceSolutionTypes": ["hangoutsMeet"]
+  }
+}

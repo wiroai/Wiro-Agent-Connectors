@@ -1,0 +1,11 @@
+{
+  "kind": "calendar#freeBusy",
+  "timeMin": "2030-01-07T06:00:00.000Z",
+  "timeMax": "2030-01-08T21:00:00.000Z",
+  "calendars": {
+    "bookings@group.calendar.google.com": {
+      "errors": [{ "domain": "global", "reason": "notFound" }],
+      "busy": []
+    }
+  }
+}

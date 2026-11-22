@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "find_free_slots", "args": { "days": 3 } },
+  "write": {
+    "tool": "create_event",
+    "args": {
+      "summary": "Connector smoke test {{timestamp}}",
+      "start": "2030-01-15T10:00:00Z",
+      "end": "2030-01-15T10:30:00Z"
+    },
+    "note": "Creates an event on the connected calendar on 2030-01-15: delete it with delete_event and the id in the result, or in Google Calendar."
+  }
+}
