@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
+import fs from 'node:fs';
 import test from 'node:test';
-import { callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext } from '../../../tests/helpers.mjs';
+import { callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, textResponse } from '../../../tests/helpers.mjs';
 
 // The key is made here, for this run: no key is ever stored in the repository.
 const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
@@ -134,6 +135,20 @@ test('reply_to_review posts one reply with the review id as Play writes it, and 
   assert.equal(fetch.calls.length, before);
 });
 
+test('a review id is one path segment: "." and ".." are refused before anything is sent', async () => {
+  const { module, fetch, ctx } = setup({});
+  for (const [tool, args] of [
+    ['get_review', { review_id: '..' }],
+    ['get_review', { review_id: '.' }],
+    ['reply_to_review', { review_id: '..', reply_text: 'Thanks!' }],
+  ]) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true);
+    assert.match(payload.error, /`review_id` does not have the expected format/);
+  }
+  assert.equal(fetch.calls.length, 0);
+});
+
 test('an unclear reply outcome is unknown with get_review to check, and is sent once', async () => {
   const { module, ctx, apiCalls } = setup({ [`POST ${APP}/reviews/${REVIEW}:reply`]: jsonResponse(500, { error: { code: 500, message: 'Internal error encountered.', status: 'INTERNAL' } }) });
   const { payload } = await callTool(module, 'reply_to_review', { review_id: REVIEW, reply_text: 'Thanks!' }, ctx);
@@ -142,38 +157,50 @@ test('an unclear reply outcome is unknown with get_review to check, and is sent 
   assert.equal(apiCalls().length, 1);
 });
 
-test('get_store_listing reads the listings and details through a temporary edit and deletes the edit', async () => {
-  const { module, ctx, apiCalls } = setup({
-    [`POST ${APP}/edits`]: jsonResponse(200, fixture(import.meta.url, 'edit.json')),
-    [`GET ${EDIT}/listings`]: jsonResponse(200, fixture(import.meta.url, 'listings.json')),
-    [`GET ${EDIT}/details`]: jsonResponse(200, fixture(import.meta.url, 'details.json')),
-    [`DELETE ${EDIT}`]: new Response(null, { status: 204 }),
-  });
-  const { payload, isError } = await callTool(module, 'get_store_listing', {}, ctx);
+test('get_store_listing reads the live listing from the public store page: one GET, no edit, no credentials', async () => {
+  const page = fs.readFileSync(new URL('./fixtures/store-page.html', import.meta.url), 'utf8');
+  const { module, fetch, ctx } = setup({ 'GET https://play.google.com/store/apps/details': textResponse(200, page, { 'content-type': 'text/html; charset=utf-8' }) });
+  const { payload, isError } = await callTool(module, 'get_store_listing', { language: 'tr-TR', region: 'TR' }, ctx);
   assert.equal(isError, false, payload.error);
-  assert.deepEqual(apiCalls().map((call) => `${call.method} ${call.path}`), [`POST ${APP}/edits`, `GET ${EDIT}/listings`, `GET ${EDIT}/details`, `DELETE ${EDIT}`]);
-  assert.equal(payload.defaultLanguage, 'en-US');
-  assert.equal(payload.contactEmail, 'support@example.com');
-  assert.deepEqual(payload.listings[0], {
-    language: 'en-US',
+  assert.equal(fetch.calls.length, 1, 'no token exchange and no edit');
+  const [read] = fetch.calls;
+  assert.equal(read.method, 'GET');
+  assert.deepEqual(read.query, { id: PKG, hl: 'tr-TR', gl: 'TR' });
+  assert.equal(read.headers.authorization, undefined);
+  assert.equal(read.headers.accept, 'text/html');
+  assert.deepEqual(payload, {
+    packageName: PKG,
+    language: 'tr-TR',
+    region: 'TR',
+    url: `https://play.google.com/store/apps/details?id=${PKG}`,
     title: 'Example App',
     shortDescription: 'Videos and photos from a sentence',
-    fullDescription: 'Make short videos from text, edit photos and add music.\n\nFeatures:\n- Text to video\n- Photo editing',
-    video: 'https://www.youtube.com/watch?v=exampleVid01',
+    fullDescription: 'Make short videos from text, edit photos and add music.\n\nFeatures:\n• Text to video\n• Photo editing & filters\n• Music for every clip\n\nQuestions? Write to us. We\'re happy to help.',
+    category: 'VIDEO_PLAYERS',
+    contentRating: 'Everyone',
+    developer: 'Example Studio',
+    developerWebsite: 'https://www.example.com',
+    rating: 4.46,
+    ratingCount: 18230,
+    price: 'free',
+    icon: 'https://play-lh.googleusercontent.com/exampleIconId0123456789',
   });
-  assert.equal(payload.listings.length, 2);
 });
 
-test('get_store_listing deletes its edit even when a read fails', async () => {
-  const { module, ctx, apiCalls } = setup({
-    [`POST ${APP}/edits`]: jsonResponse(200, fixture(import.meta.url, 'edit.json')),
-    [`GET ${EDIT}/listings/de-DE`]: jsonResponse(404, { error: { code: 404, message: 'Listing not found.', status: 'NOT_FOUND' } }),
-    [`DELETE ${EDIT}`]: new Response(null, { status: 204 }),
-  });
-  const { payload, isError } = await callTool(module, 'get_store_listing', { language: 'de-DE' }, ctx);
-  assert.equal(isError, true);
-  assert.match(payload.error, /Listing not found/);
-  assert.equal(apiCalls().at(-1).method, 'DELETE');
+test('get_store_listing says so when an app has no store page, or the page has no app details', async () => {
+  // A fresh reply per request: the module cancels a refused page's body, and a cloned body would wait for its twin.
+  const missing = setup({ 'GET https://play.google.com/store/apps/details': () => textResponse(404, '<html>Not Found</html>', { 'content-type': 'text/html' }) });
+  const none = await callTool(missing.module, 'get_store_listing', {}, missing.ctx);
+  assert.equal(none.payload.error, `Google Play has no public store page for ${PKG} (HTTP 404): the app is not published yet, or not in the country US.`);
+  assert.deepEqual(missing.fetch.calls[0].query, { id: PKG, hl: 'en-US', gl: 'US' });
+
+  const empty = setup({ 'GET https://play.google.com/store/apps/details': textResponse(200, '<html><body>Something else</body></html>', { 'content-type': 'text/html' }) });
+  const unread = await callTool(empty.module, 'get_store_listing', {}, empty.ctx);
+  assert.equal(unread.payload.error, `Google Play's store page for ${PKG} could not be read: it carries no app details.`);
+
+  const other = await callTool(empty.module, 'get_store_listing', { package_name: 'com.other.app' }, empty.ctx);
+  assert.match(other.payload.error, /The app com\.other\.app is not among the apps chosen for this connection/);
+  assert.equal(empty.fetch.calls.length, 1);
 });
 
 test('update_store_listing saves the listing in an edit and commits it once', async () => {
@@ -209,6 +236,7 @@ test('a refused commit drops the edit and says nothing changed; an unclear commi
   const unknown = await callTool(unclear.module, 'update_store_listing', { language: 'en-US', title: 'New name', changes_not_sent_for_review: true }, unclear.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'get_store_listing');
+  assert.match(unknown.payload.error, /Play Console -> Publishing overview lists a change waiting for review; the store page shows it once the review has passed\. Call get_store_listing/);
   assert.equal(unclear.apiCalls().find((call) => call.path.endsWith(':commit')).query.changesNotSentForReview, 'true');
   assert.equal(unclear.apiCalls().filter((call) => call.method === 'DELETE').length, 0);
 
@@ -301,13 +329,16 @@ test('a permission refusal says whom to invite in Play Console; a 429 carries re
 test('api_get and api_request reach the rest of the API for chosen apps only, and never user management', async () => {
   const { module, fetch, ctx, apiCalls } = setup({
     [`GET ${APP}/edits/123/tracks`]: jsonResponse(200, { tracks: [] }),
-    [`POST ${APP}/monetization/subscriptions/pro_subscription/basePlans/weekly:deactivate`]: jsonResponse(200, { basePlanId: 'weekly', state: 'INACTIVE' }),
+    [`POST ${APP}/subscriptions/pro_subscription/basePlans/weekly:deactivate`]: jsonResponse(200, { basePlanId: 'weekly', state: 'INACTIVE' }),
   });
   const tracks = await callTool(module, 'api_get', { path: `${APP}/edits/123/tracks` }, ctx);
   assert.equal(tracks.payload.status, 200);
   assert.equal(apiCalls()[0].headers.authorization, `Bearer ${ACCESS_TOKEN}`);
-  const deactivate = await callTool(module, 'api_request', { method: 'POST', path: `${APP}/monetization/subscriptions/pro_subscription/basePlans/weekly:deactivate`, json: {} }, ctx);
+  const deactivate = await callTool(module, 'api_request', { method: 'POST', path: `${APP}/subscriptions/pro_subscription/basePlans/weekly:deactivate`, json: {} }, ctx);
   assert.equal(deactivate.payload.data.state, 'INACTIVE');
+  const described = module.tools.find((tool) => tool.name === 'api_request').description;
+  assert.match(described, /\.\.\.\/subscriptions\/\{productId\}\/basePlans:batchUpdateStates/);
+  assert.doesNotMatch(described, /monetization/);
 
   const before = fetch.calls.length;
   const other = await callTool(module, 'api_get', { path: '/androidpublisher/v3/applications/com.other.app/reviews' }, ctx);

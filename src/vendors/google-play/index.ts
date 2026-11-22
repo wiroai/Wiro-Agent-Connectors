@@ -1,7 +1,9 @@
 // Google Play, through the Google Play Android Developer API v3 (reviews and
-// replies, store listings through edits, subscriptions, in-app products) and
-// the Google Play Developer Reporting API (the apps the key can see), as a
-// service account.
+// replies, store listing changes through edits, subscriptions, in-app
+// products) and the Google Play Developer Reporting API (the apps the key can
+// see), as a service account. The live store listing is read from the app's
+// public store page, which changes nothing: opening an edit to read it would
+// end any other edit the same service account has open.
 //
 // Credential: `serviceaccountjson`, a service account key, the JSON file
 // Google Cloud creates under IAM and admin -> Service accounts -> Keys (its
@@ -19,6 +21,7 @@ import {
   requireAccounts,
   ToolFailure,
   truncate,
+  utf8Decode,
   type ApiRequest,
   type ApiResponse,
   type ApiToolRequest,
@@ -36,6 +39,7 @@ import {
   trimSubscription,
 } from './catalog.js';
 import { googleApi, KEY_CREDENTIAL, serviceAccountWords } from './service-account.js';
+import { parseStorePage } from './store-page.js';
 
 type JsonSchema = ToolDefinition['inputSchema'];
 
@@ -47,6 +51,10 @@ const SCOPES = ['https://www.googleapis.com/auth/androidpublisher', 'https://www
 const PICKER = 'apps';
 const MAX_REPLY = 350;
 const PACKAGE_PATTERN = '^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)+$';
+/** The public store page, read as a page (no credentials go with it). */
+const STORE_PAGE = 'https://play.google.com/store/apps/details';
+const MAX_STORE_PAGE_BYTES = 8 * 1024 * 1024;
+const DEFAULT_LANGUAGE = 'en-US';
 
 const PACKAGE: JsonSchema = {
   type: 'string',
@@ -54,7 +62,8 @@ const PACKAGE: JsonSchema = {
   maxLength: 150,
   description: 'The app\'s package name, e.g. com.example.app. Optional when only one app is chosen for the connection.',
 };
-const REVIEW_ID: JsonSchema = { type: 'string', pattern: '^[A-Za-z0-9:_.\\-]{1,512}$', description: 'The review id, e.g. gp:AOqpTOE... from list_reviews.' };
+// A review id is one path segment: "." and ".." would change the path itself.
+const REVIEW_ID: JsonSchema = { type: 'string', pattern: '^(?!\\.{1,2}$)[A-Za-z0-9:_.\\-]{1,512}$', description: 'The review id, e.g. gp:AOqpTOE... from list_reviews.' };
 const LANGUAGE: JsonSchema = { type: 'string', pattern: '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$', maxLength: 20, description: 'A language code as Play uses it, e.g. en-US, tr-TR or es-419.' };
 const REGION: JsonSchema = { type: 'string', pattern: '^[A-Z]{2}$', default: 'US', description: 'The country whose prices to show, e.g. US (default) or TR.' };
 
@@ -113,24 +122,22 @@ function trimApp(app: any): Record<string, unknown> {
   return compact({ packageName: app?.packageName ?? fromName, displayName: app?.displayName ?? app?.packageName ?? fromName });
 }
 
-/**
- * Opens an edit (a draft copy of the app's store settings), runs `use`, and
- * deletes the edit again. Google Play keeps one open edit per account, so
- * opening one ends any other edit the same service account has open.
- */
-async function readThroughEdit<T>(h: ToolHelpers, packageName: string, use: (editPath: string) => Promise<T>): Promise<T> {
-  const { data } = await play(h, { method: 'POST', path: appPath(packageName, '/edits'), json: {}, safe: true });
-  if (typeof data?.id !== 'string' || !data.id) throw new ToolFailure('Google Play opened no edit for the app.');
-  const editPath = appPath(packageName, `/edits/${encodeURIComponent(data.id)}`);
+/** The app's public store page in one language and country, as people see it. */
+async function storePage(h: ToolHelpers, packageName: string, language: string, region: string): Promise<Record<string, unknown>> {
+  const url = `${STORE_PAGE}?id=${encodeURIComponent(packageName)}&hl=${encodeURIComponent(language)}&gl=${encodeURIComponent(region)}`;
+  let html: string;
   try {
-    return await use(editPath);
-  } finally {
-    try {
-      await play(h, { method: 'DELETE', path: editPath, safe: true });
-    } catch {
-      // An edit left open expires or is replaced by the next one; it changes nothing.
+    const { bytes } = await h.media(url, { what: 'Google Play store page', maxBytes: MAX_STORE_PAGE_BYTES, accept: 'text/html' });
+    html = utf8Decode(bytes);
+  } catch (error) {
+    if (error instanceof ToolFailure && /HTTP 404/.test(error.message)) {
+      throw new ToolFailure(`Google Play has no public store page for ${packageName} (HTTP 404): the app is not published yet, or not in the country ${region}.`);
     }
+    throw error;
   }
+  const details = parseStorePage(html);
+  if (!details) throw new ToolFailure(`Google Play's store page for ${packageName} could not be read: it carries no app details.`);
+  return details;
 }
 
 /** Account and permission management stays in Play Console. */
@@ -293,38 +300,24 @@ const connector = defineConnector({
       kind: 'read',
       title: 'Get a Google Play store listing',
       description:
-        'Returns an app\'s store listing: title, short and full description and video for each language (or one), with the default language '
-        + 'and contact details. It reads them through a temporary edit that it deletes again; Google Play keeps one open edit per account, '
-        + 'so this ends any other edit the same service account has open (do not run it while a release made with the same key is in '
-        + 'progress). Pass nextCursor back as cursor for more languages.',
+        'Returns an app\'s live store listing as Google Play shows it to people, from its public store page: title, short and full '
+        + 'description, category, developer, content rating, star rating, price and icon, in one language (an app without that '
+        + 'translation shows its default language). A change made with update_store_listing shows here once Google Play\'s review has '
+        + 'passed. An app that is not published has no store page.',
       inputSchema: {
         type: 'object',
-        properties: { package_name: PACKAGE, language: { ...LANGUAGE, description: 'Only this language, e.g. en-US.' }, cursor: { type: 'string', description: 'nextCursor from the previous result.' } },
+        properties: {
+          package_name: PACKAGE,
+          language: { ...LANGUAGE, description: `The language to show the listing in, e.g. tr-TR (default ${DEFAULT_LANGUAGE}).` },
+          region: { ...REGION, description: 'The country to show the store page for, which sets the price, e.g. US (default) or TR.' },
+        },
         additionalProperties: false,
       },
-      async run(args: { package_name?: string; language?: string; cursor?: string }, h) {
+      async run(args: { package_name?: string; language?: string; region: string }, h) {
         const packageName = packageFor(h, args.package_name);
-        const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-        const { listings, details } = await readThroughEdit(h, packageName, async (editPath) => {
-          const listingRead = args.language !== undefined
-            ? [(await play(h, { path: `${editPath}/listings/${encodeURIComponent(args.language)}` })).data]
-            : (await play(h, { path: `${editPath}/listings` })).data?.listings;
-          const detailRead = (await play(h, { path: `${editPath}/details` })).data;
-          return { listings: Array.isArray(listingRead) ? listingRead : [], details: detailRead };
-        });
-        return h.page({
-          key: 'listings',
-          items: listings.map(trimListing).slice(skip),
-          extra: compact({
-            packageName,
-            defaultLanguage: details?.defaultLanguage,
-            contactEmail: details?.contactEmail,
-            contactWebsite: details?.contactWebsite,
-            contactPhone: details?.contactPhone,
-          }),
-          resumeAt: (index) => h.makeCursor({ o: skip + index }),
-        });
+        const language = args.language ?? DEFAULT_LANGUAGE;
+        const details = await storePage(h, packageName, language, args.region);
+        return { packageName, language, region: args.region, url: `${STORE_PAGE}?id=${encodeURIComponent(packageName)}`, ...details };
       },
     },
     {
@@ -335,7 +328,9 @@ const connector = defineConnector({
       description:
         'Changes an app\'s store listing in one language (adding the language if it is new): title (up to 30 characters), short description '
         + '(80), full description (4000) or promo video. Only the fields given change. It opens an edit, saves the listing and commits the '
-        + 'edit; the change goes through Google Play\'s review before it shows. Needs the Manage store presence permission.',
+        + 'edit; the change goes through Google Play\'s review before it shows on the store page. Google Play keeps one open edit per '
+        + 'account, so this ends any other edit the same service account has open: not while a release made with the same key is in '
+        + 'progress. Needs the Manage store presence permission.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -371,10 +366,12 @@ const connector = defineConnector({
           });
           return compact({ packageName, committed: true, sentForReview: !args.changes_not_sent_for_review, listing: trimListing(saved) });
         } catch (error) {
-          if (!(error instanceof OutcomeUnknown)) {
-            // Nothing was committed: drop the draft.
-            await play(h, { method: 'DELETE', path: editPath }).catch(() => undefined);
+          if (error instanceof OutcomeUnknown) {
+            // The store page shows a committed change only after review; Play Console shows it waiting.
+            throw new OutcomeUnknown(`${error.message} Play Console -> Publishing overview lists a change waiting for review; the store page shows it once the review has passed.`);
           }
+          // Nothing was committed: drop the draft.
+          await play(h, { method: 'DELETE', path: editPath }).catch(() => undefined);
           throw error;
         }
       },
@@ -471,7 +468,7 @@ const connector = defineConnector({
       label: LABEL,
       description:
         'The Google Play Android Developer API v3 at https://androidpublisher.googleapis.com/androidpublisher/v3, as the service account: '
-        + 'paths start with /androidpublisher/v3/applications/{packageName}/, such as .../edits, .../monetization/subscriptions/{productId}:batchUpdateStates '
+        + 'paths start with /androidpublisher/v3/applications/{packageName}/, such as .../edits, .../subscriptions/{productId}/basePlans:batchUpdateStates '
         + 'or .../purchases/subscriptionsv2/tokens/{token}, and must name a chosen app. What a call may do follows the service account\'s '
         + 'permissions in Play Console. Reference: https://developers.google.com/android-publisher/api-ref/rest.',
       basePath: '/androidpublisher/v3/',
