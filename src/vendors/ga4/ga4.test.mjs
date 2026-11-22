@@ -70,6 +70,13 @@ test('the properties picker: list_properties flattens account summaries, with th
   assert.equal(fetch.calls[1].query.pageToken, 'next-page-token-1');
 });
 
+test('list_properties marks the properties chosen for the connection as selected, and lists the others too', async () => {
+  const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'account-summaries.json')), { properties: ['300100200'] });
+  const { payload } = await callTool(module, 'list_properties', {}, ctx);
+  assert.deepEqual(payload.properties.map((item) => [item.id, item.selected]), [['300100100', undefined], ['300100200', true], ['300200100', undefined]]);
+  assert.match(module.tools.find((tool) => tool.name === 'list_properties').description, /marked selected: true/);
+});
+
 test('run_report posts a Data API report for a chosen property and returns rows keyed by name, totals and metadata', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'run-report.json')));
   const filter = { filter: { fieldName: 'sessionMedium', stringFilter: { value: 'cpc' } } };
@@ -160,6 +167,7 @@ test('batch_run_reports gives each request 50 rows unless it says otherwise, and
   }, ctx);
   assert.equal(fetch.calls[0].url, `${DATA}/v1beta/properties/300100100:batchRunReports`);
   assert.deepEqual(fetch.calls[0].json.requests.map((request) => request.limit), [50, 5]);
+  assert.match(module.tools.find((tool) => tool.name === 'batch_run_reports').description, /A report without a limit gets 50 rows/);
   assert.equal(fetch.calls[0].json.requests[1].property, undefined);
   assert.deepEqual(payload.reports.map((report) => report.rows), [[{ sessions: 3120 }], [{ totalRevenue: 15210.4 }]]);
 
@@ -261,6 +269,20 @@ test('api_request sends Admin writes once, keeps property deletion and access ma
   assert.match(access.payload.error, /Changing who can access/);
   const otherInBody = await callTool(module, 'api_request', { method: 'PATCH', origin: ADMIN, path: '/v1beta/properties/300100100/customDimensions/1', json: { name: 'properties/42/customDimensions/1' } }, ctx);
   assert.match(otherInBody.payload.error, /The property ID 42 is not among the property IDs chosen/);
+  const otherInQuery = await callTool(module, 'api_get', { origin: ADMIN, path: '/v1beta/properties/300100100/keyEvents', query: { parent: 'properties/42' } }, ctx);
+  assert.match(otherInQuery.payload.error, /The property ID 42 is not among the property IDs chosen/);
+  assert.equal(fetch.calls.length, 1);
+
+  // A body sent as text would go out without the property check reading it: only json is taken.
+  const rollup = { method: 'POST', origin: ADMIN, path: '/v1alpha/properties/300100100/rollupPropertySourceLinks' };
+  const raw = await callTool(module, 'api_request', { ...rollup, body: '{"sourceProperty":"properties/42"}', content_type: 'application/json' }, ctx);
+  assert.equal(raw.isError, true);
+  assert.match(raw.payload.error, /Invalid arguments for api_request: .*body/);
+  const linked = await callTool(module, 'api_request', { ...rollup, json: { sourceProperty: 'properties/42' } }, ctx);
+  assert.match(linked.payload.error, /The property ID 42 is not among the property IDs chosen/);
+  const request = module.tools.find((tool) => tool.name === 'api_request');
+  assert.deepEqual(Object.keys(request.inputSchema.properties).sort(), ['json', 'method', 'origin', 'path', 'query']);
+  assert.doesNotMatch(request.description, /content_type|runPivotReport/);
   assert.equal(fetch.calls.length, 1);
 
   const broken = setup(() => jsonResponse(503, { error: { code: 503, message: 'The service is currently unavailable.', status: 'UNAVAILABLE' } }));

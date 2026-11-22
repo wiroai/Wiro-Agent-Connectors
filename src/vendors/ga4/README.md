@@ -38,25 +38,25 @@ The Google account must have at least the Viewer role on a property to report on
 | --- | --- | --- | --- |
 | `properties` | The GA4 properties the agent may report on and configure (several) | `list_properties` | `propertyid` |
 
-With a selection, every tool refuses a property outside it before sending anything, and `api_get` and `api_request` only reach paths that name a chosen property (account-wide paths such as `/v1beta/accountSummaries` are refused; `list_properties` lists the properties). In the CLI, set `CONNECTOR_ACCOUNTS='{"properties":["123456789"]}'` to apply a selection; without it there is none.
+With a selection, every tool refuses a property outside it before sending anything, and `api_get` and `api_request` only reach paths that name a chosen property, and refuse any other property named in a query value or the JSON body (account-wide paths such as `/v1beta/accountSummaries` are refused; `list_properties` lists the properties and marks the chosen ones `selected: true`). In the CLI, set `CONNECTOR_ACCOUNTS='{"properties":["123456789"]}'` to apply a selection; without it there is none.
 
 ## Tools
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `list_properties` | read | The GA4 properties the connected Google account can open, with their account. The `properties` picker's list. |
+| `list_properties` | read | The GA4 properties the connected Google account can open, with their account; the ones chosen for the connection are marked `selected: true`. The `properties` picker's list. |
 | `run_report` | read | A report on one property: metrics by dimensions over up to 4 date ranges (YYYY-MM-DD, today, yesterday, NdaysAgo), with filters, ordering, totals and paging. Rows come back keyed by dimension and metric names. Sent by POST, changes nothing. |
 | `run_realtime_report` | read | A realtime report of the last 30 minutes, e.g. active users by country, with optional minute ranges. |
 | `batch_run_reports` | read | Up to 5 reports on one property in one call, each in the API's own RunReportRequest JSON. |
 | `get_metadata` | read | The dimensions and metrics the property can report on, custom ones included, filtered by kind or text. |
 | `check_compatibility` | read | Whether dimensions and metrics can go in one report, or every field that can or cannot join them. |
-| `api_get` | read | Any other GET of the Data API (default origin) or of the Admin API (`origin: "https://analyticsadmin.googleapis.com"`): property settings, `keyEvents`, `customDimensions`, `customMetrics`, `dataStreams`, `googleAdsLinks`, and `audiences` on `/v1alpha/`. |
-| `api_request` | write | A POST, PATCH or DELETE to the same APIs, such as marking an event as a key event (`POST /v1beta/properties/{id}/keyEvents`) or adding a custom dimension. Sent once, never retried. Deleting a whole property or account and changing user access are left out. |
+| `api_get` | read | Any other GET of the Admin API (`origin: "https://analyticsadmin.googleapis.com"`): property settings, `keyEvents`, `customDimensions`, `customMetrics`, `dataStreams`, `googleAdsLinks`, and `audiences` on `/v1alpha/`; or of the Data API (the default origin). |
+| `api_request` | write | A POST, PATCH or DELETE with a JSON body to the same APIs, such as marking an event as a key event (`POST /v1beta/properties/{id}/keyEvents`) or adding a custom dimension. Sent once, never retried. Deleting a whole property or account and changing user access are left out. |
 
 ## Limits
 
 - The Data API has quotas per property (tokens per hour and per day, and concurrent requests). A refused request comes back with HTTP 429 and, when Google says, `retryAfter`; nothing is queued or retried.
-- Reports return up to 10,000 rows per page (100 by default), and every result is cut to 32 KB with a `nextCursor` to continue. Realtime reports cover the last 30 minutes (60 on Analytics 360) and have no paging of their own: a continuation runs the report again.
+- Reports return up to 10,000 rows per page (100 by default, 50 per report in `batch_run_reports`), and every result is cut to 32 KB with a `nextCursor` to continue. Realtime reports cover the last 30 minutes (60 on Analytics 360) and have no paging of their own: a continuation runs the report again.
 - `keyEvents` replaced the `conversions` metric; a report that mixes incompatible fields is refused with HTTP 400 (`check_compatibility` tells which ones).
 - Changes need the `analytics.edit` scope and the Editor role on the property.
 

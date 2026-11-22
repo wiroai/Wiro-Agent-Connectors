@@ -10,7 +10,19 @@
 // Account picker `properties` (the GA4 properties the agent may use): every
 // tool that names a property checks it against ctx.accounts.properties.
 
-import { apiTools, defineConnector, jsonSize, OUTPUT_LIMIT_BYTES, requireAccounts, ToolFailure, truncate, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
+import {
+  allowedAccounts,
+  apiTools,
+  defineConnector,
+  jsonSize,
+  OUTPUT_LIMIT_BYTES,
+  requireAccounts,
+  ToolFailure,
+  truncate,
+  type ApiToolRequest,
+  type ToolDefinition,
+  type ToolHelpers,
+} from '../../core/index.js';
 
 const DATA = 'https://analyticsdata.googleapis.com';
 const ADMIN = 'https://analyticsadmin.googleapis.com';
@@ -172,17 +184,39 @@ const REPORT_ERRORS = {
   404: 'Google Analytics found no such property',
 };
 
-/** The property IDs a generic API request names: in its path, and in "properties/<id>" inside its JSON body. */
+/**
+ * The property IDs a generic API request names: in its path, and in
+ * "properties/<id>" inside its query values and its JSON body (the only body
+ * api_request sends, so no body goes out unread).
+ */
 function propertiesNamed(request: ApiToolRequest): string[] {
   const ids = new Set<string>();
   request.segments.forEach((segment, index) => {
     const next = request.segments[index + 1];
     if (segment === 'properties' && next) ids.add(next.split(':')[0] as string);
   });
-  if (request.json) {
-    for (const match of JSON.stringify(request.json).matchAll(/(?<![A-Za-z])properties\/([0-9]+)/g)) ids.add(match[1] as string);
+  const texts = [...Object.values(request.query).flat(), ...(request.json ? [JSON.stringify(request.json)] : [])];
+  for (const text of texts) {
+    for (const match of text.matchAll(/(?<![A-Za-z])properties\/([0-9]+)/g)) ids.add(match[1] as string);
   }
   return [...ids].filter(Boolean);
+}
+
+/**
+ * api_request with a JSON body only. The Analytics APIs take nothing else, and
+ * a body sent as text would reach them without the property check reading it.
+ */
+function jsonBodyOnly(tool: ToolDefinition): ToolDefinition {
+  if (tool.name !== 'api_request') return tool;
+  const properties = { ...tool.inputSchema.properties };
+  delete properties['body'];
+  delete properties['content_type'];
+  properties['json'] = { type: 'object', description: 'A JSON object to send as the body.' };
+  return {
+    ...tool,
+    description: tool.description.replace(' or another body (body and content_type)', ''),
+    inputSchema: { ...tool.inputSchema, properties },
+  };
 }
 
 /** Endpoints the generic tools keep out of reach: deleting a whole property or account, and user access management. */
@@ -256,12 +290,14 @@ const connector = defineConnector({
       title: 'List Google Analytics properties',
       description:
         'Lists the GA4 properties the connected Google account can open, with their account: property ID, name, account name and '
-        + 'account ID, and property type. Pass nextCursor back as cursor for more.',
+        + 'account ID, and property type. When the connection is limited to chosen properties, those are marked selected: true, and '
+        + 'only they can be used. Pass nextCursor back as cursor for more.',
       inputSchema: { type: 'object', properties: { cursor: CURSOR }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const chosen = allowedAccounts(h.ctx.accounts, 'properties');
         const { data } = await h.api({ origin: ADMIN, path: '/v1beta/accountSummaries', query: { pageSize: 200, pageToken } });
         const properties: Record<string, unknown>[] = [];
         for (const account of Array.isArray(data?.accountSummaries) ? data.accountSummaries : []) {
@@ -274,6 +310,7 @@ const connector = defineConnector({
               account: typeof account?.displayName === 'string' ? truncate(account.displayName, 200) : undefined,
               account_id: typeof account?.account === 'string' ? account.account.replace(/^accounts\//, '') : undefined,
               property_type: summary?.propertyType,
+              selected: chosen?.includes(id) ? true : undefined,
             }));
           }
         }
@@ -400,7 +437,7 @@ const connector = defineConnector({
       title: 'Run several Google Analytics reports',
       description:
         'Runs up to 5 GA4 reports on one property in one call, each a RunReportRequest in the API\'s own JSON (dateRanges, dimensions, '
-        + 'metrics, dimensionFilter, orderBys, limit). A report without a limit gets 100 rows. Returns each report\'s rows as objects keyed '
+        + 'metrics, dimensionFilter, orderBys, limit). A report without a limit gets 50 rows. Returns each report\'s rows as objects keyed '
         + 'by dimension and metric names. It changes nothing.',
       inputSchema: {
         type: 'object',
@@ -553,20 +590,20 @@ const connector = defineConnector({
         });
       },
     },
-    // The rest of the Data API and the Admin API: property settings, key events,
-    // custom dimensions and metrics, data streams, Google Ads links, audiences.
+    // The rest of the Admin API (property settings, key events, custom dimensions
+    // and metrics, data streams, Google Ads links, audiences) and of the Data API.
     ...apiTools({
       label: LABEL,
       description:
-        `The Google Analytics Data and Admin APIs with the connected account. The default origin ${DATA} serves reports (e.g. `
-        + `/v1beta/properties/{property_id}:runPivotReport). Origin ${ADMIN} serves property settings at /v1beta/properties/{property_id} `
-        + 'and its keyEvents, customDimensions, customMetrics, dataStreams and googleAdsLinks, and audiences at /v1alpha/properties/{property_id}/audiences. '
+        `The Google Analytics Admin and Data APIs with the connected account. Origin ${ADMIN} serves property settings at `
+        + '/v1beta/properties/{property_id} and its keyEvents, customDimensions, customMetrics, dataStreams and googleAdsLinks, and audiences '
+        + `at /v1alpha/properties/{property_id}/audiences. The default origin ${DATA} is the Data API, whose reports have their own tools. `
         + 'Paths name the property. Reference: https://developers.google.com/analytics/devguides/config/admin/v1/rest.',
       methods: ['POST', 'PATCH', 'DELETE'],
-      originArgument: `The API origin: ${DATA} (default, reports) or ${ADMIN} (settings).`,
+      originArgument: `The API origin: ${DATA} (default, the Data API) or ${ADMIN} (settings).`,
       accounts: { key: 'properties', label: 'property ID', ids: propertiesNamed },
       guard: (request) => guardRequest(request),
-    }),
+    }).map(jsonBodyOnly),
   ],
 });
 
