@@ -1,0 +1,11 @@
+{
+  "localizedLastName": "Example",
+  "profilePicture": { "displayImage": "urn:li:digitalmediaAsset:C4E03AQexample" },
+  "firstName": { "localized": { "en_US": "Alex" }, "preferredLocale": { "country": "US", "language": "en" } },
+  "lastName": { "localized": { "en_US": "Example" }, "preferredLocale": { "country": "US", "language": "en" } },
+  "vanityName": "alex-example",
+  "localizedHeadline": "Head of Marketing at Example Co",
+  "id": "782bbtaQ",
+  "headline": { "localized": { "en_US": "Head of Marketing at Example Co" }, "preferredLocale": { "country": "US", "language": "en" } },
+  "localizedFirstName": "Alex"
+}

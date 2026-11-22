@@ -5,6 +5,7 @@ import { bytesResponse, callTool, fakeFetch, fixture, jsonResponse, loadModuleFo
 const TOKEN = 'AQXexampleLinkedInToken123';
 const ORG = '12345678';
 const credentials = { access_token: TOKEN, organizationid: ORG, linkedinname: 'Alex Example' };
+const me = fixture(import.meta.url, 'me.json');
 const userinfo = fixture(import.meta.url, 'userinfo.json');
 const byAuthor = fixture(import.meta.url, 'posts-by-author.json');
 const onePost = fixture(import.meta.url, 'post.json');
@@ -28,6 +29,7 @@ function linkedin(overrides = {}) {
   return (request) => {
     const key = `${request.method} ${request.origin}${request.path}`;
     if (overrides[key]) return overrides[key](request);
+    if (key === 'GET https://api.linkedin.com/v2/me') return jsonResponse(200, me);
     if (key === 'GET https://api.linkedin.com/v2/userinfo') return jsonResponse(200, userinfo);
     if (key === 'POST https://api.linkedin.com/rest/images') return jsonResponse(200, initialize);
     if (key === 'PUT https://www.linkedin.com/dms-uploads/sp/v2/C4E10AQFexample/uploaded-image/0') return new Response(null, { status: 201 });
@@ -41,16 +43,36 @@ function linkedin(overrides = {}) {
   };
 }
 
-test('get_profile reads /v2/userinfo with the token and LinkedIn\'s version headers, and names the organization', async () => {
+test('get_profile reads /v2/me (r_basicprofile, a Community Management API app) with the token and LinkedIn\'s version headers, and names the organization', async () => {
   const { module, fetch, ctx } = setup(linkedin());
   const { payload, isError } = await callTool(module, 'get_profile', {}, ctx);
   assert.equal(isError, false, payload.error);
   assert.equal(fetch.calls.length, 1);
   const [request] = fetch.calls;
-  assert.equal(request.url, 'https://api.linkedin.com/v2/userinfo');
+  assert.equal(request.url, 'https://api.linkedin.com/v2/me');
   assert.equal(request.headers.authorization, `Bearer ${TOKEN}`);
   assert.match(request.headers['linkedin-version'], /^20\d{4}$/);
   assert.equal(request.headers['x-restli-protocol-version'], '2.0.0');
+  assert.deepEqual(payload, {
+    id: '782bbtaQ',
+    personUrn: 'urn:li:person:782bbtaQ',
+    name: 'Alex Example',
+    givenName: 'Alex',
+    familyName: 'Example',
+    headline: 'Head of Marketing at Example Co',
+    profileUrl: 'https://www.linkedin.com/in/alex-example/',
+    locale: 'en_US',
+    organization: { id: ORG, urn: `urn:li:organization:${ORG}`, url: `https://www.linkedin.com/company/${ORG}/` },
+  });
+});
+
+test('on an app with OpenID Connect, which LinkedIn refuses /v2/me, the member comes from /v2/userinfo', async () => {
+  const refusesMe = { 'GET https://api.linkedin.com/v2/me': () => jsonResponse(403, fixture(import.meta.url, 'error-403-me.json')) };
+  const profile = setup(linkedin(refusesMe));
+  const { payload, isError } = await callTool(profile.module, 'get_profile', {}, profile.ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(profile.fetch.calls.map((call) => `${call.method} ${call.path}`), ['GET /v2/me', 'GET /v2/userinfo']);
+  assert.equal(profile.fetch.calls[1].headers.authorization, `Bearer ${TOKEN}`);
   assert.deepEqual(payload, {
     id: '782bbtaQ',
     personUrn: 'urn:li:person:782bbtaQ',
@@ -62,6 +84,33 @@ test('get_profile reads /v2/userinfo with the token and LinkedIn\'s version head
     email: 'alex@example.com',
     organization: { id: ORG, urn: `urn:li:organization:${ORG}`, url: `https://www.linkedin.com/company/${ORG}/` },
   });
+
+  const post = setup(linkedin(refusesMe));
+  const posted = await callTool(post.module, 'create_post', { text: 'Hello', author: 'member' }, post.ctx);
+  assert.equal(posted.isError, false, posted.payload.error);
+  assert.deepEqual(post.fetch.calls.map((call) => `${call.method} ${call.path}`), ['GET /v2/me', 'GET /v2/userinfo', 'POST /rest/posts']);
+  assert.equal(post.fetch.calls[2].json.author, 'urn:li:person:782bbtaQ');
+});
+
+test('a connection that may read neither profile is told both permissions, and nothing is posted as the member', async () => {
+  const neither = setup(linkedin({
+    'GET https://api.linkedin.com/v2/me': () => jsonResponse(403, fixture(import.meta.url, 'error-403-me.json')),
+    'GET https://api.linkedin.com/v2/userinfo': () => jsonResponse(403, fixture(import.meta.url, 'error-403-userinfo.json')),
+  }));
+  const refused = await callTool(neither.module, 'get_profile', {}, neither.ctx);
+  assert.equal(refused.isError, true);
+  assert.equal(refused.payload.status, 403);
+  assert.match(
+    refused.payload.error,
+    /^LinkedIn did not share the member's profile: the connection needs the r_basicprofile permission \(Community Management API\) or the openid and profile permissions \(Sign In with LinkedIn using OpenID Connect\) \(HTTP 403\)\. LinkedIn said: "Not enough permissions to access: GET \/userinfo"\.$/,
+  );
+  assert.equal(neither.fetch.calls.length, 2);
+
+  const post = await callTool(neither.module, 'create_post', { text: 'Hi', author: 'member' }, neither.ctx);
+  assert.equal(post.isError, true);
+  assert.equal(post.payload.outcome, undefined);
+  assert.match(post.payload.error, /needs the r_basicprofile permission .*\(HTTP 403\)\..* Nothing was changed\.$/);
+  assert.equal(neither.fetch.calls.some((call) => call.path === '/rest/posts' || call.path === '/rest/images'), false);
 });
 
 test('create_post posts text as the organization, in little format so reserved characters stay text', async () => {
@@ -147,7 +196,7 @@ test('create_post as the member names the member\'s person URN, and without an o
   const member = setup(linkedin());
   const asMember = await callTool(member.module, 'create_post', { text: 'Hello', author: 'member', visibility: 'CONNECTIONS' }, member.ctx);
   assert.equal(asMember.isError, false, asMember.payload.error);
-  assert.deepEqual(member.fetch.calls.map((call) => `${call.method} ${call.path}`), ['GET /v2/userinfo', 'POST /rest/posts']);
+  assert.deepEqual(member.fetch.calls.map((call) => `${call.method} ${call.path}`), ['GET /v2/me', 'POST /rest/posts']);
   assert.equal(member.fetch.calls[1].json.author, 'urn:li:person:782bbtaQ');
   assert.equal(member.fetch.calls[1].json.visibility, 'CONNECTIONS');
   assert.equal(asMember.payload.authorType, 'member');
@@ -286,9 +335,14 @@ test('LinkedIn\'s refusals keep its words: a missing permission, a revoked token
   assert.equal(denied.payload.vendorCode, 'ACCESS_DENIED');
   assert.match(denied.payload.error, /needs the w_organization_social permission.*\(HTTP 403\)\. LinkedIn said: "Not enough permissions to access: partnerApiPostsExternal\.CREATE\.20261101"\. Nothing was changed\./);
 
+  const memberForbidden = setup(linkedin({ 'POST https://api.linkedin.com/rest/posts': () => jsonResponse(403, fixture(import.meta.url, 'error-403.json')) }));
+  const memberDenied = await callTool(memberForbidden.module, 'create_post', { text: 'Hi', author: 'member' }, memberForbidden.ctx);
+  assert.match(memberDenied.payload.error, /^LinkedIn refused to post for the member: the connection needs the w_member_social permission \(from the Community Management API or the Share on LinkedIn product\) \(HTTP 403\)\./);
+
   const revoked = setup(() => jsonResponse(401, fixture(import.meta.url, 'error-401.json')));
   const auth = await callTool(revoked.module, 'get_profile', {}, revoked.ctx);
   assert.match(auth.payload.error, /LinkedIn rejected the credentials \(HTTP 401\): The token used in the request has been revoked by the user\. Check that the LinkedIn access token is correct and still active\./);
+  assert.equal(revoked.fetch.calls.length, 1, 'a rejected token is not tried on /v2/userinfo too');
 
   const long = setup(linkedin({ 'POST https://api.linkedin.com/rest/posts': () => jsonResponse(422, fixture(import.meta.url, 'error-422.json')) }));
   const tooLong = await callTool(long.module, 'create_post', { text: 'Hi' }, long.ctx);

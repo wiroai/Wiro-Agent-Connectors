@@ -1,12 +1,16 @@
 // LinkedIn, through the versioned LinkedIn REST API on https://api.linkedin.com
-// (Posts and Images APIs) and OpenID Connect's /v2/userinfo.
+// (Posts and Images APIs) and the member's profile on /v2/me or /v2/userinfo.
 //
 // Credentials:
 // - `access_token`: the current OAuth access token of the member who signed
 //   in. The host refreshes it; this module never does. Posting as an
 //   organization needs the w_organization_social permission and an
 //   administrator or content admin role on the Page; posting as the member
-//   needs w_member_social; get_profile needs openid and profile.
+//   needs w_member_social. Reading the member (get_profile, posting as the
+//   member) takes r_basicprofile through /v2/me, or openid and profile
+//   through /v2/userinfo on an app with Sign In with LinkedIn using OpenID
+//   Connect. A Community Management API app has w_organization_social,
+//   r_organization_social, w_member_social and r_basicprofile.
 // - `organizationid` (optional): the numeric id of the LinkedIn Page posts go
 //   to, from the Page's admin URL (linkedin.com/company/<id>/admin/).
 // - `linkedinname` (optional): the connected member's name, as the host
@@ -62,39 +66,97 @@ function organizationId(h: ToolHelpers): string {
   return id;
 }
 
-interface UserInfo {
-  sub: string;
+/** The member who signed in, from whichever of LinkedIn's two profile endpoints the connection may read. */
+interface Member {
+  id: string;
   name?: string;
-  given_name?: string;
-  family_name?: string;
+  givenName?: string;
+  familyName?: string;
+  headline?: string;
+  profileUrl?: string;
   picture?: string;
-  locale?: unknown;
+  locale?: string;
   email?: string;
-  email_verified?: boolean;
 }
 
-async function userInfo(h: ToolHelpers): Promise<UserInfo> {
-  const { data } = await h.api({
-    path: '/v2/userinfo',
-    errors: { 403: 'LinkedIn did not share the member\'s profile: the connection needs the openid and profile permissions' },
-  });
-  if (typeof data?.sub !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(data.sub)) {
+function text(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+/** A locale as LinkedIn sends it, a string or { language, country }, as one string such as en_US. */
+function localeOf(value: unknown): string | undefined {
+  if (typeof value === 'string') return value || undefined;
+  if (!value || typeof value !== 'object') return undefined;
+  const { language, country } = value as { language?: unknown; country?: unknown };
+  return [text(language), text(country)].filter(Boolean).join('_') || undefined;
+}
+
+function memberId(value: unknown): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(value)) {
     throw new ToolFailure('LinkedIn answered without the member\'s id, so the member could not be identified.');
   }
-  return data as UserInfo;
+  return value;
+}
+
+/**
+ * The member who signed in. /v2/me needs r_basicprofile, which the Community
+ * Management API gives; LinkedIn grants that product only to an app with no
+ * other product, so such an app has no OpenID Connect. An app with Sign In
+ * with LinkedIn using OpenID Connect has no r_basicprofile: LinkedIn refuses
+ * /v2/me with 403, and the member comes from /v2/userinfo (openid, profile).
+ */
+async function member(h: ToolHelpers): Promise<Member> {
+  let data: any;
+  try {
+    ({ data } = await h.api({ path: '/v2/me' }));
+  } catch (error) {
+    if (!(error instanceof ToolFailure) || error.details.status !== 403) throw error;
+    return openIdMember(h);
+  }
+  const givenName = text(data?.localizedFirstName);
+  const familyName = text(data?.localizedLastName);
+  const vanityName = text(data?.vanityName);
+  return {
+    id: memberId(data?.id),
+    name: [givenName, familyName].filter(Boolean).join(' ') || undefined,
+    givenName,
+    familyName,
+    headline: text(data?.localizedHeadline),
+    profileUrl: vanityName ? `https://www.linkedin.com/in/${encodeURIComponent(vanityName)}/` : undefined,
+    locale: localeOf(data?.firstName?.preferredLocale),
+  };
+}
+
+async function openIdMember(h: ToolHelpers): Promise<Member> {
+  const { data } = await h.api({
+    path: '/v2/userinfo',
+    errors: {
+      403: 'LinkedIn did not share the member\'s profile: the connection needs the r_basicprofile permission (Community Management API) '
+        + 'or the openid and profile permissions (Sign In with LinkedIn using OpenID Connect)',
+    },
+  });
+  return {
+    id: memberId(data?.sub),
+    name: text(data?.name),
+    givenName: text(data?.given_name),
+    familyName: text(data?.family_name),
+    picture: text(data?.picture),
+    locale: localeOf(data?.locale),
+    email: text(data?.email),
+  };
 }
 
 async function resolveAuthor(h: ToolHelpers, wanted: AuthorKind | undefined): Promise<Author> {
   const kind: AuthorKind = wanted ?? (h.credentials['organizationid'] ? 'organization' : 'member');
   if (kind === 'organization') return { kind, urn: `urn:li:organization:${organizationId(h)}` };
-  const me = await userInfo(h);
-  return { kind, urn: `urn:li:person:${me.sub}` };
+  const me = await member(h);
+  return { kind, urn: `urn:li:person:${me.id}` };
 }
 
 function refusedPost(kind: AuthorKind): string {
   return kind === 'organization'
     ? 'LinkedIn refused to post for the organization: the connection needs the w_organization_social permission, and the member an administrator or content admin role on that Page'
-    : 'LinkedIn refused to post for the member: the connection needs the w_member_social permission (the Share on LinkedIn product)';
+    : 'LinkedIn refused to post for the member: the connection needs the w_member_social permission (from the Community Management API or the Share on LinkedIn product)';
 }
 
 function contentKind(content: any): string {
@@ -243,25 +305,22 @@ const connector = defineConnector({
       kind: 'read',
       title: 'Get the connected LinkedIn member',
       description:
-        'Returns the member who signed in to LinkedIn: id, person URN (urn:li:person:...), name, photo and locale, '
-        + 'plus the organization (Page) this connection posts for, when an organization ID is set.',
+        'Returns the member who signed in to LinkedIn: id, person URN (urn:li:person:...) and name, with the headline, profile URL, photo, '
+        + 'locale and email where LinkedIn shares them, plus the organization (Page) this connection posts for, when an organization ID is set.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       async run(_args: Record<string, never>, h) {
-        const me = await userInfo(h);
+        const me = await member(h);
         const organization = h.credentials['organizationid'];
-        const locale = typeof me.locale === 'string'
-          ? me.locale
-          : me.locale && typeof me.locale === 'object'
-            ? [(me.locale as { language?: string }).language, (me.locale as { country?: string }).country].filter(Boolean).join('_') || undefined
-            : undefined;
         return compact({
-          id: me.sub,
-          personUrn: `urn:li:person:${me.sub}`,
+          id: me.id,
+          personUrn: `urn:li:person:${me.id}`,
           name: me.name ?? h.credentials['linkedinname'],
-          givenName: me.given_name,
-          familyName: me.family_name,
+          givenName: me.givenName,
+          familyName: me.familyName,
+          headline: me.headline,
+          profileUrl: me.profileUrl,
           picture: me.picture,
-          locale,
+          locale: me.locale,
           email: me.email,
           organization: organization
             ? compact({ id: organization, urn: /^[0-9]+$/.test(organization) ? `urn:li:organization:${organization}` : undefined, url: /^[0-9]+$/.test(organization) ? `https://www.linkedin.com/company/${organization}/` : undefined })
@@ -496,7 +555,7 @@ const connector = defineConnector({
       description:
         'The LinkedIn REST API on https://api.linkedin.com, with the connection\'s token and the LinkedIn-Version and Rest.li 2.0 headers: '
         + 'paths start with /rest/ (such as /rest/organizationAcls with q=roleAssignee, or /rest/socialActions/{post URN}/comments) or /v2/ '
-        + '(such as /v2/userinfo), with URNs URL-encoded in the path. PATCH is sent as a Rest.li partial update (POST with '
+        + '(such as /v2/me), with URNs URL-encoded in the path. PATCH is sent as a Rest.li partial update (POST with '
         + 'X-RestLi-Method: PARTIAL_UPDATE and a {"patch": {"$set": {...}}} body). A create answers 201 with the new id in the '
         + 'x-restli-id header, which the result returns. Reference: https://learn.microsoft.com/linkedin/.',
       guard: (request) => {

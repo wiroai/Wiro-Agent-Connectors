@@ -733,8 +733,8 @@ Every tool carries honest MCP annotations, derived from what it does: a read too
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `get_profile` | read | The member who signed in: id, person URN, name, photo, locale, and the Page the connection posts for. |
-| `list_posts` | read | The Page's posts, newest first, with URN, link, text, content type, visibility and times; the member's own posts with `author: "member"` (LinkedIn allows that only to apps approved for `r_member_social`, which it rarely grants). Paged with a cursor, where LinkedIn's next link says: a page can hold fewer posts than asked while more follow. |
+| `get_profile` | read | The member who signed in: id, person URN and name, with the headline, profile URL, photo, locale and email where LinkedIn shares them (`/v2/me` with `r_basicprofile`, or `/v2/userinfo` with OpenID Connect), and the Page the connection posts for. |
+| `list_posts` | read | The Page's posts, newest first, with URN, link, text, content type, visibility and times; the member's own posts with `author: "member"` (LinkedIn allows that only to apps approved for `r_member_social`, a closed permission it takes no requests for). Paged with a cursor, where LinkedIn's next link says: a page can hold fewer posts than asked while more follow. |
 | `get_post` | read | One post by its URN, as its author sees it. |
 | `create_post` | create | Publishes right away, as the Page or the member (`w_member_social`): text up to 3,000 characters, optionally up to 20 images (JPEG, PNG or GIF from public https URLs, with alt text) or an article card. Every image is uploaded before the post is made. Returns the post URN and link. |
 | `delete_post` | delete | Deletes one post by its URN, for good. |
