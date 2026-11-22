@@ -33,7 +33,7 @@ By contributing you agree that your work is released under the [MIT License](./L
    - `label`: the service's own name. Every message uses it.
    - `origins`: the exact https origins of its API, e.g. `["https://api.acme.com"]`. The host refuses every other API URL.
    - `originFields`, only when the API lives at an address the user gives (a Mastodon instance, a WordPress site, a shop): the credentials that hold it, e.g. `["instance_url"]`. Each call may then reach the https origin of that value, with `h.api({ origin: h.originOf("instance_url"), path })`, or with `h.api({ path })` when `origins` is empty. The core and every host resolve the value the same way (`parseSiteUrl`), and hosts check the address like a media URL and never follow its redirects. Leave these values alone in `normalizeCredentials`: the origin is read from the value as given.
-   - `credentials`: the names the module reads, in snake_case. The CLI reads each one from `<VENDOR>_<CREDENTIAL>`, e.g. `ACME_API_KEY`. Add `credentialLabels` for the messages.
+   - `credentials`: the names the module reads, in snake_case. The CLI reads each one from `<VENDOR>_<CREDENTIAL>`, e.g. `ACME_API_KEY`. Add `credentialLabels` for the messages. If the service signs in with OAuth, declare `access_token`: hosts pass their current, refreshed token there on every call (the CLI reads `ACME_ACCESS_TOKEN`). Never refresh, store or cache it in the module.
    - `authHeaders`: how the credentials go on each API request.
 
 4. **Write the tools.** Each tool is one API call, or a short fixed sequence such as upload then publish.

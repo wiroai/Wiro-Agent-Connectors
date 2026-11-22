@@ -4,13 +4,12 @@
 
 - Credential origins: a module may name, in `originFields`, the credentials that hold a site or instance URL (a Mastodon instance, a WordPress site, a shop). Each call may then reach the https origin of that value, resolved by `parseSiteUrl` the same way in the module and in the host, and the host checks it like a media URL: https only, public addresses only, connected to the checked address, redirects not followed. Modules export `originFields` (an empty list when unused) and may leave `origins` empty when `originFields` names the API's address; `h.origins` and `h.originOf()` give a tool the call's origins.
 - Hosts: `createGuardedFetch` takes `credentialOrigins`, `originsFromCredentials` computes them for a call, and `parseSiteUrl` and `siteOrigin` are exported for hosts with their own fetch. The test hook `mediaTransport` is now `transport` (the old name still works), and it also carries API requests to credential origins.
-
 - Generic API tools: `apiTools()` builds `api_get` (read, GET only) and `api_request` (POST, PUT, PATCH or DELETE, never retried, `check: "api_get"`) for a connector, with its auth headers, its origins and base path, an optional account lock (`accounts`), a `guard` and a `send` hook for session tokens. Replies come back as the status and the JSON or text, cut to fit 32 KB.
 - A fifth tool kind, `write`, for a tool whose effect depends on its arguments: destructive and not idempotent, MCP's own defaults. `api_request` uses it.
 - `h.api` takes lists as query values and repeats the parameter.
 - `devto` and `bluesky` gain `api_get` and `api_request` for the rest of their APIs: dev.to under `/api/` (POST, PUT, DELETE), Bluesky any XRPC query or procedure with the account's session, its account, session and identity methods left out. `serper` has none: its one endpoint is `web_search`.
-
 - JWT signing in the core, with WebCrypto only: `signJwt` (RS256 or ES256 from a PEM PKCS#8 key, ES256 as the raw r||s signature), `googleServiceAccountToken` (the jwt-bearer exchange at `https://oauth2.googleapis.com/token`, cached in memory until 5 minutes before expiry, keyed by a hash of the key) and `appStoreConnectToken` (ES256 with `kid`, `iss`, `aud: "appstoreconnect-v1"` and a 20-minute expiry).
+- OAuth: a module that declares the credential `access_token` gets the host's current OAuth access token there on every call; hosts refresh it, modules never do. The CLI reads it from `<VENDOR>_ACCESS_TOKEN`, and when set passes it along even to a module that does not declare it.
 
 ## 0.1.0
 

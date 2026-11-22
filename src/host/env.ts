@@ -5,12 +5,25 @@ export function envNameFor(vendor: string, credential: string): string {
   return `${vendor}_${credential}`.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
 }
 
+/**
+ * The credential an OAuth connection's current access token arrives in. Hosts
+ * pass their current (refreshed) token there on every call; the CLI reads it
+ * from <VENDOR>_ACCESS_TOKEN and never refreshes it.
+ */
+export const ACCESS_TOKEN_CREDENTIAL = 'access_token';
+
 export interface EnvCredentials {
   credentials: Record<string, string>;
   /** The variables that are not set, e.g. ["DEVTO_API_KEY"]. */
   missing: string[];
 }
 
+/**
+ * The credentials of a module from <VENDOR>_<CREDENTIAL> variables. Every
+ * declared credential is required. An OAuth access token is read from
+ * <VENDOR>_ACCESS_TOKEN into access_token even when the module does not
+ * declare it, as hosts pass a connection's token, and is then optional.
+ */
 export function credentialsFromEnv(module: Pick<ConnectorModule, 'vendor' | 'credentials'>, env: NodeJS.ProcessEnv): EnvCredentials {
   const credentials: Record<string, string> = {};
   const missing: string[] = [];
@@ -19,6 +32,10 @@ export function credentialsFromEnv(module: Pick<ConnectorModule, 'vendor' | 'cre
     const value = env[variable]?.trim();
     if (value) credentials[name] = value;
     else missing.push(variable);
+  }
+  if (!module.credentials.includes(ACCESS_TOKEN_CREDENTIAL)) {
+    const token = env[envNameFor(module.vendor, ACCESS_TOKEN_CREDENTIAL)]?.trim();
+    if (token) credentials[ACCESS_TOKEN_CREDENTIAL] = token;
   }
   return { credentials, missing };
 }

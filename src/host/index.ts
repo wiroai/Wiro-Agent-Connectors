@@ -1,7 +1,7 @@
 // The host side of the package: what a program needs to run connector modules
 // itself, and what the stdio CLI is built from.
 
-export { ACCOUNTS_ENV, accountsFromEnv, credentialsFromEnv, envNameFor } from './env.js';
+export { ACCESS_TOKEN_CREDENTIAL, ACCOUNTS_ENV, accountsFromEnv, credentialsFromEnv, envNameFor } from './env.js';
 export type { EnvCredentials } from './env.js';
 export { ConnectorFetchError, createGuardedFetch, originsFromCredentials } from './guarded-fetch.js';
 export type {

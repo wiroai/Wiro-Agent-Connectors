@@ -42,7 +42,7 @@ DEVTO_API_KEY=your-key npx -y @wiro-ai/wiro-agent-connectors devto
 | `devto` | `DEVTO_API_KEY` | dev.to → Settings → Extensions → DEV Community API Keys → Generate API Key. |
 | `bluesky` | `BLUESKY_IDENTIFIER`, `BLUESKY_APP_PASSWORD` | Your handle (such as `alice.bsky.social`) and an app password from Bluesky → Settings → Privacy and security → App passwords. Never your account password. Accounts hosted by Bluesky only. |
 
-A connector without its variables still starts and lists its tools; each call then answers with the variable to set.
+A connector without its variables still starts and lists its tools; each call then answers with the variable to set. A connector whose service signs in with OAuth reads a current access token from `<VENDOR>_ACCESS_TOKEN`: get one from your own OAuth app, as the CLI does not refresh it.
 
 ### Claude Desktop
 
@@ -169,6 +169,10 @@ Some services live at an address the user chooses: a Mastodon instance, a WordPr
 - the usual timeout and size cap.
 
 The CLI's guarded fetch does all of this. Every other host must do the same, whether it runs connectors for an agent or on a server; with this package, resolve the origins from the call's credentials and pass them in, as above: `createGuardedFetch({ origins: module.origins, credentialOrigins: originsFromCredentials(module, credentials) })`. A host may refuse more than this, for example its own public addresses.
+
+### OAuth access tokens
+
+A connector whose service signs in with OAuth declares the credential `access_token`. The host passes its current access token there on every call and refreshes it on its own; a module never refreshes, stores or logs it, and an expired token comes back as a plain 401 error. In the CLI, `access_token` comes from `<VENDOR>_ACCESS_TOKEN`, as it is; when set, the CLI passes it along even to a connector that does not require it.
 
 ### Generic API tools
 

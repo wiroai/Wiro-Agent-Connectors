@@ -79,6 +79,11 @@ export type ConnectorAccounts = Record<string, string[]> | null;
 
 /** Passed to every call. Nothing in it outlives the call inside the module, except cached sessions. */
 export interface ToolContext {
+  /**
+   * The connection's credentials, by the names the module declares. For an
+   * OAuth connection, `access_token` holds the host's current access token:
+   * the host refreshes it, and the module never stores it.
+   */
   credentials: Record<string, string>;
   accounts: ConnectorAccounts;
   fetch: ConnectorFetch;

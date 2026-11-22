@@ -317,3 +317,29 @@ test('the origin comes from the value the host passed, whatever normalizeCredent
   assert.equal(payload.value, 'https://elsewhere.example');
   assert.equal(fetch.calls[0].url, 'https://blog.example/', 'hosts resolve the same value, so they agree on it');
 });
+
+test('a module that declares access_token gets the host\'s current OAuth token on every call, and keeps none', async () => {
+  const module = defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins: ['https://api.acme.test'],
+    credentials: ['access_token'],
+    credentialLabels: { access_token: 'Acme access token' },
+    authHeaders: (credentials) => ({ authorization: `Bearer ${credentials.access_token}` }),
+    tools: [{ name: 'read_x', kind: 'read', title: 'Read', description: 'Reads.', inputSchema: READ_SCHEMA, run: async (args, h) => (await h.api({ path: '/me' })).data }],
+  });
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  // The host refreshes the token between calls: each call sends the one it was given.
+  for (const token of ['token-1', 'token-2', 'token-1']) {
+    await callTool(module, 'read_x', {}, makeContext({ credentials: { access_token: token }, fetch }).ctx);
+  }
+  assert.deepEqual(fetch.calls.map((call) => call.headers.authorization), ['Bearer token-1', 'Bearer token-2', 'Bearer token-1']);
+
+  const expired = fakeFetch(() => jsonResponse(401, { error: 'invalid_token', message: 'The access token expired' }));
+  const refused = await callTool(module, 'read_x', {}, makeContext({ credentials: { access_token: 'token-0' }, fetch: expired }).ctx);
+  assert.equal(refused.payload.error, 'Acme rejected the credentials (HTTP 401): The access token expired. Check that the Acme access token is correct and still active.');
+  assert.equal(refused.payload.status, 401);
+  assert.equal(expired.calls.length, 1, 'a module never refreshes or retries: the host does');
+  const missing = await callTool(module, 'read_x', {}, makeContext({ credentials: {}, fetch }).ctx);
+  assert.equal(missing.payload.error, 'Acme is not connected: the Acme access token is missing.');
+});
