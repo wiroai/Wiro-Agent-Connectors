@@ -29,11 +29,58 @@ const CREATIVES = {
 test('the apps picker: list_apps with no arguments lists app tokens and names', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')), null);
   const [picker] = module.accountPickers;
-  assert.deepEqual({ ...picker }, { key: 'apps', label: 'Adjust apps', description: 'The apps the agent may report on.', multiple: true, tool: 'list_apps', idField: 'id', nameField: 'name', legacyField: 'apps' });
+  assert.deepEqual({ ...picker }, {
+    key: 'apps',
+    label: 'Adjust apps',
+    description: 'The apps the agent may report on. Reports cover only the apps chosen here: choose all of them to cover the whole account, and choose an app added to Adjust later too.',
+    multiple: true,
+    tool: 'list_apps',
+    idField: 'id',
+    nameField: 'name',
+    legacyField: 'apps',
+  });
   const { payload } = await callTool(module, picker.tool, {}, ctx);
   assert.equal(fetch.calls[0].url, 'https://automate.adjust.com/reports-service/filters_data?required_filters=apps');
   assert.equal(fetch.calls[0].headers.authorization, `Bearer ${TOKEN}`);
   assert.deepEqual(payload.apps.map((item) => [field(item, picker.idField), field(item, picker.nameField)]), [[IOS, 'Acme Photo iOS'], [ANDROID, 'Acme Photo Android']]);
+  assert.deepEqual(payload.apps, [{ id: IOS, name: 'Acme Photo iOS' }, { id: ANDROID, name: 'Acme Photo Android' }], 'no lock, no marks');
+  assert.equal(payload.note, undefined);
+});
+
+test('list_apps marks the apps chosen for the connection, and says when none is chosen', async () => {
+  const chosen = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')));
+  const { payload } = await callTool(chosen.module, 'list_apps', {}, chosen.ctx);
+  assert.deepEqual(payload.apps, [{ id: IOS, name: 'Acme Photo iOS', selected: true }, { id: ANDROID, name: 'Acme Photo Android' }]);
+  assert.equal(payload.note, undefined);
+
+  for (const accounts of [{}, { apps: [] }]) {
+    const none = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')), accounts);
+    const unchosen = await callTool(none.module, 'list_apps', {}, none.ctx);
+    assert.equal(unchosen.isError, false, 'the list itself still answers');
+    assert.ok(unchosen.payload.apps.every((app) => !('selected' in app)));
+    assert.match(unchosen.payload.note, /^No app is chosen for this connection yet, so every report is refused until apps from this list are chosen for it\.$/);
+  }
+});
+
+test('with no app chosen, every app-scoped tool refuses with one sentence before anything is sent', async () => {
+  const NONE = /^No app is chosen for this Adjust connection yet, and it reports only on the apps chosen for it\. Ask whoever manages the connection to choose them \(list_apps lists the apps of the account; choosing all of them covers the whole account\)\. Nothing was sent to Adjust\.$/;
+  for (const accounts of [{}, { apps: [] }, { pages: ['123'] }]) {
+    const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'report.json')), accounts);
+    const calls = [
+      ['get_report', CREATIVES],
+      ['get_report', { ...CREATIVES, app_tokens: [IOS] }],
+      ['list_events', {}],
+      ['api_get', { path: '/reports-service/report', query: { app_token__in: IOS, date_period: 'yesterday' } }],
+    ];
+    for (const [tool, args] of calls) {
+      const { payload, isError } = await callTool(module, tool, args, ctx);
+      assert.equal(isError, true, tool);
+      assert.match(payload.error, NONE, tool);
+    }
+    assert.equal(fetch.calls.length, 0);
+  }
+  const filters = setup(() => jsonResponse(200, fixture(import.meta.url, 'filters-data.json')), {});
+  assert.equal((await callTool(filters.module, 'get_filter_values', { lists: ['overview_metrics'] }, filters.ctx)).isError, false, 'account-wide metadata still answers');
 });
 
 test('get_report scopes to the chosen apps by default and sends every report parameter', async () => {
@@ -78,7 +125,7 @@ test('app tokens outside the chosen apps are refused before any request; without
   assert.match(refused.payload.error, /^The app ghi789jkl012 is not among the apps chosen for this connection\. Use one of: abc123def456\. Nothing was sent\.$/);
   const nothingChosen = setup(() => jsonResponse(200, {}), {});
   const none = await callTool(nothingChosen.module, 'get_report', CREATIVES, nothingChosen.ctx);
-  assert.match(none.payload.error, /^No app is chosen for this connection yet\. Nothing was sent\.$/);
+  assert.match(none.payload.error, /^No app is chosen for this Adjust connection yet/);
   assert.equal(fetch.calls.length + nothingChosen.fetch.calls.length, 0);
 
   const open = setup(() => jsonResponse(200, fixture(import.meta.url, 'report.json')), null);

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import { callTool, controlClock, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, refusal, textBytes, textResponse } from '../../../tests/helpers.mjs';
 
@@ -60,12 +61,26 @@ test('list_apps signs an ES256 token from the key, reads the apps and trims them
   assert.equal(jwt.payload.aud, 'appstoreconnect-v1');
   assert.equal(jwt.payload.exp - jwt.payload.iat, 1200);
   assert.deepEqual(payload.apps, [
-    { id: '1234567890', name: 'Acme Photo', bundleId: 'com.example.photo', sku: 'ACME-PHOTO-1', primaryLocale: 'en-US' },
+    { id: '1234567890', name: 'Acme Photo', bundleId: 'com.example.photo', sku: 'ACME-PHOTO-1', primaryLocale: 'en-US', selected: true },
     { id: '1234567891', name: 'Acme Video', bundleId: 'com.example.video', sku: 'ACME-VIDEO-1', primaryLocale: 'tr' },
   ]);
+  assert.equal(payload.note, undefined);
 
   await callTool(module, 'list_apps', { limit: 2, cursor: payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].query.cursor, 'Mg.AJUmP2s');
+});
+
+test('list_apps marks the chosen apps only under a lock, and says when none is chosen', async () => {
+  const open = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')), { accounts: null });
+  const all = await callTool(open.module, 'list_apps', {}, open.ctx);
+  assert.ok(all.payload.apps.every((app) => !('selected' in app)), 'no lock, no marks');
+  assert.equal(all.payload.note, undefined);
+
+  const none = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')), { accounts: {} });
+  const unchosen = await callTool(none.module, 'list_apps', {}, none.ctx);
+  assert.equal(unchosen.isError, false);
+  assert.ok(unchosen.payload.apps.every((app) => !('selected' in app)));
+  assert.match(unchosen.payload.note, /^No app is chosen for this connection yet, so every tool that names an app is refused/);
 });
 
 test('the apps picker: list_apps with no arguments gives the id and the name of each app', async () => {
@@ -731,7 +746,7 @@ test('upload_app_event_image removes the reservation when the host refuses the u
   const { payload, isError } = await callTool(refused.module, 'upload_app_event_image', UPLOAD_ARGS, refused.ctx);
   assert.equal(isError, true);
   assert.equal(payload.outcome, undefined, 'a clear failure, not an unknown outcome');
-  assert.match(payload.error, /^The host running this connector does not allow uploads to App Store Connect's upload server .* The reserved image 8c3f4d5e-3333-4eee-8fff-000000000002 was removed again, so nothing was left behind\. Or add the image in App Store Connect/);
+  assert.match(payload.error, /^The host running this connector does not allow uploads to App Store Connect's upload server .* The reserved image 8c3f4d5e-3333-4eee-8fff-000000000002 was removed again, so nothing was left behind\. Add the image in App Store Connect instead \(Apps > the app > In-App Events > the event, in its locale: its event card or event details page media\); submit_app_event_for_review sends the event once it has both images\.$/);
   assert.deepEqual(refused.fetch.calls.slice(3).map((call) => call.method), ['POST', 'PUT', 'DELETE']);
 
   const failing = setup(imageRoutes({
@@ -739,7 +754,7 @@ test('upload_app_event_image removes the reservation when the host refuses the u
     [`DELETE /v1/appEventScreenshots/${IMAGE_ID}`]: () => jsonResponse(500, { errors: [{ status: '500' }] }),
   }));
   const failed = await callTool(failing.module, 'upload_app_event_image', UPLOAD_ARGS, failing.ctx);
-  assert.match(failed.payload.error, /^App Store Connect's upload server answered HTTP 403 for part 2 of 2\. The reserved image .* could not be removed: delete it with delete_app_event_image before trying again\./);
+  assert.match(failed.payload.error, /^App Store Connect's upload server answered HTTP 403 for part 2 of 2\. The reserved image .* could not be removed: delete it with delete_app_event_image before trying again\. Or add the image in App Store Connect \(Apps > the app > In-App Events > the event, in its locale\)\.$/);
 
   const offsite = setup(imageRoutes({
     'POST /v1/appEventScreenshots': () => {
@@ -752,6 +767,46 @@ test('upload_app_event_image removes the reservation when the host refuses the u
   assert.match(elsewhere.payload.error, /^App Store Connect returned an upload address for part 1 of 2 that is not an https address on apple\.com\./);
   assert.ok(!offsite.fetch.calls.some((call) => call.method === 'PUT'), 'nothing is uploaded anywhere else');
   assert.equal(offsite.fetch.calls.at(-1).method, 'DELETE');
+});
+
+test('on this package\'s own CLI host the upload to Apple\'s upload server is refused before it is sent, and the reservation is removed', async () => {
+  // The CLI's guarded fetch keeps to the module contract: only downloads may
+  // go to an address outside a connector's origins. Its API fetch, DNS and
+  // download transport are replaced, so nothing touches the network.
+  const { createGuardedFetch } = createRequire(import.meta.url)('../../../dist/host/index.js');
+  const { module } = loadModuleFor(import.meta.url);
+  const api = fakeFetch(imageRoutes());
+  const outside = [];
+  const fetch = createGuardedFetch({
+    origins: module.origins,
+    apiFetch: api,
+    resolve: async () => [{ address: '93.184.216.34', family: 4 }],
+    transport: async ({ url, method }) => {
+      outside.push(`${method} ${url.origin}`);
+      const body = png(1080, 1920);
+      return { status: 200, headers: { 'content-type': 'image/png' }, body: (async function* chunks() { yield body; })(), destroy() {} };
+    },
+  });
+  const { ctx } = makeContext({ credentials, accounts: { apps: [APP] }, fetch });
+  const { payload, isError } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
+  assert.equal(isError, true);
+  assert.equal(payload.outcome, undefined, 'a clear failure: nothing is left behind');
+  assert.deepEqual(outside, ['GET https://cdn.example.com'], 'only the image download went to an address outside the API');
+  assert.deepEqual(api.calls.map((call) => `${call.method} ${call.path}`), [
+    `GET /v1/appEventLocalizations/${LOCALIZATION_1}`,
+    `GET /v1/apps/${APP}/appEvents`,
+    'POST /v1/appEventScreenshots',
+    `DELETE /v1/appEventScreenshots/${IMAGE_ID}`,
+  ]);
+  assert.match(payload.error, /^The host running this connector does not allow uploads to App Store Connect's upload server .* was removed again, so nothing was left behind\. Add the image in App Store Connect instead/);
+});
+
+test('the image and review tools say where event images go when the host refuses the upload', () => {
+  const { module } = loadModuleFor(import.meta.url);
+  const tool = (name) => module.tools.find((candidate) => candidate.name === name);
+  assert.match(tool('upload_app_event_image').description, /A host that lets connectors send only downloads outside the API refuses that upload: the reservation is then removed, nothing is added, and the images are added in App Store Connect instead \(Apps > the app > In-App Events > the event\) before submit_app_event_for_review\.$/);
+  assert.match(tool('submit_app_event_for_review').description, /both images first \(list_app_event_images shows them; add them in App Store Connect when upload_app_event_image cannot\)/);
+  for (const name of ['upload_app_event_image', 'submit_app_event_for_review', 'list_apps']) assert.ok(tool(name).description.length <= 1024, name);
 });
 
 test('upload_app_event_image: an unclear reservation is an unknown outcome with one POST, and a failed processing is reported and removed', async () => {

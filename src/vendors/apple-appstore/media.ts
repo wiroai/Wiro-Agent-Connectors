@@ -6,10 +6,12 @@
 //
 // The parts go to the upload addresses App Store Connect returns (unsigned
 // for the API, time-limited, on Apple's own hosts, which change per upload),
-// not to the API's own origin. They are sent through ctx.fetch with PUT; a
-// host that takes only downloads from addresses outside a connector's origins
-// refuses them before anything is sent, and the tool then removes the
-// reservation again.
+// not to the API's own origin. They are sent through ctx.fetch with PUT. The
+// module contract lets a connector send only downloads to addresses outside
+// its origins, so a host that keeps to it refuses them before anything is
+// sent: the tool then removes the reservation again and says to add the image
+// in App Store Connect, on the event's page. Once hosts let a module name
+// upload hosts (here *.apple.com), the same code uploads the parts.
 
 import { OutcomeUnknown, ToolFailure, type ToolHelpers } from '../../core/index.js';
 import { compact, sleep, trimEventImage, type Asc } from './client.js';
@@ -117,7 +119,8 @@ const COMMIT_ERRORS = {
 
 /** Why the parts could not be uploaded, as a sentence for the result. */
 class UploadProblem extends Error {
-  constructor(message: string) {
+  /** @param hostRefused the host running the connector refused the upload address before anything was sent. */
+  constructor(message: string, readonly hostRefused = false) {
     super(message);
     this.name = 'UploadProblem';
   }
@@ -172,6 +175,7 @@ async function uploadParts(h: ToolHelpers, operations: unknown, bytes: Uint8Arra
       if ((error as { code?: unknown } | null)?.code === 'URL_REFUSED') {
         throw new UploadProblem(
           "The host running this connector does not allow uploads to App Store Connect's upload server (it takes only downloads from addresses outside the API), so the image was not sent.",
+          true,
         );
       }
       throw new UploadProblem(`The upload of ${part.which} to App Store Connect's upload server failed (${describe(error)}).`);
@@ -192,7 +196,12 @@ async function removeReservation(api: Asc, id: string): Promise<string> {
   }
 }
 
-const IN_APP_STORE_CONNECT = 'Or add the image in App Store Connect, on the event\'s page.';
+/** Where a person adds an event image in App Store Connect. */
+const EVENT_PAGE = 'Apps > the app > In-App Events > the event, in its locale';
+const IN_APP_STORE_CONNECT = `Or add the image in App Store Connect (${EVENT_PAGE}).`;
+/** For a host that refuses every upload: the images can only be added in App Store Connect. */
+const ADD_IN_APP_STORE_CONNECT = `Add the image in App Store Connect instead (${EVENT_PAGE}: its event card or event details page media); `
+  + 'submit_app_event_for_review sends the event once it has both images.';
 
 /** Reads the image until App Store Connect has processed it, for a while. */
 async function waitProcessed(h: ToolHelpers, api: Asc, id: string): Promise<any> {
@@ -239,7 +248,7 @@ export async function uploadEventImage(
     await uploadParts(h, data?.data?.attributes?.uploadOperations, bytes);
   } catch (error) {
     if (!(error instanceof UploadProblem)) throw error;
-    throw new ToolFailure(`${error.message} ${await removeReservation(api, id)} ${IN_APP_STORE_CONNECT}`);
+    throw new ToolFailure(`${error.message} ${await removeReservation(api, id)} ${error.hostRefused ? ADD_IN_APP_STORE_CONNECT : IN_APP_STORE_CONNECT}`);
   }
 
   try {

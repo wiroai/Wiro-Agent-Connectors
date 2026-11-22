@@ -37,7 +37,16 @@ test('get_account reads who the token is with the Bearer header', async () => {
 test('the apps picker: list_apps with no arguments gives app tokens and names', async () => {
   const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')), null);
   const [picker] = module.accountPickers;
-  assert.deepEqual({ ...picker }, { key: 'apps', label: 'Roasit apps', description: 'The apps the agent may report on.', multiple: true, tool: 'list_apps', idField: 'app_token', nameField: 'name', legacyField: 'apps' });
+  assert.deepEqual({ ...picker }, {
+    key: 'apps',
+    label: 'Roasit apps',
+    description: 'The apps the agent may report on, each with all its platforms (a report picks the platform). Reports cover only the apps chosen here, so choose an app added to Roasit later too.',
+    multiple: true,
+    tool: 'list_apps',
+    idField: 'app_token',
+    nameField: 'name',
+    legacyField: 'apps',
+  });
   const { payload } = await callTool(module, picker.tool, {}, ctx);
   assert.deepEqual(payload.apps.map((item) => [field(item, picker.idField), field(item, picker.nameField)]), [[GAME, 'My Game'], [PUZZLE, 'Puzzle Pro']]);
   assert.deepEqual(payload.apps[0], {
@@ -51,6 +60,56 @@ test('the apps picker: list_apps with no arguments gives app tokens and names', 
     createdAt: '2026-01-10T09:00:00Z',
   });
   assert.equal('appleAppId' in payload.apps[1], false, 'empty store ids are left out');
+  assert.ok(payload.apps.every((app) => !('selected' in app)), 'no lock, no marks');
+  assert.equal(payload.note, undefined);
+});
+
+test('list_apps marks the apps chosen for the connection with their platforms, and says when none is chosen', async () => {
+  const chosen = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')));
+  const { payload } = await callTool(chosen.module, 'list_apps', {}, chosen.ctx);
+  assert.deepEqual(payload.apps.map((app) => [app.app_token, app.selected, app.platforms]), [[GAME, true, ['ios', 'android']], [PUZZLE, undefined, payload.apps[1].platforms]]);
+  assert.equal(payload.note, undefined);
+
+  for (const accounts of [{}, { apps: [] }]) {
+    const none = setup(() => jsonResponse(200, fixture(import.meta.url, 'apps.json')), accounts);
+    const unchosen = await callTool(none.module, 'list_apps', {}, none.ctx);
+    assert.equal(unchosen.isError, false, 'the list itself still answers');
+    assert.ok(unchosen.payload.apps.every((app) => !('selected' in app)));
+    assert.match(unchosen.payload.note, /^No app is chosen for this connection yet, so every app-level tool is refused until apps from this list are chosen for it\.$/);
+  }
+});
+
+test('with no app chosen, every app-level tool refuses with one sentence before anything is sent', async () => {
+  const NONE = /^No app is chosen for this Roasit connection yet, and it reports only on the apps chosen for it\. Ask whoever manages the connection to choose them \(list_apps lists the apps the token sees\)\. Nothing was sent to Roasit\.$/;
+  const replies = {
+    '/api/me': fixture(import.meta.url, 'me.json'),
+    '/api/report/metrics': fixture(import.meta.url, 'metrics.json'),
+    '/api/report/networks': fixture(import.meta.url, 'networks.json'),
+  };
+  for (const accounts of [{}, { apps: [] }]) {
+    const { module, fetch, ctx } = setup((request) => jsonResponse(200, replies[request.path] ?? {}), accounts);
+    const calls = [
+      ['get_report', CREATIVES],
+      ['get_skan_report', { app_token: GAME }],
+      ['get_reconciliation', { app_token: GAME, platform: 'ios' }],
+      ['get_data_freshness', { app_token: GAME }],
+      ['list_dimension_values', { app_token: GAME }],
+      ['list_events', { app_token: GAME }],
+      ['list_networks', { app_token: GAME }],
+      ['api_get', { path: `/api/apps/${GAME}/connections` }],
+    ];
+    for (const [tool, args] of calls) {
+      const { payload, isError } = await callTool(module, tool, args, ctx);
+      assert.equal(isError, true, tool);
+      assert.match(payload.error, NONE, tool);
+    }
+    assert.equal(fetch.calls.length, 0);
+    // What is not about one app still answers.
+    for (const [tool, args] of [['get_account', {}], ['list_metrics', {}], ['list_networks', {}]]) {
+      assert.equal((await callTool(module, tool, args, ctx)).isError, false, tool);
+    }
+    assert.deepEqual(fetch.calls.map((call) => call.path), ['/api/me', '/api/report/metrics', '/api/report/networks']);
+  }
 });
 
 test('get_report sends one app with comma lists and returns the dashboard\'s rows, totals, notes and spend depth', async () => {

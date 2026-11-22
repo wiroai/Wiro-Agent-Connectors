@@ -17,7 +17,7 @@
 // connection. App Store Connect does not say which app an event or a review
 // belongs to, so under that lock the write tools look it up first.
 
-import { apiTools, defineConnector, requireAccounts, ToolFailure, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
+import { allowedAccounts, apiTools, defineConnector, requireAccounts, ToolFailure, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
 import {
   applePage,
   asc,
@@ -250,6 +250,7 @@ const connector = defineConnector({
       title: 'List App Store Connect apps',
       description:
         'Lists the apps the App Store Connect key can see, by name: the Apple ID (id), name, bundle ID, SKU and primary locale of each. '
+        + 'When the connection is limited to chosen apps, those are marked selected: true, and only they can be used. '
         + 'Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
@@ -260,12 +261,16 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { limit: number; cursor?: string }, h) {
+        const chosen = allowedAccounts(h.ctx.accounts, 'apps');
         return applePage(h, asc(h), {
           key: 'apps',
           path: '/v1/apps',
           query: { 'fields[apps]': 'name,bundleId,sku,primaryLocale', sort: 'name', limit: args.limit },
           ...(args.cursor ? { cursor: args.cursor } : {}),
-          map: trimApp,
+          map: (item) => compact({ ...trimApp(item), selected: chosen?.includes(String(item?.id)) ? true : undefined }),
+          ...(chosen?.length === 0
+            ? { extra: () => ({ note: 'No app is chosen for this connection yet, so every tool that names an app is refused until apps from this list are chosen for it.' }) }
+            : {}),
         });
       },
     },
@@ -759,9 +764,11 @@ const connector = defineConnector({
       title: 'Add an image to an App Store in-app event',
       description:
         "Adds an in-app event's image in one locale from a public https URL: the event card (EVENT_CARD, landscape 16:9, 1920x1080 to 3840x2160) "
-        + 'or the event details page (EVENT_DETAILS_PAGE, portrait 9:16, 1080x1920 to 2160x3840), JPEG or PNG, checked before anything is written. '
-        + 'No text, logos, borders or gradients in the image. It reserves the image, uploads it to the address App Store Connect gives, commits it '
-        + 'and waits up to 45 seconds for Apple to process it. A localization that already has an image of that kind: delete_app_event_image first.',
+        + 'or the event details page (EVENT_DETAILS_PAGE, portrait 9:16, 1080x1920 to 2160x3840), JPEG or PNG, checked first. No text, logos, '
+        + 'borders or gradients in it. It reserves the image, uploads it to Apple\'s upload server, commits it and waits up to 45 seconds for '
+        + 'processing; a kind the localization already has: delete_app_event_image first. A host that lets connectors send only downloads outside '
+        + 'the API refuses that upload: the reservation is then removed, nothing is added, and the images are added in App Store Connect instead '
+        + '(Apps > the app > In-App Events > the event) before submit_app_event_for_review.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -836,7 +843,8 @@ const connector = defineConnector({
       check: 'list_app_events',
       title: 'Send an App Store in-app event to App Review',
       description:
-        "Sends an in-app event to App Review, as App Store Connect's Add for Review does: the event needs its texts and both images first. It reuses "
+        "Sends an in-app event to App Review, as App Store Connect's Add for Review does: the event needs its texts and both images first "
+        + '(list_app_event_images shows them; add them in App Store Connect when upload_app_event_image cannot). It reuses '
         + "the app's open review submission when that holds nothing else (or already holds the event), else starts one, adds the event and sends it. "
         + 'An open submission holding other items (an app version, another event) is left alone and the tool says what it holds. Only a draft, a '
         + 'rejected event or one ready for review can be sent. Never sent twice: check list_app_events after an unclear outcome.',
