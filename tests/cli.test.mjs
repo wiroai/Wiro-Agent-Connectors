@@ -70,13 +70,16 @@ test.after(() => {
   mock?.server.close();
 });
 
-test('serper over stdio: named after the vendor, lists its tool, and calls Serper with the key from the environment', async () => {
-  const { client, stderr } = await connect('serper', { SERPER_API_KEY: SERPER_KEY, MOCK_VENDOR_URL: mock.url });
+test('serper over stdio: named after the vendor, lists its tools, and calls Serper with the key from the environment', async () => {
+  const { client, stderr } = await connect('serper', { SERPER_APIKEY: SERPER_KEY, MOCK_VENDOR_URL: mock.url });
   try {
     assert.deepEqual(client.getServerVersion(), { name: 'serper', version: VERSION });
 
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ['web_search']);
+    assert.deepEqual(tools.map((tool) => tool.name), [
+      'web_search', 'news_search', 'image_search', 'video_search', 'places_search', 'maps_search', 'place_reviews',
+      'shopping_search', 'scholar_search', 'patent_search', 'autocomplete', 'lens_search', 'find_locations',
+    ]);
     assert.deepEqual(tools[0].annotations, { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true });
 
     const before = mock.requests.length;
@@ -107,26 +110,30 @@ test('without its credentials a connector still lists its tools and names the mi
   try {
     assert.equal(client.getServerVersion().name, 'devto');
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ['list_my_articles', 'create_draft_article', 'update_article', 'api_get', 'api_request']);
+    assert.deepEqual(tools.map((tool) => tool.name), ['list_my_articles', 'get_article', 'create_draft_article', 'update_article', 'get_analytics', 'api_get', 'api_request']);
     const result = await client.callTool({ name: 'list_my_articles', arguments: {} });
     assert.equal(result.isError, true);
-    assert.match(JSON.parse(result.content[0].text).error, /set DEVTO_API_KEY in its environment/);
+    assert.match(JSON.parse(result.content[0].text).error, /set DEVTO_APIKEY in its environment/);
     assert.doesNotMatch(result.content[0].text, /wiro/i);
   } finally {
     await client.close();
   }
   assert.equal(mock.requests.length, before, 'nothing was sent');
-  assert.match(stderr(), /devto: DEVTO_API_KEY is not set/);
+  assert.match(stderr(), /devto: DEVTO_APIKEY is not set/);
 });
 
 test('--list, --version, an unknown connector and a bad CONNECTOR_ACCOUNTS', () => {
   const list = spawnSync(process.execPath, [CLI, '--list'], { encoding: 'utf8' });
   assert.equal(list.status, 0);
-  assert.match(list.stdout, /bluesky\n {2}env: {3}BLUESKY_IDENTIFIER, BLUESKY_APP_PASSWORD\n {2}tools: get_profile, list_my_posts, create_post, api_get, api_request\n/);
-  assert.match(list.stdout, /devto\n {2}env: {3}DEVTO_API_KEY/);
-  assert.match(list.stdout, /serper\n {2}env: {3}SERPER_API_KEY\n {2}tools: web_search/);
-  // These need every variable and offer no account picker, so neither line appears.
-  assert.doesNotMatch(list.stdout, /needs:|accounts:/);
+  assert.match(list.stdout, /bluesky\n {2}env: {3}BLUESKY_HANDLE, BLUESKY_APPPASSWORD\n {2}tools: get_profile, list_my_posts, get_posts, create_post, delete_post, api_get, api_request\n/);
+  assert.match(list.stdout, /devto\n {2}env: {3}DEVTO_APIKEY/);
+  assert.match(list.stdout, /serper\n {2}env: {3}SERPER_APIKEY\n {2}tools: web_search/);
+  // These need every variable and offer no account picker, so neither line appears in their entries.
+  const entries = Object.fromEntries(list.stdout.trim().split('\n\n').map((entry) => [entry.split('\n')[0], entry]));
+  for (const vendor of ['bluesky', 'devto', 'serper']) assert.doesNotMatch(entries[vendor], /needs:|accounts:/, vendor);
+  // One with alternatives and account pickers prints both.
+  assert.match(entries['meta-ads'], /\n {2}needs: {4}META_ADS_ACCESS_TOKEN, or META_ADS_SYSTEMUSERTOKEN\n/);
+  assert.match(entries['meta-ads'], /\n {2}accounts: ad_accounts \(Meta ad accounts, one or more, listed by list_ad_accounts\)\n {12}pages \(/);
 
   const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
   assert.equal(help.status, 0);
@@ -137,7 +144,7 @@ test('--list, --version, an unknown connector and a bad CONNECTOR_ACCOUNTS', () 
 
   const unknown = spawnSync(process.execPath, [CLI, 'nosuchvendor'], { encoding: 'utf8' });
   assert.equal(unknown.status, 1);
-  assert.match(unknown.stderr, /There is no connector named "nosuchvendor"\. Available: bluesky, devto, serper\./);
+  assert.ok(unknown.stderr.includes(`There is no connector named "nosuchvendor". Available: ${Object.keys(entries).sort().join(', ')}.`), unknown.stderr);
 
   const traversal = spawnSync(process.execPath, [CLI, '../package'], { encoding: 'utf8' });
   assert.equal(traversal.status, 1);

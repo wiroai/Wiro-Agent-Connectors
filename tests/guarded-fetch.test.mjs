@@ -203,7 +203,7 @@ test('a module behind the guard reports a refused image plainly and posts nothin
     mediaTransport: fakeTransport({}),
     resolve: fakeResolve({ 'images.attacker.test': ['127.0.0.1'] }),
   });
-  const { ctx } = makeContext({ credentials: { identifier: 'alice.bsky.social', app_password: 'abcd-efgh-ijkl-mnop' }, fetch });
+  const { ctx } = makeContext({ credentials: { handle: 'alice.bsky.social', apppassword: 'abcd-efgh-ijkl-mnop' }, fetch });
   const { payload, isError } = await callTool(module, 'create_post', { text: 'hi', image_url: 'https://images.attacker.test/x.png', image_alt: 'x' }, ctx);
   assert.equal(isError, true);
   assert.match(payload.error, /The image URL was refused \(images\.attacker\.test is not a public internet address\)\. Use a public https URL\. Nothing was changed\./);
