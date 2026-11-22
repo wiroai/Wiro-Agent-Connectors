@@ -1,0 +1,1 @@
+{ "errors": [{ "message": "Field 'prise' doesn't exist on type 'ProductVariant'", "locations": [{ "line": 1, "column": 40 }], "path": ["query Q", "product", "variants", "nodes", "prise"], "extensions": { "code": "undefinedField", "typeName": "ProductVariant", "fieldName": "prise" } }] }

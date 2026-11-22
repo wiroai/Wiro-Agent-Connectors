@@ -1,0 +1,1 @@
+{ "data": { "discountCodeBasicCreate": { "codeDiscountNode": null, "userErrors": [{ "field": ["basicCodeDiscount", "code"], "message": "Code must be unique. Please try a different code.", "code": "TAKEN" }] } } }

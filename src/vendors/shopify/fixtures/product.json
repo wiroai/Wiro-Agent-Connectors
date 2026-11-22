@@ -1,0 +1,36 @@
+{
+  "data": {
+    "product": {
+      "id": "gid://shopify/Product/8800000002",
+      "title": "Logo T-Shirt",
+      "handle": "logo-t-shirt",
+      "status": "DRAFT",
+      "vendor": "Example Coffee Co",
+      "productType": "Apparel",
+      "tags": ["apparel"],
+      "updatedAt": "2026-11-21T07:40:00Z",
+      "publishedAt": null,
+      "totalInventory": 25,
+      "tracksInventory": true,
+      "variantsCount": { "count": 2 },
+      "priceRangeV2": { "minVariantPrice": { "amount": "20.0", "currencyCode": "EUR" }, "maxVariantPrice": { "amount": "22.0" } },
+      "onlineStoreUrl": null,
+      "featuredMedia": { "preview": { "image": { "url": "https://cdn.shopify.example/s/files/tee.jpg" } } },
+      "createdAt": "2026-11-20T09:00:00Z",
+      "descriptionHtml": "<p>Soft cotton tee.</p>",
+      "onlineStorePreviewUrl": "https://example-shop.myshopify.com/products/logo-t-shirt?preview_key=abc",
+      "seo": { "title": null, "description": null },
+      "category": { "fullName": "Apparel & Accessories > Clothing > Shirts & Tops" },
+      "options": [{ "name": "Size", "optionValues": [{ "name": "S" }, { "name": "M" }] }],
+      "media": { "nodes": [{ "id": "gid://shopify/MediaImage/3300000001", "alt": "Black tee", "mediaContentType": "IMAGE", "status": "READY", "preview": { "image": { "url": "https://cdn.shopify.example/s/files/tee.jpg" } } }] },
+      "collections": { "nodes": [{ "id": "gid://shopify/Collection/4400000001", "title": "Merch", "handle": "merch" }] },
+      "variants": {
+        "nodes": [
+          { "id": "gid://shopify/ProductVariant/5500000001", "title": "S", "sku": "TEE-S", "barcode": null, "price": "20.00", "compareAtPrice": null, "inventoryQuantity": 10, "inventoryPolicy": "DENY", "availableForSale": true, "taxable": true, "selectedOptions": [{ "name": "Size", "value": "S" }], "inventoryItem": { "id": "gid://shopify/InventoryItem/6600000001", "tracked": true, "requiresShipping": true } },
+          { "id": "gid://shopify/ProductVariant/5500000002", "title": "M", "sku": "TEE-M", "barcode": "4006381333931", "price": "22.00", "compareAtPrice": "25.00", "inventoryQuantity": 15, "inventoryPolicy": "DENY", "availableForSale": true, "taxable": true, "selectedOptions": [{ "name": "Size", "value": "M" }], "inventoryItem": { "id": "gid://shopify/InventoryItem/6600000002", "tracked": true, "requiresShipping": true } }
+        ],
+        "pageInfo": { "hasNextPage": true, "endCursor": "eyJ2YXJpYW50cyI6Mn0=" }
+      }
+    }
+  }
+}

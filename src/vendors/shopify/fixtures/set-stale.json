@@ -1,0 +1,1 @@
+{ "data": { "inventorySetQuantities": { "inventoryAdjustmentGroup": null, "userErrors": [{ "code": "CHANGE_FROM_QUANTITY_STALE", "field": ["input", "quantities", "0", "changeFromQuantity"], "message": "The specified compare quantity does not match the current quantity." }] } } }
