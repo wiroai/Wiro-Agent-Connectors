@@ -267,6 +267,92 @@ function productNote(product: Item): string | undefined {
   }
 }
 
+/** Offer conditions by Keepa's code (Open Box counts as Used). */
+const CONDITIONS: readonly string[] = [
+  'unknown', 'New', 'Used - Like New', 'Used - Very Good', 'Used - Good', 'Used - Acceptable', 'Refurbished',
+  'Collectible - Like New', 'Collectible - Very Good', 'Collectible - Good', 'Collectible - Acceptable', 'Rental',
+];
+
+function isItem(value: unknown): value is Item {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** The last value of a time, value, ... list (an offer's stockCSV). */
+function lastValue(list: unknown): number | undefined {
+  if (!Array.isArray(list) || list.length < 2) return undefined;
+  const value = list[list.length - 1];
+  return isNumber(value) ? value : undefined;
+}
+
+/**
+ * One live offer: seller, condition, the price and shipping now (the last
+ * time, price, shipping triplet of offerCSV; below zero is unknown), how it
+ * ships, and its stock when the call asked for stock.
+ */
+function offerRow(offer: Item, decimals: number): Record<string, unknown> {
+  const csv = Array.isArray(offer['offerCSV']) ? offer['offerCSV'] : [];
+  const price = csv.length >= 3 ? csv[csv.length - 2] : undefined;
+  const shipping = csv.length >= 3 ? csv[csv.length - 1] : undefined;
+  const stock = lastValue(offer['stockCSV']);
+  const condition = offer['condition'];
+  return compact({
+    sellerId: typeof offer['sellerId'] === 'string' ? truncate(offer['sellerId'], 40) : undefined,
+    condition: isNumber(condition) ? (CONDITIONS[condition] ?? `condition ${condition}`) : undefined,
+    price: isNumber(price) && price >= 0 ? money(price, decimals) : undefined,
+    shipping: isNumber(shipping) && shipping >= 0 ? money(shipping, decimals) : undefined,
+    isAmazon: offer['isAmazon'] === true || undefined,
+    isFBA: offer['isFBA'] === true || undefined,
+    isPrime: offer['isPrime'] === true || undefined,
+    isWarehouseDeal: offer['isWarehouseDeal'] === true || undefined,
+    isPreorder: offer['isPreorder'] === true || undefined,
+    isMAP: offer['isMAP'] === true || undefined,
+    notShippable: offer['isShippable'] === false || undefined,
+    stock: isNumber(stock) && stock >= 0 ? stock : undefined,
+  });
+}
+
+/**
+ * The live offers of a product loaded with the offers option: the offers on
+ * Amazon's offer page now, in its order (liveOffersOrder indexes the offers
+ * list, which also keeps offers that are gone), the first `max` of them.
+ * Undefined when the call did not load offers.
+ */
+function liveOffers(product: Item, decimals: number, max: number): Record<string, unknown> | undefined {
+  const offers = product['offers'];
+  if (!Array.isArray(offers) || max <= 0) return undefined;
+  const order = Array.isArray(product['liveOffersOrder']) ? product['liveOffersOrder'].filter(isNumber) : [];
+  const list = order.slice(0, max).map((index) => offers[index]).filter(isItem).map((offer) => offerRow(offer, decimals));
+  return compact({
+    count: order.length,
+    list,
+    note: product['offersSuccessful'] === false
+      ? 'Keepa could not load fresh offers this time (it charged 1 token), so the offer data is the last it had.'
+      : undefined,
+  });
+}
+
+/** Stock levels, when the call asked for stock: Amazon's and the Buy Box offer's stock (from the stats) and when Keepa last collected stock. */
+function stockLevels(product: Item): Record<string, unknown> | undefined {
+  const stats = isItem(product['stats']) ? product['stats'] : {};
+  const amazon = stats['stockAmazon'];
+  const buyBox = stats['stockBuyBox'];
+  const updated = product['lastStockUpdate'];
+  const stock = compact({
+    amazon: isNumber(amazon) && amazon >= 0 ? amazon : undefined,
+    buyBox: isNumber(buyBox) && buyBox >= 0 ? buyBox : undefined,
+    updated: isNumber(updated) && updated > 0 ? isoMinute(keepaMs(updated)) : undefined,
+  });
+  return Object.keys(stock).length ? stock : undefined;
+}
+
+/** The variations no longer listed or out of stock, when the call asked for historical variations: how many, and the first `max` ASINs. */
+function historicalVariations(product: Item, max: number): Record<string, unknown> | undefined {
+  const list = Array.isArray(product['historicalVariations'])
+    ? product['historicalVariations'].filter((asin: unknown): asin is string => typeof asin === 'string')
+    : [];
+  return list.length ? { count: list.length, asins: list.slice(0, max) } : undefined;
+}
+
 function categoryPath(product: Item): string | undefined {
   const tree = Array.isArray(product['categoryTree']) ? product['categoryTree'] : [];
   return tree.length ? tree.map((node: Item) => (typeof node?.['name'] === 'string' ? node['name'] : '?')).join(' > ') : undefined;
@@ -288,9 +374,11 @@ export type StatsRange = { days: number } | { from: string; to: string } | null;
  * per series the value now, the 30 and 90 day averages, the lowest and
  * highest in the range and the lowest ever (from the stats object), and the
  * sales rank drops, Amazon's out-of-stock share, the offer count and the Buy
- * Box now. Without stats, the last known value of each series.
+ * Box now. Without stats, the last known value of each series. What the paid
+ * options load comes last: stock levels, the variations no longer listed, and
+ * the first `maxOffers` live offers.
  */
-export function summarizeProduct(product: Item, nowMs: number, range: StatsRange): Record<string, unknown> {
+export function summarizeProduct(product: Item, nowMs: number, range: StatsRange, maxOffers = 20): Record<string, unknown> {
   const market = marketById(product['domainId']) ?? UNKNOWN_MARKET;
   const { decimals } = market;
   const stats = typeof product['stats'] === 'object' && product['stats'] !== null ? (product['stats'] as Item) : null;
@@ -341,7 +429,16 @@ export function summarizeProduct(product: Item, nowMs: number, range: StatsRange
       : 'No price or rank history in this reply.'].filter(Boolean).join(' ');
     if (last.length) summary['lastKnown'] = last;
   }
-  return summary;
+  return { ...summary, ...paidExtras(product, decimals, maxOffers, 20) };
+}
+
+/** What the paid options added to a product, for a summary or a brief row. */
+function paidExtras(product: Item, decimals: number, maxOffers: number, maxVariations: number): Record<string, unknown> {
+  return compact({
+    stock: stockLevels(product),
+    historicalVariations: historicalVariations(product, maxVariations),
+    liveOffers: liveOffers(product, decimals, maxOffers),
+  });
 }
 
 /** The value now of csv series `index`: from the stats when the reply has them, else the last point of the history. */
@@ -352,7 +449,15 @@ function nowValue(product: Item, index: number): unknown {
   return Array.isArray(history) && history.length >= 2 ? history[history.length - 1] : undefined;
 }
 
-/** One product in a list: ASIN, title, brand, lowest New and Amazon price now, sales rank, bought in the past month. */
+/** How many live offers and historical variations a brief row lists. */
+const BRIEF_OFFERS = 5;
+const BRIEF_VARIATIONS = 10;
+
+/**
+ * One product in a list: ASIN, title, brand, lowest New and Amazon price now,
+ * sales rank, bought in the past month, and what the paid options added
+ * (stock levels, the first variations no longer listed, the first live offers).
+ */
 export function briefProduct(product: Item): Record<string, unknown> {
   const { decimals } = marketById(product['domainId']) ?? UNKNOWN_MARKET;
   return compact({
@@ -364,6 +469,7 @@ export function briefProduct(product: Item): Record<string, unknown> {
     salesRank: show(nowValue(product, 3), 'rank', decimals),
     boughtPastMonth: isNumber(product['monthlySold']) && product['monthlySold'] > 0 ? `${product['monthlySold']}+` : undefined,
     note: product['productType'] === 5 ? 'parent ASIN: prices belong to its variations' : product['productType'] === 4 ? 'Keepa has no current data for it' : undefined,
+    ...paidExtras(product, decimals, BRIEF_OFFERS, BRIEF_VARIATIONS),
   });
 }
 

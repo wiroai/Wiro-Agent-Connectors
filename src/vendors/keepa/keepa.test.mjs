@@ -174,6 +174,90 @@ test('get_products with brief gives one short row per product; parents and missi
   ]);
 });
 
+// What offers=20, stock and historical_variations add to a product.
+const OFFER_ROWS = [
+  { sellerId: 'A1EXAMPLESELLER', condition: 'New', price: 18.49, shipping: 0, isFBA: true, isPrime: true, stock: 7 },
+  { sellerId: 'ATVPDKIKX0DER', condition: 'New', price: 19.99, shipping: 0, isAmazon: true, isFBA: true, isPrime: true, stock: 10 },
+  { sellerId: 'A3EXAMPLEUSED', condition: 'Used - Very Good', price: 12.99, shipping: 5.99, stock: 2 },
+];
+const STOCK = { amazon: 10, buyBox: 7, updated: '2026-11-21T10:55Z' };
+const HISTORICAL = { count: 3, asins: ['B0OLDVAR01', 'B0OLDVAR02', 'B0OLDVAR03'] };
+
+test('get_products lists what the paid options load: the live offers in Amazon\'s order, stock levels, the variations no longer listed', async () => {
+  const { module, fetch, ctx } = setup(fixture(import.meta.url, 'product-offers.json'));
+  const args = { marketplace: 'amazon.com', asins: ['B0OFFERS01'], offers: 20, stock: true, historical_variations: true };
+  const { payload, isError } = await callTool(module, 'get_products', args, ctx);
+  assert.equal(isError, false, JSON.stringify(payload));
+  assert.deepEqual(queryOf(fetch.calls[0]), { domain: '1', asin: 'B0OFFERS01', stats: '90', history: '0', offers: '20', stock: '1', 'historical-variations': '1' });
+  assert.equal(payload.tokens.used, 15);
+  const [summary] = payload.products;
+  // The live offers only, in liveOffersOrder: the offer Keepa saw last in August is gone from the page.
+  assert.deepEqual(summary.liveOffers, { count: 3, list: OFFER_ROWS });
+  assert.ok(!JSON.stringify(summary).includes('A2GONEEXAMPLE'));
+  assert.deepEqual(summary.stock, STOCK);
+  assert.deepEqual(summary.historicalVariations, HISTORICAL);
+  assert.deepEqual(summary.buyBox, { price: 18.49, shipping: 0, sellerId: 'A1EXAMPLESELLER', isFBA: true });
+  assert.equal(summary.offersNow, 4);
+  // offers also fills the FBA series.
+  assert.deepEqual(summary.stats.find((row) => row.series === 'NEW_FBA'), { series: 'NEW_FBA', label: 'New, lowest FBA', now: 18.49, avg30: 18.99, avg90: 19.5 });
+
+  const brief = await callTool(module, 'get_products', { ...args, brief: true }, ctx);
+  assert.deepEqual(brief.payload.products, [{
+    asin: 'B0OFFERS01',
+    title: 'Example Travel Mug, 16 oz, stainless steel, blue',
+    brand: 'Example Home',
+    newNow: 18.49,
+    amazonNow: 19.99,
+    salesRank: 5400,
+    boughtPastMonth: '300+',
+    stock: STOCK,
+    historicalVariations: HISTORICAL,
+    liveOffers: { count: 3, list: OFFER_ROWS },
+  }]);
+
+  // Without the paid options none of it appears (the product.json summary test checks every field).
+  const plainSetup = setup(product);
+  const plainResult = await callTool(plainSetup.module, 'get_products', { marketplace: 'amazon.de', asins: ['B0EXAMPLE1'], brief: true }, plainSetup.ctx);
+  for (const key of ['liveOffers', 'stock', 'historicalVariations']) assert.equal(key in plainResult.payload.products[0], false, key);
+});
+
+test('live offers and historical variations are capped per product: the offers asked for in full, 5 and 10 in a brief row, 10 in a history', async () => {
+  const [base] = fixture(import.meta.url, 'product-offers.json').products;
+  const offers = Array.from({ length: 30 }, (_, index) => ({ ...base.offers[2], offerId: index + 1, sellerId: `A${String(index).padStart(2, '0')}EXAMPLESELLER`, offerCSV: [8350000, 1800 + index, 0] }));
+  const wide = {
+    ...base,
+    offers,
+    liveOffersOrder: offers.map((_, index) => index),
+    historicalVariations: Array.from({ length: 25 }, (_, index) => `B0OLDVAR${String(index).padStart(2, '0')}`),
+  };
+  const { module, ctx } = setup({ ...fixture(import.meta.url, 'product-offers.json'), products: [wide] });
+
+  const full = await callTool(module, 'get_products', { marketplace: 'amazon.com', asins: ['B0OFFERS01'], offers: 20 }, ctx);
+  const [summary] = full.payload.products;
+  assert.equal(summary.liveOffers.count, 30);
+  assert.equal(summary.liveOffers.list.length, 20);
+  assert.deepEqual(summary.liveOffers.list[19], { sellerId: 'A19EXAMPLESELLER', condition: 'New', price: 18.19, shipping: 0, isFBA: true, isPrime: true, stock: 7 });
+  assert.equal(summary.historicalVariations.count, 25);
+  assert.equal(summary.historicalVariations.asins.length, 20);
+
+  const brief = await callTool(module, 'get_products', { marketplace: 'amazon.com', asins: ['B0OFFERS01'], offers: 20, brief: true }, ctx);
+  assert.equal(brief.payload.products[0].liveOffers.list.length, 5);
+  assert.equal(brief.payload.products[0].historicalVariations.asins.length, 10);
+
+  const history = await callTool(module, 'get_price_history', { marketplace: 'amazon.com', asin: 'B0OFFERS01', series: ['NEW_FBA'], offers: 20 }, ctx);
+  assert.equal(history.payload.product.liveOffers.list.length, 10);
+  assert.equal(history.payload.product.liveOffers.count, 30);
+
+  // When Keepa could not load fresh offers, the summary says so.
+  const failed = setup({ ...fixture(import.meta.url, 'product-offers.json'), products: [{ ...base, offers: [], liveOffersOrder: null, offersSuccessful: false }] });
+  const stale = await callTool(failed.module, 'get_products', { marketplace: 'amazon.com', asins: ['B0OFFERS01'], offers: 20 }, failed.ctx);
+  assert.deepEqual(stale.payload.products[0].liveOffers, {
+    count: 0,
+    list: [],
+    note: 'Keepa could not load fresh offers this time (it charged 1 token), so the offer data is the last it had.',
+  });
+});
+
 test('a get_products result over 32 KB is cut, and the cursor asks for the products left out', async () => {
   const [base] = product.products;
   const many = Array.from({ length: 40 }, (_, index) => ({ ...base, asin: `B0MANY${String(index).padStart(4, '0')}` }));
@@ -184,8 +268,48 @@ test('a get_products result over 32 KB is cut, and the cursor asks for the produ
   const shown = first.payload.products.length;
   assert.ok(shown > 5 && shown < 40, `${shown} shown`);
 
+  // The products left out, as many as fit one result: each one is charged again.
   await callTool(module, 'get_products', { marketplace: 'amazon.de', asins: ['B0EXAMPLE1'], cursor: first.payload.nextCursor }, ctx);
-  assert.equal(queryOf(fetch.calls[1]).asin, many.slice(shown).map((item) => item.asin).join(','));
+  assert.equal(queryOf(fetch.calls[1]).asin, many.slice(shown, shown * 2).map((item) => item.asin).join(','));
+});
+
+test('a code lookup that matched more than 100 products goes on with at most 100 ASINs per request', async () => {
+  const [base] = product.products;
+  for (const [count, brief] of [[150, false], [400, true]]) {
+    const many = Array.from({ length: count }, (_, index) => ({ ...base, asin: `B0CODE${String(index).padStart(4, '0')}` }));
+    const byAsin = new Map(many.map((item) => [item.asin, item]));
+    const { module, fetch, ctx } = setup((request) => jsonResponse(200, {
+      ...product,
+      products: request.query.code ? many : request.query.asin.split(',').map((asin) => byAsin.get(asin)),
+    }));
+    const args = { marketplace: 'amazon.de', codes: ['4000000000017'], code_limit: 100, ...(brief ? { brief } : {}) };
+    const seen = [];
+    const rounds = [];
+    let cursor;
+    for (let round = 0; round < 30; round += 1) {
+      const { payload, isError } = await callTool(module, 'get_products', { ...args, ...(cursor ? { cursor } : {}) }, ctx);
+      assert.equal(isError, false, JSON.stringify(payload).slice(0, 300));
+      seen.push(...payload.products.map((item) => item.asin));
+      rounds.push({ shown: payload.products.length, cut: payload.truncated === true });
+      cursor = payload.nextCursor;
+      if (!cursor) break;
+    }
+    // Every product once, in Keepa's order; the first request by code, the rest by ASIN.
+    assert.deepEqual(seen, many.map((item) => item.asin), `${count} products`);
+    assert.deepEqual(queryOf(fetch.calls[0]), { domain: '3', code: '4000000000017', stats: '90', history: '0', 'code-limit': '100' });
+    const asked = fetch.calls.map((request) => queryOf(request).asin?.split(',') ?? []);
+    assert.ok(asked.length >= 3, `${asked.length} requests`);
+    // A request after a cut result asks for as many as fit it; after a whole result, as many as that one asked
+    // for; never more than 100, the most one request may name.
+    for (let index = 1; index < asked.length; index += 1) {
+      const before = rounds[index - 1];
+      const left = count - rounds.slice(0, index).reduce((sum, round) => sum + round.shown, 0);
+      assert.equal(asked[index].length, Math.min(before.cut ? before.shown : asked[index - 1].length, 100, left), `request ${index}`);
+      assert.equal(queryOf(fetch.calls[index])['code-limit'], undefined);
+    }
+    if (brief) assert.ok(asked.filter((list) => list.length === 100).length >= 2, 'short rows go on 100 at a time');
+    else assert.ok(asked.slice(1).every((list) => list.length < 30), 'full summaries go on a page\'s worth at a time');
+  }
 });
 
 test('get_price_history: a daily table of the last 30 days, the value carried over days without a change', async () => {
@@ -312,27 +436,63 @@ test('get_best_sellers returns a slice of the ranked list with its size and upda
     nextOffset: 5,
   });
 
-  const rest = await callTool(module, 'get_best_sellers', { marketplace: 'amazon.com', category: 'Beauty', offset: 20, top: 10, range: 90, variations: true, sublist: true }, ctx);
-  assert.deepEqual(queryOf(fetch.calls[1]), { domain: '1', category: 'Beauty', range: '90', variations: '1', sublist: '1' });
+  const rest = await callTool(module, 'get_best_sellers', { marketplace: 'amazon.com', category: 'Beauty', offset: 20, top: 10, range: 90, variations: true }, ctx);
+  assert.deepEqual(queryOf(fetch.calls[1]), { domain: '1', category: 'Beauty', range: '90', variations: '1' });
   assert.deepEqual(rest.payload.asins, ['B0BEST0021', 'B0BEST0022', 'B0BEST0023', 'B0BEST0024', 'B0BEST0025']);
   assert.equal(rest.payload.nextOffset, undefined);
 
   await callTool(module, 'get_best_sellers', { marketplace: 'amazon.com', category: '172282', month: 6, year: 2026 }, ctx);
   assert.deepEqual(queryOf(fetch.calls[2]), { domain: '1', category: '172282', month: '6', year: '2026' });
+  await callTool(module, 'get_best_sellers', { marketplace: 'amazon.com', category: '13299291', sublist: true, variations: true }, ctx);
+  assert.deepEqual(queryOf(fetch.calls[3]), { domain: '1', category: '13299291', variations: '1', sublist: '1' });
 
   for (const [args, message] of [
     [{ marketplace: 'amazon.com', category: '172282', month: 6 }, /Give month and year together/],
     [{ marketplace: 'amazon.com', category: '172282', month: 6, year: 2026, range: 30 }, /Give range or a month, not both/],
     [{ marketplace: 'amazon.com', category: '172282', range: 60 }, /`range` must be one of 30, 90, 180/],
+    // Keepa takes sublist with none of range, month and year.
+    [{ marketplace: 'amazon.com', category: '172282', sublist: true, range: 90 }, /^Keepa takes sublist without range, month and year: .*Nothing was sent to Keepa\.$/],
+    [{ marketplace: 'amazon.com', category: '172282', sublist: true, month: 6, year: 2026 }, /^Keepa takes sublist without range, month and year/],
   ]) {
     assert.match((await callTool(module, 'get_best_sellers', args, ctx)).payload.error, message);
   }
-  assert.equal(fetch.calls.length, 3);
+  assert.equal(fetch.calls.length, 4);
+});
 
-  const empty = setup({ ...fixture(import.meta.url, 'token.json') });
-  const none = await callTool(empty.module, 'get_best_sellers', { marketplace: 'amazon.it', category: '999' }, empty.ctx);
+test('get_best_sellers says whether Keepa has no list (free) or an empty one (charged)', async () => {
+  const missing = setup({ ...fixture(import.meta.url, 'token.json') });
+  const none = await callTool(missing.module, 'get_best_sellers', { marketplace: 'amazon.it', category: '999' }, missing.ctx);
   assert.deepEqual(none.payload.asins, []);
-  assert.match(none.payload.note, /Keepa has no best sellers list for that category on this marketplace/);
+  assert.equal(none.payload.tokens.used, 0);
+  assert.equal(none.payload.note, 'Keepa has no best sellers list for that category on this marketplace (no tokens were used for it).');
+
+  const emptyList = { domainId: 8, lastUpdate: 8356920, categoryId: 999, asinList: [] };
+  const empty = setup({ ...fixture(import.meta.url, 'token.json'), tokensConsumed: 50, bestSellersList: emptyList });
+  const charged = await callTool(empty.module, 'get_best_sellers', { marketplace: 'amazon.it', category: '999' }, empty.ctx);
+  assert.deepEqual(charged.payload.asins, []);
+  assert.equal(charged.payload.tokens.used, 50);
+  assert.equal(charged.payload.note, 'Keepa\'s best sellers list for that category on this marketplace is empty; the call still used its 50 tokens.');
+  assert.ok(!/no tokens/.test(charged.payload.note));
+});
+
+test('get_best_sellers reads a root category list of hundreds of thousands of ASINs, over 4 MiB, up to 8 MiB', async () => {
+  // A root category or product group list holds up to 500,000 ASINs: 13 bytes each in the JSON.
+  const asinList = Array.from({ length: 400_000 }, (_, index) => `B0${String(index).padStart(8, '0')}`);
+  const reply = JSON.stringify({ ...fixture(import.meta.url, 'token.json'), tokensConsumed: 50, bestSellersList: { domainId: 1, lastUpdate: 8356920, categoryId: 172282, asinList } });
+  assert.ok(reply.length > 4 * 1024 * 1024, `the reply is ${reply.length} bytes`);
+  const { module, ctx } = setup(() => textResponse(200, reply, { 'content-type': 'application/json' }));
+  const { payload, isError } = await callTool(module, 'get_best_sellers', { marketplace: 'amazon.com', category: '172282', offset: 399_990, top: 20 }, ctx);
+  assert.equal(isError, false, JSON.stringify(payload).slice(0, 300));
+  assert.equal(payload.total, 400_000);
+  assert.deepEqual(payload.asins, asinList.slice(399_990));
+  assert.equal(payload.nextOffset, undefined);
+
+  // Past 8 MiB the reply is not read, and the error says why.
+  const huge = `{"bestSellersList":{"asinList":[${'"B000000000",'.repeat(650_000)}"B000000001"]}}`;
+  const over = setup(() => textResponse(200, huge, { 'content-type': 'application/json' }));
+  const tooLarge = await callTool(over.module, 'get_best_sellers', { marketplace: 'amazon.com', category: '172282' }, over.ctx);
+  assert.equal(tooLarge.isError, true);
+  assert.match(tooLarge.payload.error, /^Keepa answered HTTP 200, but the reply could not be read \(the reply is larger than 8,388,608 bytes\)\./);
 });
 
 test('search_categories and get_categories list categories largest first, with their paths', async () => {
@@ -382,6 +542,32 @@ test('find_products sends the filters as selection JSON and returns the ASINs wi
   const empty = await callTool(module, 'find_products', { marketplace: 'amazon.com', selection: { perPage: 50 } }, ctx);
   assert.match(empty.payload.error, /selection needs at least one filter/);
   assert.equal(fetch.calls.length, 2);
+});
+
+test('find_products keeps a page within one result and within the first 10,000 results, before spending tokens', async () => {
+  const { module, fetch, ctx } = setup(fixture(import.meta.url, 'finder.json'));
+  const filters = { rootCategory: [172282] };
+  for (const [args, message] of [
+    // perPage inside selection counts like per_page.
+    [{ selection: { ...filters, perPage: 5000 } }, /^A page of more than 2,000 ASINs does not fit in one result: use per_page up to 2,000 and page for the next ones\. Nothing was sent to Keepa\.$/],
+    [{ selection: { ...filters, perPage: '100' } }, /^perPage must be a whole number from 50 to 2,000\. Nothing was sent to Keepa\.$/],
+    [{ selection: { ...filters, perPage: 20 } }, /^perPage must be a whole number from 50 to 2,000/],
+    [{ selection: filters, page: 5, per_page: 2000 }, /^Keepa's product finder reaches only the first 10,000 results, and page 5 with 2000 per page goes past them\. .*Nothing was sent to Keepa\.$/],
+    [{ selection: { ...filters, page: 200 } }, /reaches only the first 10,000 results, and page 200 with 50 per page goes past them/],
+    [{ selection: { ...filters, page: -1 } }, /^page must be a whole number from 0\. Nothing was sent to Keepa\.$/],
+    [{ selection: filters, page: 200 }, /`page` must be at most 199/],
+  ]) {
+    const { payload, isError } = await callTool(module, 'find_products', { marketplace: 'amazon.com', ...args }, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, message);
+  }
+  assert.equal(fetch.calls.length, 0);
+
+  // The last pages within 10,000 results go out.
+  await callTool(module, 'find_products', { marketplace: 'amazon.com', selection: { ...filters, perPage: 2000, page: 4 } }, ctx);
+  assert.deepEqual(JSON.parse(queryOf(fetch.calls[0]).selection), { ...filters, perPage: 2000, page: 4 });
+  await callTool(module, 'find_products', { marketplace: 'amazon.com', selection: filters, page: 199 }, ctx);
+  assert.deepEqual(JSON.parse(queryOf(fetch.calls[1]).selection), { ...filters, page: 199 });
 });
 
 test('api_get reaches the rest of the API with the key, but never /tracking', async () => {

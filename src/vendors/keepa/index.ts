@@ -28,6 +28,21 @@ const ORIGIN = 'https://api.keepa.com';
 const KEY_PATTERN = /^[A-Za-z0-9]{64}$/;
 /** The most rows a history call returns, over all its series. */
 const MAX_HISTORY_ROWS = 250;
+/** The most ASINs or codes one product request may name. */
+const MAX_PRODUCTS_PER_REQUEST = 100;
+/** How many live offers a history call's product summary lists. */
+const HISTORY_OFFERS = 10;
+/**
+ * A best sellers list of a root category or a product group holds up to
+ * 500,000 ASINs, about 6.5 MB of JSON once unpacked: more than the default
+ * reply limit, so that call reads up to 8 MiB.
+ */
+const BESTSELLERS_MAX_BYTES = 8 * 1024 * 1024;
+/** The product finder's page size: Keepa's minimum and default, and the most one result holds. */
+const FINDER_DEFAULT_PER_PAGE = 50;
+const FINDER_MAX_PER_PAGE = 2000;
+/** Keepa's product finder reaches only the first 10,000 results of a query. */
+const FINDER_MAX_RESULTS = 10_000;
 
 const ERRORS = {
   400: 'Keepa refused a parameter of this call',
@@ -49,12 +64,15 @@ const UPDATE: JsonSchema = {
   maximum: 1_000_000,
   description: 'Refresh a product whose Keepa data is older than this many hours (Keepa\'s default 1). 0 forces a refresh and costs 1 more token per product.',
 };
-const OFFERS: JsonSchema = {
-  type: 'integer',
-  minimum: 20,
-  maximum: 100,
-  description: 'Paid: also load up to this many live offers (20 to 100), with the Buy Box history and the FBA, FBM, Warehouse, rating and review series. Costs 6 tokens per 10 offers found instead of 1, and takes 2 to 20 seconds. Only when asked for.',
-};
+/** The offers option; `listed` says which of the live offers the result lists. */
+function offersOption(listed: string): JsonSchema {
+  return {
+    type: 'integer',
+    minimum: 20,
+    maximum: 100,
+    description: `Paid: also load up to this many live offers (20 to 100), with the Buy Box history and the FBA, FBM, Warehouse, rating and review series. ${listed} Costs 6 tokens per 10 offers found instead of 1, and takes 2 to 20 seconds. Only when asked for.`,
+  };
+}
 const BUYBOX: JsonSchema = { type: 'boolean', description: 'Paid: also load the Buy Box price history and statistics (2 more tokens per product). Only when asked for.' };
 const RATING: JsonSchema = { type: 'boolean', description: 'Paid: also load the rating and review count history (up to 1 more token per product). Only when asked for.' };
 const CURSOR: JsonSchema = { type: 'string', description: 'nextCursor from the previous result.' };
@@ -114,8 +132,8 @@ async function keepaRequest(h: ToolHelpers, request: ApiRequest): Promise<ApiRes
   }
 }
 
-async function keepaGet(h: ToolHelpers, path: string, query: ApiRequest['query']): Promise<Record<string, any>> {
-  const { data } = await keepaRequest(h, { origin: ORIGIN, path, query });
+async function keepaGet(h: ToolHelpers, path: string, query: ApiRequest['query'], maxBytes?: number): Promise<Record<string, any>> {
+  const { data } = await keepaRequest(h, { origin: ORIGIN, path, query, ...(maxBytes !== undefined ? { maxBytes } : {}) });
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     throw new ToolFailure('Keepa sent a reply that is not JSON (a compressed reply the host did not unpack, or an error page). Try again later.');
   }
@@ -170,9 +188,10 @@ const getProducts: ToolDefinition = {
     'Up to 100 products by ASIN, or by UPC, EAN or ISBN-13 code: what each is (title, brand, category, Amazon\'s bought-in-past-month '
     + 'bracket), then per series (Amazon, Buy Box, lowest New, FBA, FBM, Used, Warehouse, list price, sales rank, offer count, rating, '
     + 'reviews) the value now, the 30 and 90 day averages, the lowest and highest in the range and the lowest ever, with sales rank drops '
-    + 'and the Buy Box now. Prices in the marketplace currency. 1 token per product, plus the paid options. With brief, one short row '
-    + 'per product. A result over 32 KB is cut, and nextCursor loads the rest again (charged again): ask for about 20 products '
-    + 'per call with full summaries.',
+    + 'and the Buy Box now; plus what a paid option adds: the live offers, stock levels, the variations no longer listed. Prices in the '
+    + 'marketplace currency. 1 token per product, plus the paid options. With brief, one short row per product. A result over 32 KB is '
+    + 'cut, and nextCursor loads the products left out, as many per call as fit (charged again): ask for about 15 products per call with '
+    + 'full summaries, a few with offers.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -191,12 +210,23 @@ const getProducts: ToolDefinition = {
       stats_from: { ...DATE, description: 'Instead of stats_days: the first day of the range, YYYY-MM-DD (with stats_to).' },
       stats_to: { ...DATE, description: 'The last day of the range, YYYY-MM-DD (with stats_from).' },
       update_hours: UPDATE,
-      offers: OFFERS,
+      offers: offersOption('Each product lists its live offers in Amazon\'s order: seller, condition, price, shipping, FBA and Prime, and each offer\'s stock with stock.'),
       buybox: BUYBOX,
-      stock: { type: 'boolean', description: 'Paid: also load stock levels (2 more tokens per product when Keepa has them). Only when asked for.' },
+      stock: {
+        type: 'boolean',
+        description: 'Paid: also load stock levels: the stock of Amazon\'s offer and of the Buy Box offer, and with offers each live offer\'s '
+          + '(usually the first 10). 2 more tokens per product when Keepa has stock data from the last 7 days. Only when asked for.',
+      },
       rating: RATING,
-      historical_variations: { type: 'boolean', description: 'Paid: also list variations that are no longer listed (1 more token per product with a parent). Only when asked for.' },
-      brief: { type: 'boolean', description: 'One short row per product (title, brand, New and Amazon price now, sales rank) instead of the full summary.' },
+      historical_variations: {
+        type: 'boolean',
+        description: 'Paid: also list the variation ASINs that are no longer listed or out of stock (1 more token per product with a parent). Only when asked for.',
+      },
+      brief: {
+        type: 'boolean',
+        description: 'One short row per product (title, brand, New and Amazon price now, sales rank; with the paid options, their stock levels, '
+          + 'the first 10 variations no longer listed and the first 5 live offers) instead of the full summary.',
+      },
       cursor: CURSOR,
     },
     required: ['marketplace'],
@@ -207,9 +237,16 @@ const getProducts: ToolDefinition = {
     const state = h.cursor(args.cursor);
     let field: 'asin' | 'code';
     let ids: string[];
+    // ASINs still to load after this call: a code lookup can match more than one request may name.
+    let pending: string[] = [];
     if (typeof state?.['a'] === 'string') {
-      // The products a cut result left out, by ASIN.
-      [field, ids] = ['asin', state['a'].split(',').filter(Boolean)];
+      // The products a cut result left out, by ASIN: as many as fit the last result (each one is
+      // charged again), and never more than one request may name.
+      const left = state['a'].split(',').filter(Boolean);
+      const fit = typeof state['n'] === 'number' && Number.isInteger(state['n']) && state['n'] >= 1 ? state['n'] : MAX_PRODUCTS_PER_REQUEST;
+      const batch = Math.min(fit, MAX_PRODUCTS_PER_REQUEST);
+      [field, ids] = ['asin', left.slice(0, batch)];
+      pending = left.slice(batch);
     } else if (args.asins && args.codes) {
       throw new ToolFailure('Give asins or codes, not both. Nothing was sent to Keepa.');
     } else if (args.asins) {
@@ -241,11 +278,15 @@ const getProducts: ToolDefinition = {
     });
     const products: Array<Record<string, any>> = Array.isArray(data['products']) ? data['products'] : [];
     const nowMs = typeof data['timestamp'] === 'number' ? data['timestamp'] : Date.now();
+    const asinsFrom = (index: number): string[] => products.slice(index).map((product) => product['asin']).filter((asin): asin is string => typeof asin === 'string');
     return h.page({
       key: 'products',
-      items: products.map((product) => (args.brief ? briefProduct(product) : summarizeProduct(product, nowMs, range))),
+      // A full summary lists every live offer the call loaded: Keepa loads at most 100, which fit one result.
+      items: products.map((product) => (args.brief ? briefProduct(product) : summarizeProduct(product, nowMs, range, args.offers ?? 0))),
       extra: { marketplace: market.site, currency: market.currency, ...common(data) },
-      resumeAt: (index) => h.makeCursor({ a: products.slice(index).map((product) => product['asin']).filter((asin) => typeof asin === 'string').join(',') }),
+      // `n`, the size of the next request: how many products fit this result, or all it asked for.
+      resumeAt: (index) => h.makeCursor({ a: [...asinsFrom(index), ...pending].join(','), n: index }),
+      ...(pending.length ? { nextPage: h.makeCursor({ a: pending.join(','), n: ids.length }) } : {}),
     });
   },
 };
@@ -291,7 +332,7 @@ const getPriceHistory: ToolDefinition = {
       step: { type: 'integer', minimum: 1, maximum: 365, description: 'Days per row: 1 for days, 7 for weeks, 30 for months. Default: 1 up to 31 days, 7 up to 186, else 30.' },
       buybox: BUYBOX,
       rating: RATING,
-      offers: OFFERS,
+      offers: offersOption(`The product summary lists the first ${HISTORY_OFFERS} live offers in Amazon's order.`),
       update_hours: UPDATE,
     },
     required: ['marketplace', 'asin'],
@@ -325,7 +366,7 @@ const getPriceHistory: ToolDefinition = {
     const nowMs = typeof data['timestamp'] === 'number' ? data['timestamp'] : Date.now();
     return {
       ...common(data),
-      product: summarizeProduct(product, nowMs, { days: args.days }),
+      product: summarizeProduct(product, nowMs, { days: args.days }, HISTORY_OFFERS),
       history: args.series.map((name) => historyTable(product, SERIES_NAMES.indexOf(name as (typeof SERIES_NAMES)[number]), args.days, step, nowMs)),
     };
   },
@@ -390,8 +431,9 @@ const getBestSellers: ToolDefinition = {
   description:
     'The ranked ASINs of a category\'s best sellers list, best seller first: by the current sales rank, the average of the last 30, 90 '
     + 'or 180 days (range), or a past month (month and year, within the last 36 months, never the current one). Returns top ASINs '
-    + 'from offset with the list\'s size and when Keepa updated it. 50 tokens per list, nothing when Keepa has none. For titles and '
-    + 'prices, pass the ASINs to get_products with brief (1 token each).',
+    + 'from offset with the list\'s size and when Keepa updated it. A root category or product group list holds up to 500,000 ASINs, '
+    + 'a subcategory list up to 10,000. 50 tokens per list, an empty one too; nothing when Keepa has no list. For titles and prices, '
+    + 'pass the ASINs to get_products with brief (1 token each).',
   inputSchema: {
     type: 'object',
     properties: {
@@ -406,7 +448,7 @@ const getBestSellers: ToolDefinition = {
       month: { type: 'integer', minimum: 1, maximum: 12, description: 'The list of a past month (with year).' },
       year: { type: 'integer', minimum: 2000, maximum: 2100, description: 'The year of month.' },
       variations: { type: 'boolean', description: 'List every variation instead of one per parent.' },
-      sublist: { type: 'boolean', description: 'Rank by the subcategory sales rank instead of the main category\'s.' },
+      sublist: { type: 'boolean', description: 'Rank by the subcategory sales rank instead of the main category\'s. Not with range, month or year.' },
       offset: { type: 'integer', minimum: 0, default: 0, description: 'Skip this many entries (default 0): the next part of a long list. Each call loads the list again (50 tokens).' },
       top: { type: 'integer', minimum: 1, maximum: 2000, default: 20, description: 'How many ASINs to return, 1 to 2,000 (default 20).' },
     },
@@ -416,6 +458,9 @@ const getBestSellers: ToolDefinition = {
   async run(args: BestSellerArgs, h) {
     if ((args.month === undefined) !== (args.year === undefined)) throw new ToolFailure('Give month and year together. Nothing was sent to Keepa.');
     if (args.month !== undefined && args.range !== undefined) throw new ToolFailure('Give range or a month, not both. Nothing was sent to Keepa.');
+    if (args.sublist && (args.range !== undefined || args.month !== undefined)) {
+      throw new ToolFailure('Keepa takes sublist without range, month and year: ask for the subcategory ranking on its own. Nothing was sent to Keepa.');
+    }
     const market = marketOf(args.marketplace);
     const data = await keepaGet(h, '/bestsellers', {
       domain: market.id,
@@ -425,16 +470,19 @@ const getBestSellers: ToolDefinition = {
       year: args.year,
       variations: flag(args.variations),
       sublist: flag(args.sublist),
-    });
+    }, BESTSELLERS_MAX_BYTES);
     const list = typeof data['bestSellersList'] === 'object' && data['bestSellersList'] !== null ? data['bestSellersList'] : null;
     const asins: string[] = Array.isArray(list?.asinList) ? list.asinList.filter((asin: unknown) => typeof asin === 'string') : [];
     if (!asins.length) {
       return {
         marketplace: market.site,
-        category: args.category,
+        category: list?.categoryId ?? args.category,
         ...common(data),
         asins: [],
-        note: 'Keepa has no best sellers list for that category on this marketplace (no tokens were used for it).',
+        // Keepa charges for a list that exists but is empty, and nothing when there is no list.
+        note: list
+          ? 'Keepa\'s best sellers list for that category on this marketplace is empty; the call still used its 50 tokens.'
+          : 'Keepa has no best sellers list for that category on this marketplace (no tokens were used for it).',
       };
     }
     const end = Math.min(args.offset + args.top, asins.length);
@@ -531,7 +579,7 @@ const findProducts: ToolDefinition = {
         type: 'object',
         description: 'Keepa product finder filters, e.g. {"rootCategory":[172282],"current_SALES_lte":5000,"current_NEW_lte":2500}.',
       },
-      page: { type: 'integer', minimum: 0, maximum: 10000, description: 'The result page, from 0 (default 0).' },
+      page: { type: 'integer', minimum: 0, maximum: 199, description: 'The result page, from 0 (default 0). Keepa reaches only the first 10,000 results: (page + 1) × per_page at most 10,000.' },
       per_page: { type: 'integer', minimum: 50, maximum: 2000, description: 'ASINs per page, 50 to 2,000 (Keepa\'s default and minimum 50). More ASINs cost more tokens.' },
     },
     required: ['marketplace', 'selection'],
@@ -540,6 +588,22 @@ const findProducts: ToolDefinition = {
   async run(args: { marketplace: string; selection: Record<string, unknown>; page?: number; per_page?: number }, h) {
     const filters = Object.keys(args.selection).filter((key) => !['page', 'perPage', 'sort'].includes(key));
     if (!filters.length) throw new ToolFailure('selection needs at least one filter, such as rootCategory or current_SALES_lte. Nothing was sent to Keepa.');
+    // The page and its size, from the arguments or from inside selection: the ASINs of one page must fit one result.
+    const perPage = args.per_page ?? args.selection['perPage'] ?? FINDER_DEFAULT_PER_PAGE;
+    const page = args.page ?? args.selection['page'] ?? 0;
+    if (!Number.isInteger(perPage) || (perPage as number) < FINDER_DEFAULT_PER_PAGE) {
+      throw new ToolFailure('perPage must be a whole number from 50 to 2,000. Nothing was sent to Keepa.');
+    }
+    if ((perPage as number) > FINDER_MAX_PER_PAGE) {
+      throw new ToolFailure('A page of more than 2,000 ASINs does not fit in one result: use per_page up to 2,000 and page for the next ones. Nothing was sent to Keepa.');
+    }
+    if (!Number.isInteger(page) || (page as number) < 0) throw new ToolFailure('page must be a whole number from 0. Nothing was sent to Keepa.');
+    if (((page as number) + 1) * (perPage as number) > FINDER_MAX_RESULTS) {
+      throw new ToolFailure(
+        `Keepa's product finder reaches only the first 10,000 results, and page ${page} with ${perPage} per page goes past them. `
+          + 'Narrow the filters or sort differently instead. Nothing was sent to Keepa.',
+      );
+    }
     const market = marketOf(args.marketplace);
     const selection = {
       ...args.selection,
