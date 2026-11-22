@@ -1,0 +1,21 @@
+{
+  "isReshareDisabledByAuthor": false,
+  "createdAt": 1795100000000,
+  "lifecycleState": "PUBLISHED",
+  "lastModifiedAt": 1795100000500,
+  "visibility": "PUBLIC",
+  "publishedAt": 1795100000000,
+  "author": "urn:li:organization:12345678",
+  "id": "urn:li:ugcPost:7300000000000000003",
+  "distribution": { "feedDistribution": "MAIN_FEED", "thirdPartyDistributionChannels": [] },
+  "content": {
+    "multiImage": {
+      "images": [
+        { "taggedEntities": [], "id": "urn:li:image:C4E22AQGexampleA" },
+        { "taggedEntities": [], "id": "urn:li:image:C5522AQHexampleB" }
+      ]
+    }
+  },
+  "commentary": "Two photos from the event",
+  "lifecycleStateInfo": { "isEditedByAuthor": false }
+}
