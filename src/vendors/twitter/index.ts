@@ -9,11 +9,20 @@
 //   does.
 // - `xusername` (optional): the account's username, as the host wrote it
 //   after the sign-in. Only shown back.
+//
+// Hosts end a tool call after about a minute and drop a late result, so
+// waits for X to process a GIF or video end 35 seconds into the call, and a
+// thread starts no post after 45 seconds.
 
 import { apiTools, defineConnector, formatNumber, OutcomeUnknown, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
 import { base64, sniffMedia, VIDEO_MAX_BYTES } from './media.js';
 
 const SEGMENT_BYTES = 4 * 1024 * 1024;
+/** No wait for media processing goes on past this point of a call: hosts end a call after about a minute and drop a late result. */
+const PROCESSING_BUDGET_MS = 35_000;
+/** create_thread starts no post after this point of a call, so a thread is never cut off unseen. */
+const THREAD_POST_BUDGET_MS = 45_000;
+const MAX_WAIT_SECONDS = 30;
 const ID = '^[0-9]{1,19}$';
 const HTTPS_URL = { type: 'string' as const, format: 'uri' as const, pattern: '^https://', maxLength: 2000 };
 const TWEET_FIELDS = 'created_at,public_metrics,conversation_id,in_reply_to_user_id,referenced_tweets,attachments,author_id,note_tweet';
@@ -107,9 +116,10 @@ interface Uploaded {
 /**
  * Uploads one file from a public https URL with X's chunked upload: initialize,
  * append in 4 MB segments, finalize, then follow the processing of a GIF or a
- * video for up to `waitSeconds`. Nothing is posted.
+ * video for up to `waitSeconds`, and never past `deadline` (a time from
+ * Date.now()). Nothing is posted.
  */
-async function uploadMedia(h: ToolHelpers, url: string, what: string, waitSeconds: number, altText?: string): Promise<Uploaded> {
+async function uploadMedia(h: ToolHelpers, url: string, what: string, waitSeconds: number, deadline: number, altText?: string): Promise<Uploaded> {
   const { bytes } = await h.media(url, { what, maxBytes: VIDEO_MAX_BYTES, accept: 'image/jpeg,image/png,image/webp,image/gif,video/mp4,video/quicktime' });
   const kind = sniffMedia(bytes);
   if (!kind) throw new ToolFailure(`The ${what} URL did not return a JPEG, PNG, WebP or GIF image, or an MP4 or MOV video. Nothing was posted.`);
@@ -142,6 +152,7 @@ async function uploadMedia(h: ToolHelpers, url: string, what: string, waitSecond
   while (processing && processing.state !== 'succeeded' && processing.state !== 'failed' && waited < waitSeconds) {
     const after = typeof processing.check_after_secs === 'number' ? processing.check_after_secs : 5;
     const step = Math.min(Math.max(1, Math.min(10, after)), waitSeconds - waited);
+    if (Date.now() + step * 1000 > deadline) break;
     if (!(await pause(step * 1000, h.ctx.signal))) break;
     waited += step;
     const { data } = await h.api({ path: '/2/media/upload', query: { command: 'STATUS', media_id: mediaId } });
@@ -172,11 +183,28 @@ interface MediaArgs {
   media_ids?: string[];
 }
 
+/** A file this call uploaded, by the words that name it: "post 2 media 1". */
+interface Done {
+  what: string;
+  mediaId: string;
+}
+
+/** A failure during uploads that also names the media already uploaded, so it can be posted with media_ids instead of uploaded again. */
+function keepingUploads(error: unknown, done: Done[]): unknown {
+  if (!(error instanceof ToolFailure) || !done.length) return error;
+  return new ToolFailure(`${error.message.replace(/ Nothing was changed\.$/, ' Nothing was posted.')} ${uploadedList(done)}`, error.details);
+}
+
+function uploadedList(done: Done[]): string {
+  return `Already uploaded, usable with media_ids for a day: ${done.map((file) => `${file.what} (media_id ${file.mediaId})`).join(', ')}.`;
+}
+
 /**
  * The media ids of one post: uploads its URLs (each one processed and ready)
- * or takes its ids. `post` names the post in a thread, e.g. "post 2".
+ * or takes its ids, adding each upload to `done`. `post` names the post in a
+ * thread, e.g. "post 2".
  */
-async function mediaFor(h: ToolHelpers, args: MediaArgs, waitSeconds: number, post?: string): Promise<{ ids: string[]; uploaded: Uploaded[] }> {
+async function mediaFor(h: ToolHelpers, args: MediaArgs, waitSeconds: number, deadline: number, done: Done[], post?: string): Promise<{ ids: string[]; uploaded: Uploaded[] }> {
   const where = post ? ` for ${post}` : '';
   if (args.media_urls?.length && args.media_ids?.length) throw new ToolFailure(`Give media_urls or media_ids${where}, not both. Nothing was posted.`);
   if (args.media_alt_texts?.length && args.media_alt_texts.length > (args.media_urls?.length ?? 0)) {
@@ -187,7 +215,7 @@ async function mediaFor(h: ToolHelpers, args: MediaArgs, waitSeconds: number, po
   const many = args.media_urls.length > 1;
   for (const [index, url] of args.media_urls.entries()) {
     const what = `${post ? `${post} ` : ''}media${many ? ` ${index + 1}` : ''}`;
-    const file = await uploadMedia(h, url, what, waitSeconds, args.media_alt_texts?.[index] || undefined);
+    const file = await uploadMedia(h, url, what, waitSeconds, deadline, args.media_alt_texts?.[index] || undefined);
     if (file.state !== 'succeeded') {
       throw new ToolFailure(
         `The ${what} is still being processed by X (media_id ${file.mediaId}). Nothing was posted: check it with get_media_status, `
@@ -195,6 +223,7 @@ async function mediaFor(h: ToolHelpers, args: MediaArgs, waitSeconds: number, po
       );
     }
     uploaded.push(file);
+    done.push({ what, mediaId: file.mediaId });
   }
   return { ids: uploaded.map((file) => file.mediaId), uploaded };
 }
@@ -212,9 +241,11 @@ const TEXT_SCHEMA = {
 const WAIT_SCHEMA = {
   type: 'integer' as const,
   minimum: 0,
-  maximum: 180,
-  default: 60,
-  description: 'Seconds to wait for X to process a GIF or video before giving up (default 60).',
+  maximum: MAX_WAIT_SECONDS,
+  default: 20,
+  description:
+    `Seconds to wait for X to process a GIF or video (default 20, at most ${MAX_WAIT_SECONDS}); the wait also ends 35 seconds into the call. `
+    + 'A video often takes longer: upload it with upload_media, follow it with get_media_status, then post it with media_ids.',
 };
 
 interface PostArgs extends MediaArgs {
@@ -370,8 +401,9 @@ const connector = defineConnector({
       title: 'Upload media to X',
       description:
         'Uploads one image, GIF or video from a public https URL to X with the chunked upload and returns its media_id for create_post '
-        + 'or create_thread (media_ids). JPEG, PNG or WebP up to 5 MB, GIF up to 15 MB, MP4 or MOV video up to 512 MB. Waits for X to '
-        + 'process a GIF or video. Nothing is posted; an unused upload expires after a day.',
+        + 'or create_thread (media_ids). JPEG, PNG or WebP up to 5 MB, GIF up to 15 MB, MP4 or MOV video up to 512 MB. Waits a little for X '
+        + 'to process a GIF or video; one still processing comes back with ready: false, to follow with get_media_status. The way to post '
+        + 'a video. Nothing is posted; an unused upload expires after a day.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -383,11 +415,13 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { url: string; alt_text?: string; wait_seconds: number }, h) {
-        const file = await uploadMedia(h, args.url, 'media', args.wait_seconds, args.alt_text);
+        const file = await uploadMedia(h, args.url, 'media', args.wait_seconds, Date.now() + PROCESSING_BUDGET_MS, args.alt_text);
         return compact({
           ...file,
           ready: file.state === 'succeeded',
-          note: file.state === 'succeeded' ? undefined : 'X is still processing it: check get_media_status before posting with it.',
+          note: file.state === 'succeeded'
+            ? undefined
+            : `X is still processing it: check get_media_status with media_id ${file.mediaId} until it is ready, then post it with media_ids.${args.alt_text ? ' Its alt text was not added yet: add it with api_request (POST /2/media/metadata) once it is ready.' : ''}`,
         });
       },
     },
@@ -426,6 +460,7 @@ const connector = defineConnector({
       description:
         'Publishes a post on X right away: text, up to 4 images or one GIF or video (from public https URLs, uploaded first, or media_ids), '
         + 'or a poll; optionally as a reply to a post, quoting a post, with reply settings and AI or paid-partnership labels. '
+        + 'For a video, use upload_media first and post with media_ids once get_media_status says it is ready. '
         + 'Returns the post id and link. It is sent once, never retried; X refuses a duplicate of a recent post.',
       inputSchema: {
         type: 'object',
@@ -455,17 +490,30 @@ const connector = defineConnector({
         const hasMedia = Boolean(args.media_urls?.length || args.media_ids?.length);
         if (!args.text && !hasMedia) throw new ToolFailure('Give text, media, or both. Nothing was posted.');
         if (args.poll && hasMedia) throw new ToolFailure('A post has a poll or media, not both. Nothing was posted.');
-        const { ids, uploaded } = await mediaFor(h, args, args.wait_seconds);
-        const id = await createPost(h, compact({
-          text: args.text || undefined,
-          media: ids.length ? { media_ids: ids } : undefined,
-          reply: args.reply_to_post_id ? { in_reply_to_tweet_id: args.reply_to_post_id } : undefined,
-          quote_tweet_id: args.quote_post_id,
-          poll: args.poll,
-          reply_settings: args.reply_settings,
-          made_with_ai: args.made_with_ai,
-          paid_partnership: args.paid_partnership,
-        }));
+        const done: Done[] = [];
+        let media: { ids: string[]; uploaded: Uploaded[] };
+        try {
+          media = await mediaFor(h, args, args.wait_seconds, Date.now() + PROCESSING_BUDGET_MS, done);
+        } catch (error) {
+          throw keepingUploads(error, done);
+        }
+        const { ids, uploaded } = media;
+        let id: string;
+        try {
+          id = await createPost(h, compact({
+            text: args.text || undefined,
+            media: ids.length ? { media_ids: ids } : undefined,
+            reply: args.reply_to_post_id ? { in_reply_to_tweet_id: args.reply_to_post_id } : undefined,
+            quote_tweet_id: args.quote_post_id,
+            poll: args.poll,
+            reply_settings: args.reply_settings,
+            made_with_ai: args.made_with_ai,
+            paid_partnership: args.paid_partnership,
+          }));
+        } catch (error) {
+          // A refused post keeps its uploads: they can be posted with media_ids once the cause is fixed.
+          throw keepingUploads(error, done);
+        }
         return compact({
           id,
           url: postUrl(id),
@@ -482,8 +530,9 @@ const connector = defineConnector({
       title: 'Publish an X thread',
       description:
         'Publishes a thread on X: 2 to 25 posts, each with text and up to 4 images or one GIF or video, every post replying to the one '
-        + 'before (the first optionally replying to an existing post). All media is uploaded before anything is posted. Posts go out one '
-        + 'by one and are never retried: if one fails, the result names the posts already published.',
+        + 'before (the first optionally replying to an existing post). All media is uploaded before anything is posted; for videos, upload '
+        + 'them with upload_media first and give media_ids. Posts go out one by one and are never retried: if one fails, or the call runs '
+        + 'short of time, the result names the posts already published and how to go on.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -501,20 +550,42 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { posts: ThreadPost[]; reply_to_post_id?: string; wait_seconds: number }, h) {
+        const started = Date.now();
         args.posts.forEach((post, index) => {
           if (!post.text && !post.media_urls?.length && !post.media_ids?.length) {
             throw new ToolFailure(`Post ${index + 1} has no text and no media. Nothing was posted.`);
           }
         });
         const media: string[][] = [];
-        for (const [index, post] of args.posts.entries()) {
-          media.push((await mediaFor(h, post, args.wait_seconds, `post ${index + 1}`)).ids);
+        const done: Done[] = [];
+        try {
+          for (const [index, post] of args.posts.entries()) {
+            media.push((await mediaFor(h, post, args.wait_seconds, started + PROCESSING_BUDGET_MS, done, `post ${index + 1}`)).ids);
+          }
+        } catch (error) {
+          throw keepingUploads(error, done);
         }
 
         const posted: Array<{ id: string; url: string }> = [];
         let previous = args.reply_to_post_id;
+        /** The media uploaded for post index + 1 and the ones after it, for a thread that stops there. */
+        const reuseFrom = (index: number): string => {
+          const rest = done.filter((file) => Number(/^post (\d+)/.exec(file.what)?.[1]) > index);
+          return rest.length ? ` ${uploadedList(rest)}` : '';
+        };
         for (const [index, post] of args.posts.entries()) {
           const ids = media[index] ?? [];
+          if (Date.now() > started + THREAD_POST_BUDGET_MS) {
+            // Stop at a clear point: a host that ends the call would drop the list of published posts.
+            const reuse = reuseFrom(index);
+            if (!posted.length) {
+              throw new ToolFailure(`Uploading the media took most of the call, so nothing was posted. Call create_thread again with media_ids.${reuse}`);
+            }
+            throw new ToolFailure(
+              `Posts 1 to ${posted.length} of ${args.posts.length} were published (${posted.map((item) => item.id).join(', ')}). The call ran short of `
+                + `time, so post ${index + 1} and the rest were not sent: publish them with create_thread and reply_to_post_id ${previous}.${reuse}`,
+            );
+          }
           let id: string;
           try {
             id = await createPost(h, compact({
@@ -523,11 +594,15 @@ const connector = defineConnector({
               reply: previous ? { in_reply_to_tweet_id: previous } : undefined,
             }));
           } catch (error) {
-            if (!posted.length) throw error;
-            const done = `Posts 1 to ${posted.length} of ${args.posts.length} were published (${posted.map((item) => item.id).join(', ')}).`;
-            if (error instanceof OutcomeUnknown) throw new OutcomeUnknown(`${done} For post ${index + 1}: ${error.message}`);
+            const reuse = reuseFrom(index);
+            if (!posted.length) {
+              if (error instanceof OutcomeUnknown && reuse) throw new OutcomeUnknown(`${error.message}${reuse}`);
+              throw keepingUploads(error, done);
+            }
+            const published = `Posts 1 to ${posted.length} of ${args.posts.length} were published (${posted.map((item) => item.id).join(', ')}).`;
+            if (error instanceof OutcomeUnknown) throw new OutcomeUnknown(`${published} For post ${index + 1}: ${error.message}${reuse}`);
             if (error instanceof ToolFailure) {
-              throw new ToolFailure(`${done} Post ${index + 1} was not: ${error.message.replace(/ Nothing was changed\.$/, '')} The rest were not sent.`, error.details);
+              throw new ToolFailure(`${published} Post ${index + 1} was not: ${error.message.replace(/ Nothing was changed\.$/, '')} The rest were not sent.${reuse}`, error.details);
             }
             throw error;
           }

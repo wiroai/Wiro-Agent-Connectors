@@ -1,6 +1,8 @@
 # X connector (`twitter`)
 
-Publishes on [X](https://x.com) (formerly Twitter) through the X API v2: posts with text, up to 4 images or one GIF or video, polls, replies, quotes and threads, and deletes. Media comes from public https URLs and goes through X's v2 chunked upload (initialize, append in 4 MB segments, finalize), and the connector waits for X to process a GIF or video before it posts. It also reads the account, its posts and single posts, and reaches the rest of the API with `api_get` and `api_request`.
+Publishes on [X](https://x.com) (formerly Twitter) through the X API v2: posts with text, up to 4 images or one GIF or video, polls, replies, quotes and threads, and deletes. Media comes from public https URLs and goes through X's v2 chunked upload (initialize, append in 4 MB segments, finalize), and the connector waits a little for X to process a GIF or video before it posts. It also reads the account, its posts and single posts, and reaches the rest of the API with `api_get` and `api_request`.
+
+Hosts end a tool call after about a minute and drop a late result, so that wait lasts 20 seconds by default (`wait_seconds`, at most 30) and never goes past 35 seconds into the call. X often needs longer for a video: upload it with `upload_media`, follow it with `get_media_status`, then post it with `media_ids`. When an upload or post fails partway, the result names the media already uploaded, so it can be posted with `media_ids` instead of being uploaded again.
 
 ## Credentials
 
@@ -26,10 +28,10 @@ To revoke it, the account owner opens X → **Settings and privacy** → **Secur
 | `get_me` | read | The connected account: id, username, name, bio, follower, following and post counts, verification and X Premium subscription type. |
 | `list_my_posts` | read | The account's own posts, newest first, with link, text, time, counts and media; replies and reposts can be left out. Paged with a cursor. |
 | `get_post` | read | One post by its id, with its counts, the post it replies to or quotes, and its media. |
-| `upload_media` | create | Uploads one image, GIF or video from a public https URL with the chunked upload, adds alt text, waits for processing, and returns the `media_id` for later posts. Nothing is posted. |
+| `upload_media` | create | Uploads one image, GIF or video from a public https URL with the chunked upload, adds alt text, waits a little for processing, and returns the `media_id` for later posts (with `ready: false` while X is still processing it). Nothing is posted. The way to post a video. |
 | `get_media_status` | read | The processing state of an upload by its `media_id`. |
 | `create_post` | create | Publishes a post: text, up to 4 images or one GIF or video (by URL or `media_id`), or a poll; optionally a reply, a quote, reply settings and the AI and paid-partnership labels. Returns the post id and link. |
-| `create_thread` | create | Publishes 2 to 25 posts, each replying to the one before (the first optionally replying to an existing post). All media is uploaded first; if a post fails, the result names the posts already published. |
+| `create_thread` | create | Publishes 2 to 25 posts, each replying to the one before (the first optionally replying to an existing post). All media is uploaded first; if a post fails, or the call is 45 seconds in before the next post, the result names the posts already published and how to go on. |
 | `delete_post` | delete | Deletes one of the account's posts, for good. |
 | `api_get` | read | Any other GET under `/2/`, such as `/2/tweets/search/recent`. |
 | `api_request` | write | A POST, PUT or DELETE under `/2/`. Sent once, never retried. |
@@ -38,7 +40,7 @@ To revoke it, the account owner opens X → **Settings and privacy** → **Secur
 
 - Text: 280 characters (X counts a link as 23 and some characters as 2), or up to 25,000 on an X Premium account; X refuses a duplicate of a recent post.
 - Media: JPEG, PNG or WebP up to 5 MB, GIF up to 15 MB, MP4 or MOV video up to 512 MB, and within the host's own download limit (25 MiB in the CLI). Media uploads need the `media.write` scope: a token granted without it can post text but not media.
-- A GIF or video still processing after `wait_seconds` (default 60) is not posted: check it with `get_media_status`, then post with `media_ids`.
+- A GIF or video still processing after `wait_seconds` (default 20, at most 30, and never past 35 seconds into the call) is not posted: check it with `get_media_status`, then post with `media_ids`. `create_thread` starts no post later than 45 seconds into the call.
 - What each call may do depends on the app's X API plan, which sets its rate limits and monthly caps; a 429 comes back as a rate limit error.
 - Writes are never retried: a post, thread post or delete whose outcome is unclear comes back as unknown, with `list_my_posts` (or `get_post`) to check.
 

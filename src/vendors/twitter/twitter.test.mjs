@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bytesResponse, callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, textResponse } from '../../../tests/helpers.mjs';
+import { bytesResponse, callTool, controlClock, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, textResponse } from '../../../tests/helpers.mjs';
 
 const TOKEN = 'eXampleXUserAccessToken123';
 const credentials = { access_token: TOKEN, xusername: '@acme' };
@@ -25,10 +25,15 @@ function mp4(size) {
 
 function setup(handler, { creds = credentials, signal } = {}) {
   const { module, context } = loadModuleFor(import.meta.url);
-  context.setTimeout = (callback) => setTimeout(callback, 0);
+  // Waits run at once in tests, and the module's clock moves on by the time each wait asked for.
+  const advance = controlClock(context);
+  context.setTimeout = (callback, ms) => {
+    advance(ms ?? 0);
+    return setTimeout(callback, 0);
+  };
   const fetch = fakeFetch(handler);
   const { ctx, logs } = makeContext({ credentials: creds, fetch, signal });
-  return { module, fetch, ctx, logs };
+  return { module, fetch, ctx, logs, advance };
 }
 
 /** An X that answers by path; `statuses` are the STATUS replies in turn, the last one repeating. */
@@ -190,6 +195,80 @@ test('media X cannot process, or that is still processing, posts nothing', async
 
   const status = await callTool(slow.module, 'get_media_status', { media_id: MEDIA_ID }, slow.ctx);
   assert.deepEqual(status.payload, { mediaId: MEDIA_ID, mediaKey: '7_1880028106020515840', state: 'in_progress', ready: false, progressPercent: 40, checkAfterSecs: 2 });
+});
+
+test('waits for processing end 35 seconds into the call, and the media_id comes back to post with later', async () => {
+  // The download takes 30 seconds; X asks to check every 2 seconds: reads at 32 and 34 seconds, then the wait ends.
+  const slow = setup(x({
+    finalize: finalizeVideo,
+    statuses: [progress],
+    overrides: {
+      'GET https://media.example.com/clip.mp4': () => {
+        slow.advance(30_000);
+        return bytesResponse(200, mp4(1000), { 'content-type': 'video/mp4' });
+      },
+    },
+  }));
+  const uploaded = await callTool(slow.module, 'upload_media', { url: 'https://media.example.com/clip.mp4', alt_text: 'A demo', wait_seconds: 30 }, slow.ctx);
+  assert.equal(uploaded.isError, false, uploaded.payload.error);
+  assert.equal(slow.fetch.calls.filter((call) => call.path === '/2/media/upload').length, 2);
+  assert.equal(uploaded.payload.ready, false);
+  assert.equal(uploaded.payload.mediaId, MEDIA_ID);
+  assert.match(uploaded.payload.note, /check get_media_status with media_id 1880028106020515840 until it is ready, then post it with media_ids\. Its alt text was not added yet/);
+  assert.equal(slow.fetch.calls.some((call) => call.path === '/2/media/metadata'), false);
+
+  const tooLong = await callTool(slow.module, 'upload_media', { url: 'https://media.example.com/clip.mp4', wait_seconds: 31 }, slow.ctx);
+  assert.match(tooLong.payload.error, /wait_seconds/, 'waits are capped at 30 seconds');
+});
+
+test('media uploaded before a failure is named, so it can be posted with media_ids', async () => {
+  const { module, fetch, ctx } = setup(x({ files: { '/a.png': PNG }, overrides: { 'GET https://media.example.com/gone.png': () => new Response(null, { status: 404 }) } }));
+  const thread = await callTool(module, 'create_thread', {
+    posts: [{ text: '1', media_urls: ['https://media.example.com/a.png'] }, { text: '2', media_urls: ['https://media.example.com/a.png', 'https://media.example.com/gone.png'] }],
+  }, ctx);
+  assert.equal(thread.isError, true);
+  assert.match(thread.payload.error, /^The post 2 media 2 URL answered HTTP 404\. Nothing was posted\. Already uploaded, usable with media_ids for a day: post 1 media \(media_id 1880028106020515840\), post 2 media 1 \(media_id 1880028106020515840\)\.$/);
+  assert.equal(fetch.calls.some((call) => call.path === '/2/tweets'), false);
+
+  // A refused post keeps its uploads too, in a thread (the posts not sent yet) and on its own.
+  let count = 0;
+  const refusing = setup(x({ files: { '/a.png': PNG }, overrides: { 'POST https://api.x.com/2/tweets': () => (++count === 2 ? jsonResponse(403, fixture(import.meta.url, 'error-403-duplicate.json')) : jsonResponse(201, created)) } }));
+  const broken = await callTool(refusing.module, 'create_thread', { posts: [{ text: '1', media_urls: ['https://media.example.com/a.png'] }, { text: '2', media_urls: ['https://media.example.com/a.png'] }] }, refusing.ctx);
+  assert.match(broken.payload.error, /Post 2 was not: X refused the request \(HTTP 403\).* The rest were not sent\. Already uploaded, usable with media_ids for a day: post 2 media \(media_id 1880028106020515840\)\.$/);
+  const duplicate = setup(x({ files: { '/a.png': PNG }, overrides: { 'POST https://api.x.com/2/tweets': () => jsonResponse(403, fixture(import.meta.url, 'error-403-duplicate.json')) } }));
+  const single = await callTool(duplicate.module, 'create_post', { text: 'x', media_urls: ['https://media.example.com/a.png'] }, duplicate.ctx);
+  assert.match(single.payload.error, /^X refused the request \(HTTP 403\): You are not allowed to create a Tweet with duplicate content\. Nothing was posted\. Already uploaded, usable with media_ids for a day: media \(media_id 1880028106020515840\)\.$/);
+});
+
+test('a thread starts no post after 45 seconds into the call, and says how to go on', async () => {
+  // Uploading took 46 seconds: nothing is posted, and the uploads can be reused.
+  const late = setup(x({
+    files: { '/a.png': PNG },
+    overrides: {
+      [`POST https://api.x.com/2/media/upload/${MEDIA_ID}/finalize`]: () => {
+        late.advance(46_000);
+        return jsonResponse(200, finalizeImage);
+      },
+    },
+  }));
+  const none = await callTool(late.module, 'create_thread', { posts: [{ text: '1', media_urls: ['https://media.example.com/a.png'] }, { text: '2' }] }, late.ctx);
+  assert.equal(none.isError, true);
+  assert.equal(none.payload.error, 'Uploading the media took most of the call, so nothing was posted. Call create_thread again with media_ids. Already uploaded, usable with media_ids for a day: post 1 media (media_id 1880028106020515840).');
+  assert.equal(late.fetch.calls.some((call) => call.path === '/2/tweets'), false);
+
+  // The first post took until 46 seconds: the thread stops there and names what to do next.
+  const cut = setup(x({
+    overrides: {
+      'POST https://api.x.com/2/tweets': () => {
+        cut.advance(46_000);
+        return jsonResponse(201, created);
+      },
+    },
+  }));
+  const partial = await callTool(cut.module, 'create_thread', { posts: [{ text: '1' }, { text: '2' }, { text: '3' }] }, cut.ctx);
+  assert.equal(partial.isError, true);
+  assert.equal(partial.payload.error, 'Posts 1 to 1 of 3 were published (1890000000000000009). The call ran short of time, so post 2 and the rest were not sent: publish them with create_thread and reply_to_post_id 1890000000000000009.');
+  assert.equal(cut.fetch.calls.length, 1);
 });
 
 test('files X does not take are refused before any upload', async () => {
