@@ -1,0 +1,11 @@
+{
+  "all": {
+    "daily_metrics": [
+      { "data_status": "READY", "date": "2026-11-19", "metrics": { "IMPRESSION": 120, "SAVE": 10, "PIN_CLICK": 20, "OUTBOUND_CLICK": 9, "SAVE_RATE": 0.0833 } },
+      { "data_status": "READY", "date": "2026-11-20", "metrics": { "IMPRESSION": 80, "SAVE": 6, "PIN_CLICK": 12, "OUTBOUND_CLICK": 4, "SAVE_RATE": 0.075 } },
+      { "data_status": "PROCESSING", "date": "2026-11-21", "metrics": {} }
+    ],
+    "lifetime_metrics": { "TOTAL_COMMENTS": 2, "TOTAL_REACTIONS": 10 },
+    "summary_metrics": { "IMPRESSION": 200, "SAVE": 16, "PIN_CLICK": 32, "OUTBOUND_CLICK": 13, "SAVE_RATE": 0.08 }
+  }
+}

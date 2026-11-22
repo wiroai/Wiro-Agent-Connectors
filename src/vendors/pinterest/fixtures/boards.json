@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "id": "549755885175", "created_at": "2025-03-01T10:00:00", "board_pins_modified_at": "2026-11-20T09:00:00", "name": "Recipes", "description": "Summer recipes", "collaborator_count": 0, "pin_count": 30, "follower_count": 12, "media": { "image_cover_url": "https://i.pinimg.com/400x300/aa/cover.jpg", "pin_thumbnail_urls": [] }, "owner": { "username": "acmestudio" }, "privacy": "PUBLIC" },
+    { "id": "549755885176", "created_at": "2025-04-02T10:00:00", "name": "Spring collection", "description": "", "pin_count": 12, "follower_count": 3, "owner": { "username": "acmestudio" }, "privacy": "PUBLIC" }
+  ],
+  "bookmark": "Ym9va21hcmstYm9hcmRzLTI="
+}

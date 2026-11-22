@@ -1,0 +1,9 @@
+{
+  "all": {
+    "daily_metrics": [
+      { "data_status": "READY", "date": "2026-11-20", "metrics": { "IMPRESSION": 1500, "SAVE": 40, "PIN_CLICK": 90, "OUTBOUND_CLICK": 30, "ENGAGEMENT": 160 } },
+      { "data_status": "BEFORE_BUSINESS_CREATED", "date": "2026-11-21" }
+    ],
+    "summary_metrics": { "IMPRESSION": 1500, "SAVE": 40, "PIN_CLICK": 90, "OUTBOUND_CLICK": 30, "ENGAGEMENT": 160 }
+  }
+}

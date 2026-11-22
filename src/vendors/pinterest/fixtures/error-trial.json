@@ -1,0 +1,1 @@
+{ "code": 29, "message": "You have reached the limit of what Apps with Trial access may do in production. Apps with Trial access may not create Pins in production, please use API Sandbox." }
