@@ -1,0 +1,14 @@
+{
+  "locations": [
+    {
+      "name": "locations/9101",
+      "title": "Corner Bakery",
+      "openInfo": {
+        "status": "OPEN"
+      },
+      "metadata": {
+        "placeId": "ChIJexample3"
+      }
+    }
+  ]
+}

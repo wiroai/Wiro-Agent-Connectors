@@ -1,0 +1,4 @@
+{
+  "read": { "tool": "list_accounts", "args": {} },
+  "note": "No write step: every write of this connector answers a real customer's review in public."
+}
