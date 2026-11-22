@@ -1,10 +1,10 @@
 // dev.to (DEV Community), through the Forem API v1 (https://developers.forem.com/api/v1).
 //
-// Credential: `api_key`, a DEV Community API key from dev.to Settings ->
+// Credential: `apikey`, a DEV Community API key from dev.to Settings ->
 // Extensions -> "DEV Community API Keys". It is sent in the api-key header to
 // https://dev.to/api/ only. dev.to's API cannot delete articles.
 
-import { apiTools, defineConnector, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, jsonSize, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
 
 const DISCLOSURE_LEVELS = ['fully_autonomous', 'some_ai', 'no_ai'] as const;
 const DISCLOSURE_HELP =
@@ -12,6 +12,12 @@ const DISCLOSURE_HELP =
   + 'some_ai when a person wrote it and AI helped with drafting, editing, code or translation, no_ai only when a person wrote it with no AI help.';
 
 const TAG_SCHEMA = { type: 'string' as const, pattern: '^[A-Za-z0-9]{1,30}$', description: 'Letters and digits only, up to 30.' };
+const DATE_SCHEMA = { type: 'string' as const, pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
+
+/** The most JSON bytes of an article body one get_article result carries; the rest follows with the cursor. */
+const BODY_PART_BYTES = 20_000;
+/** Drafts are looked up 100 at a time, at most this many pages. */
+const MAX_DRAFT_PAGES = 10;
 
 const ARTICLE_FIELDS = {
   title: { type: 'string' as const, minLength: 1, maxLength: 128, description: 'The article title, up to 128 characters.' },
@@ -145,14 +151,86 @@ async function saveArticle(h: ToolHelpers, method: 'POST' | 'PUT', path: string,
   }
 }
 
+/**
+ * An article with its Markdown body: a published article by id, else one of
+ * the account's drafts (dev.to serves drafts only in the account's own lists).
+ */
+async function findArticle(h: ToolHelpers, id: number): Promise<any> {
+  try {
+    const { data } = await h.api({ path: `/api/articles/${id}` });
+    if (data && typeof data === 'object' && !Array.isArray(data)) return data;
+  } catch (error) {
+    if (!(error instanceof ToolFailure) || error.details.status !== 404) throw error;
+  }
+  for (let page = 1; page <= MAX_DRAFT_PAGES; page++) {
+    const { data } = await h.api({ path: '/api/articles/me/unpublished', query: { page, per_page: 100 } });
+    const drafts: any[] = Array.isArray(data) ? data : [];
+    const found = drafts.find((article) => article?.id === id);
+    if (found) return found;
+    if (drafts.length < 100) break;
+  }
+  throw new ToolFailure(
+    `dev.to has no published article ${id}, and it is not among the account's drafts. Check the id with list_my_articles.`,
+    { status: 404 },
+  );
+}
+
+/** The part of a body that starts at `offset` and fits BODY_PART_BYTES of JSON, ending at a line break where one is near. */
+function bodyPart(body: string, offset: number): { text: string; end: number } {
+  const rest = body.slice(offset, offset + BODY_PART_BYTES);
+  if (offset + rest.length >= body.length && jsonSize(rest) <= BODY_PART_BYTES) return { text: rest, end: body.length };
+  let low = 1;
+  let high = rest.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (jsonSize(rest.slice(0, middle)) <= BODY_PART_BYTES) low = middle;
+    else high = middle - 1;
+  }
+  let end = low;
+  // Never split a surrogate pair.
+  if (/[\ud800-\udbff]/.test(rest[end - 1] ?? '')) end -= 1;
+  const lineBreak = rest.lastIndexOf('\n', end - 1);
+  if (lineBreak >= end * 0.7) end = lineBreak + 1;
+  return { text: rest.slice(0, end), end: offset + end };
+}
+
+interface DayStats {
+  date: string;
+  page_views: number;
+  reactions: number;
+  comments: number;
+  follows: number;
+  average_read_time_seconds?: number;
+  read_seconds?: number;
+}
+
+function total(entry: any, name: string): number {
+  const value = entry?.[name]?.total;
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function dayStats(date: string, entry: any): DayStats {
+  const average = entry?.page_views?.average_read_time_in_seconds;
+  const readSeconds = entry?.page_views?.total_read_time_in_seconds;
+  return {
+    date,
+    page_views: total(entry, 'page_views'),
+    reactions: total(entry, 'reactions'),
+    comments: total(entry, 'comments'),
+    follows: total(entry, 'follows'),
+    ...(typeof average === 'number' ? { average_read_time_seconds: average } : {}),
+    ...(typeof readSeconds === 'number' ? { read_seconds: readSeconds } : {}),
+  };
+}
+
 const connector = defineConnector({
   vendor: 'devto',
   label: 'dev.to',
   origins: ['https://dev.to'],
-  credentials: ['api_key'],
-  credentialLabels: { api_key: 'dev.to API key' },
+  credentials: ['apikey'],
+  credentialLabels: { apikey: 'dev.to API key' },
   authHeaders: (credentials) => ({
-    'api-key': credentials['api_key'] as string,
+    'api-key': credentials['apikey'] as string,
     accept: 'application/vnd.forem.api-v1+json',
   }),
   tools: [
@@ -195,6 +273,42 @@ const connector = defineConnector({
       },
     },
     {
+      name: 'get_article',
+      kind: 'read',
+      title: 'Get a dev.to article with its Markdown',
+      description:
+        'Returns one article with its Markdown body, to read it or to edit it with update_article: one of the account\'s drafts, '
+        + 'or a published article by id. A long body comes in parts: pass nextCursor back as cursor for the rest.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', minimum: 1, description: 'The article id, from list_my_articles.' },
+          cursor: { type: 'string', description: 'nextCursor from the previous result, for the next part of the body.' },
+        },
+        required: ['id'],
+        additionalProperties: false,
+      },
+      async run(args: { id: number; cursor?: string }, h) {
+        const state = h.cursor(args.cursor);
+        if (state && state['i'] !== args.id) {
+          throw new ToolFailure('The cursor belongs to another article. Pass the same id as in the previous call, or leave cursor out.');
+        }
+        const offset = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const article = await findArticle(h, args.id);
+        const body = typeof article?.body_markdown === 'string' ? article.body_markdown : '';
+        const part = bodyPart(body, Math.min(offset, body.length));
+        return compact({
+          ...trimArticle(article),
+          author: article?.user?.username,
+          ai_disclosure_level: article?.ai_disclosure_level,
+          cover_image: article?.cover_image,
+          body_markdown: part.text,
+          body_part: { start: Math.min(offset, body.length), end: part.end, length: body.length },
+          nextCursor: part.end < body.length ? h.makeCursor({ i: args.id, o: part.end }) : undefined,
+        });
+      },
+    },
+    {
       name: 'create_draft_article',
       kind: 'create',
       check: 'list_my_articles',
@@ -207,7 +321,11 @@ const connector = defineConnector({
         type: 'object',
         properties: {
           ...ARTICLE_FIELDS,
-          organization_id: { type: 'integer', minimum: 1, description: "Post under this dev.to organization (the account must be a member)." },
+          organization_id: {
+            type: 'integer',
+            minimum: 1,
+            description: 'Post under this dev.to organization (the account must be a member). Its id comes from api_get /api/organizations/<username>.',
+          },
           ai_disclosure_level: { type: 'string', enum: [...DISCLOSURE_LEVELS], description: DISCLOSURE_HELP },
         },
         required: ['title', 'body_markdown', 'ai_disclosure_level'],
@@ -225,9 +343,9 @@ const connector = defineConnector({
       check: 'list_my_articles',
       title: 'Publish or update a dev.to article',
       description:
-        "Changes one of the account's dev.to articles: only the fields given are changed. published: true publishes a draft "
-        + '(it goes live and gets its final URL); published: false turns a published article back into a draft. Editing a '
-        + 'published article changes it live.',
+        "Changes one of the account's dev.to articles: only the fields given are changed (tags, when given, replace all tags). "
+        + 'published: true publishes a draft (it goes live and gets its final URL); published: false turns a published article back '
+        + 'into a draft. Editing a published article changes it live. Read the current body first with get_article.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -250,13 +368,87 @@ const connector = defineConnector({
         return trimSaved(data, args);
       },
     },
+    {
+      name: 'get_analytics',
+      kind: 'read',
+      title: 'Get dev.to analytics',
+      description:
+        "The account's dev.to statistics: with start, page views, reactions, comments, new followers and the average read time per day "
+        + '(dev.to groups days older than 180 days by week) and their totals; without start, the lifetime totals. For one article with '
+        + "article_id, or an organization's articles with organization_id. Pass nextCursor back as cursor for more days.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          start: { ...DATE_SCHEMA, description: 'The first day, YYYY-MM-DD. Leave out for the lifetime totals.' },
+          end: { ...DATE_SCHEMA, description: 'The last day, YYYY-MM-DD (default today); only with start.' },
+          article_id: { type: 'integer', minimum: 1, description: 'Only this article of the account.' },
+          organization_id: { type: 'integer', minimum: 1, description: "Only this organization's articles (one the account may see)." },
+          cursor: { type: 'string', description: 'nextCursor from the previous result.' },
+        },
+        additionalProperties: false,
+      },
+      async run(args: { start?: string; end?: string; article_id?: number; organization_id?: number; cursor?: string }, h) {
+        const state = h.cursor(args.cursor);
+        const text = (key: string, fallback?: string): string | undefined => (state ? (typeof state[key] === 'string' ? (state[key] as string) : undefined) : fallback);
+        const number = (key: string, fallback?: number): number | undefined => (state ? (typeof state[key] === 'number' ? (state[key] as number) : undefined) : fallback);
+        const start = text('s', args.start);
+        const end = text('e', args.end);
+        const articleId = number('a', args.article_id);
+        const organizationId = number('g', args.organization_id);
+        const skip = number('o', 0) ?? 0;
+        if (end !== undefined && start === undefined) throw new ToolFailure('end needs start: give the first day too, or leave both out for the lifetime totals.');
+        if (start !== undefined && end !== undefined && end < start) throw new ToolFailure('end is before start.');
+        if (articleId !== undefined && organizationId !== undefined) throw new ToolFailure('Give article_id or organization_id, not both.');
+        const scope: Record<string, number> = {};
+        if (articleId !== undefined) scope['article_id'] = articleId;
+        if (organizationId !== undefined) scope['organization_id'] = organizationId;
+        const errors = {
+          404: "dev.to's analytics are not available here: the account may not have them yet, or the article or organization is not one it may see",
+          422: 'dev.to did not accept the dates (use YYYY-MM-DD)',
+        };
+
+        if (start === undefined) {
+          const { data } = await h.api({ path: '/api/analytics/totals', query: { ...scope }, errors });
+          const stats = dayStats('', data);
+          const { date: _date, read_seconds: _read, ...totals } = stats;
+          return { scope: Object.keys(scope).length ? scope : 'account', period: 'lifetime', totals };
+        }
+
+        const { data } = await h.api({ path: '/api/analytics/historical', query: { start, end, ...scope }, errors });
+        const rows = Object.entries(data && typeof data === 'object' && !Array.isArray(data) ? data : {})
+          .filter(([date, entry]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && entry && typeof entry === 'object')
+          .map(([date, entry]) => dayStats(date, entry))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        const views = rows.reduce((sum, row) => sum + row.page_views, 0);
+        const readSeconds = rows.reduce((sum, row) => sum + (row.read_seconds ?? 0), 0);
+        const totals = compact({
+          page_views: views,
+          reactions: rows.reduce((sum, row) => sum + row.reactions, 0),
+          comments: rows.reduce((sum, row) => sum + row.comments, 0),
+          follows: rows.reduce((sum, row) => sum + row.follows, 0),
+          average_read_time_seconds: views > 0 && readSeconds > 0 ? Math.round(readSeconds / views) : undefined,
+        });
+        const state0 = { s: start, ...(end ? { e: end } : {}), ...(articleId ? { a: articleId } : {}), ...(organizationId ? { g: organizationId } : {}) };
+        return h.page({
+          key: 'days',
+          items: rows.slice(skip).map(({ read_seconds: _read, ...row }) => row),
+          extra: {
+            scope: Object.keys(scope).length ? scope : 'account',
+            range: compact({ start, end: end ?? rows[rows.length - 1]?.date }),
+            totals,
+            days_count: rows.length,
+          },
+          resumeAt: (index) => h.makeCursor({ ...state0, o: skip + index }),
+        });
+      },
+    },
     // The rest of the Forem API: followers, comments, reactions, reading list, organizations.
     ...apiTools({
       label: 'dev.to',
       description:
         'The dev.to (Forem) API v1 at https://dev.to/api, with the connected API key: paths start with /api/, such as '
-        + '/api/articles/me/published, /api/followers/users, /api/readinglist or /api/comments (with a_id in query). '
-        + 'Reference: https://developers.forem.com/api/v1.',
+        + '/api/articles/me/published, /api/followers/users, /api/readinglist, /api/organizations/<username> (an organization\'s id) '
+        + 'or /api/comments (with a_id in query). Reference: https://developers.forem.com/api/v1.',
       basePath: '/api/',
       methods: ['POST', 'PUT', 'DELETE'],
     }),
