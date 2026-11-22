@@ -436,7 +436,7 @@ const connector = defineConnector({
       title: 'Read a Kaggle notebook output file',
       description:
         'Shows a text output file of the notebook\'s latest run (a CSV of results, a log, a JSON file), in windows of about 24 KB: pass '
-        + 'nextCursor back as cursor for the next part. Files up to 10 MB; binary files are not shown.',
+        + 'nextCursor back as cursor for the next part. Files up to 8 MB; binary files are not shown.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -451,7 +451,7 @@ const connector = defineConnector({
         const { owner, slug, ref } = ownerSlug(args.notebook, h.credentials['username'] as string, 'notebook');
         const file = await findOutputFile(h, owner, slug, args.file_name);
         if (!file) throw new ToolFailure(`The latest run of ${ref} has no output file named ${args.file_name}: get_notebook_output lists them.`);
-        const { bytes } = await h.media(file.url, { what: 'output file', maxBytes: 10 * 1024 * 1024 });
+        const { bytes } = await h.media(file.url, { what: 'output file', maxBytes: 8 * 1024 * 1024 });
         const text = textOf(bytes, args.file_name);
         const state = h.cursor(args.cursor);
         const window = textWindow(text, typeof state?.['o'] === 'number' ? state['o'] : 0, TEXT_WINDOW_BYTES);
@@ -851,7 +851,7 @@ const connector = defineConnector({
       description:
         'The Kaggle API v1 at https://www.kaggle.com/api/v1, with the connected token: paths start with /api/v1/, such as '
         + '/api/v1/datasets/metadata/{owner}/{slug}, /api/v1/competitions/data/list/{slug} or /api/v1/models/list. Deleting notebooks, datasets '
-        + 'or models is not offered here. Reference: https://github.com/Kaggle/kaggle-cli.',
+        + 'or models is not offered here. Reference: https://www.kaggle.com/docs/api.',
       basePath: '/api/v1/',
       guard(request) {
         if (request.method !== 'GET' && request.segments.some((segment) => segment === 'delete')) {

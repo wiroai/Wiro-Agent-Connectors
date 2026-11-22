@@ -46,7 +46,7 @@ Notebooks and datasets are named `owner/slug`, by their slug alone for your own,
 | `push_notebook` | create | Creates a notebook or saves a new version, and runs it unless asked not to: private, CPU and no internet by default; a T4 or L4 GPU or a TPU v5e-8 on request. |
 | `get_notebook_status` | read | The latest run's status (queued, running, complete, error, cancelled) and Kaggle's failure message. |
 | `get_notebook_output` | read | The latest run's output files with their signed download links, and the last lines of its log. |
-| `read_notebook_output_file` | read | A text output file's contents (a results CSV, a JSON file), in windows with a cursor; up to 10 MB. |
+| `read_notebook_output_file` | read | A text output file's contents (a results CSV, a JSON file), in windows with a cursor; up to 8 MB. |
 | `list_datasets` | read | Your datasets (or public ones, or one user's), last updated first, with size, visibility, downloads, votes, version and usability. |
 | `list_dataset_files` | read | A dataset's files with their sizes and dates. |
 | `get_dataset_status` | read | Whether a dataset is still processing or ready. |
@@ -66,7 +66,7 @@ Kaggle takes files in three steps: an upload ticket from Kaggle, the file sent t
 
 ## Limits
 
-- Files to upload: 25 MB each (the most a host downloads), up to 20 per call, from a public https URL or as text up to 1,000,000 characters. Kaggle itself takes up to 200 GB per dataset and 200 GB of private datasets in all, at most 50 files at the top level; bigger files go up with Kaggle's own tools.
+- Files to upload: 25 MB each (the most a host downloads), up to 20 per call, from a public https URL or as text up to 1,000,000 characters. A file hosted on one of the two Google Cloud Storage origins is fetched as an API reply, which hosts may cap lower (8 MB in the stdio CLI). Kaggle itself takes up to 200 GB per dataset and 200 GB of private datasets in all, at most 50 files at the top level; bigger files go up with Kaggle's own tools.
 - A run lasts up to 12 hours on CPU and GPU, 9 on TPU, and writes up to 20 GB to `/kaggle/working`. GPU and TPU hours come from the weekly quota; GPU and internet need a phone-verified account.
 - Competition submissions count against each competition's daily limit; you must join a competition and accept its rules on kaggle.com first.
 - Kaggle limits request rates on its own; a `429` comes back with `retryAfter` when Kaggle gives one, and nothing is retried. A write without a clear answer is reported as unknown, with the read tool to check.

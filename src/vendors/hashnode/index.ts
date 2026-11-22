@@ -582,8 +582,8 @@ const connector = defineConnector({
       title: 'Run a Hashnode GraphQL query',
       description:
         'Any other read of Hashnode\'s GraphQL API at https://gql-beta.hashnode.com, with the connected token, such as a tag, a user, '
-        + 'searchPostsOfPublication, scheduled drafts or a post\'s comments. Queries only; the schema is at '
-        + 'https://github.com/Hashnode/gql-skill. Returns data, and errors when some fields failed, cut to fit 32 KB (use first to page).',
+        + 'searchPostsOfPublication, scheduled drafts or a post\'s comments. Queries only; the endpoint serves its schema by introspection. '
+        + 'Returns data, and errors when some fields failed, cut to fit 32 KB (use first to page).',
       inputSchema: {
         type: 'object',
         properties: {

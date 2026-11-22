@@ -143,16 +143,16 @@ test('create_article saves a limited-share article by default, and nothing that 
   assert.match(payload.note, /limited-share article/);
 
   const refused = await callTool(module, 'create_article', { ...args, organization_url_name: 'acme' }, ctx);
-  assert.match(refused.payload.error, /A limited-share article cannot be linked to an Organization or posted on X/);
+  assert.match(refused.payload.error, /A limited-share article cannot be linked to an Organization or shared with tweet/);
   const noTweet = await callTool(module, 'create_article', { ...args, tweet: true }, ctx);
-  assert.match(noTweet.payload.error, /posted on X/);
+  assert.match(noTweet.payload.error, /shared with tweet/);
   assert.equal(fetch.calls.length, 1);
 
   const tooMany = await callTool(module, 'create_article', { ...args, tags: Array.from({ length: 6 }, (_, i) => ({ name: `t${i}` })) }, ctx);
   assert.match(tooMany.payload.error, /`tags` must have at most 5 items/);
 });
 
-test('create_article with public: true may link an Organization and post on X', async () => {
+test('create_article with public: true may link an Organization and tweet', async () => {
   const { module, fetch, ctx } = setup(answer('public.json', 201));
   const { payload } = await callTool(module, 'create_article', { title: 'T', body: 'B', tags: [{ name: 'Python' }], public: true, organization_url_name: 'acme', tweet: true }, ctx);
   assert.deepEqual(fetch.calls[0].json, { title: 'T', body: 'B', tags: [{ name: 'Python', versions: [] }], private: false, organization_url_name: 'acme', tweet: true });

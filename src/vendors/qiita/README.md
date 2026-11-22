@@ -44,7 +44,7 @@ Articles can be named by their ID (20 hexadecimal characters) or by their qiita.
 | `search_articles` | read | Public Qiita articles by Qiita's search terms (`title:`, `tag:`, `user:`, `stocks:>50`, ...), with their authors and counts. |
 | `get_tag` | read | One tag as Qiita spells it, with its article and follower counts (tags such as `C#` included). |
 | `list_tags` | read | Qiita's tags, the most used first or by name. |
-| `create_article` | create | Saves an article: limited share by default; `public: true` posts it publicly at once, with an Organization link or an X post if asked. |
+| `create_article` | create | Saves an article: limited share by default; `public: true` posts it publicly at once, with an Organization link or a tweet from the linked account if asked. |
 | `update_article` | update | Changes an article's title, body, tags or slide mode, keeping the rest; never switches limited share or public. |
 | `make_article_public` | update | Makes a limited-share article public, keeping its text and tags. Final: Qiita cannot make it limited again. |
 | `delete_article` | delete | Deletes an article for good, with its likes, stocks and comments. |
@@ -54,7 +54,7 @@ Articles can be named by their ID (20 hexadecimal characters) or by their qiita.
 ## Limits
 
 - Qiita allows 1,000 requests an hour with a token. Results say how many are left and when the hour resets (`rate_limit`); a `429` comes back as an error, and nothing is retried. Ranking your articles reads up to 10 pages of 100, one request each.
-- A limited-share article is the only draft Qiita has. Going public is final, every revision saved while the article was limited becomes visible in its edit history, and `@mentions` notify people only once it is public. Organizations and X posts go with public articles only; posting campaigns are not offered.
+- A limited-share article is the only draft Qiita has. Going public is final, every revision saved while the article was limited becomes visible in its edit history, and `@mentions` notify people only once it is public. Organizations and tweets go with public articles only; posting campaigns are not offered.
 - Lists carry no page views: Qiita gives them only to the author, one article at a time (`get_article`).
 - Qiita's API cannot upload images: articles use images that already have a lasting public https URL.
 - Qiita Team, its groups, co-editing and emoji reactions are not covered.

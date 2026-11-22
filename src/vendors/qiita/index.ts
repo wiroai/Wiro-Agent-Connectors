@@ -336,8 +336,8 @@ const connector = defineConnector({
       title: 'Save a Qiita article',
       description:
         'Saves a new article. By default it is a limited-share article, Qiita\'s draft: only you and people with its link can open it. '
-        + 'public: true posts it publicly at once, and a public article can never go back to limited share. An Organization link and an X post '
-        + '(tweet, only when the account has linked X) go with public articles only. @mentions notify people only once the article is public.',
+        + 'public: true posts it publicly at once, and a public article can never go back to limited share. An Organization link and tweet '
+        + '(a share from the social account linked to Qiita) go with public articles only. @mentions notify people only once the article is public.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -346,7 +346,7 @@ const connector = defineConnector({
           tags: TAGS_SCHEMA,
           public: { type: 'boolean', default: false, description: 'false (default): limited share. true: public at once, for good.' },
           organization_url_name: { type: 'string', pattern: '^[A-Za-z0-9_-]{1,100}$', description: 'Link the article to an Organization the account belongs to (public articles only).' },
-          tweet: { type: 'boolean', default: false, description: 'Post the article on X from the linked account (public articles only). Only when asked.' },
+          tweet: { type: 'boolean', default: false, description: 'Share the article from the social account linked to Qiita (public articles only). Only when asked.' },
           slide: { type: 'boolean', default: false, description: 'Show the article in slide mode.' },
         },
         required: ['title', 'body', 'tags'],
@@ -354,7 +354,7 @@ const connector = defineConnector({
       },
       async run(args: { title: string; body: string; tags: Array<{ name: string; versions?: string[] }>; public: boolean; organization_url_name?: string; tweet: boolean; slide: boolean }, h) {
         if (!args.public && (args.organization_url_name !== undefined || args.tweet)) {
-          throw new ToolFailure('A limited-share article cannot be linked to an Organization or posted on X: those go with public: true. Nothing was sent.');
+          throw new ToolFailure('A limited-share article cannot be linked to an Organization or shared with tweet: those go with public: true. Nothing was sent.');
         }
         const { data, headers } = await h.api({
           method: 'POST',
