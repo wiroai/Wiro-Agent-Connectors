@@ -149,7 +149,7 @@ test('run_realtime_report sends minute ranges and returns rows; a cut list conti
   assert.equal(payload.nextCursor, undefined);
 });
 
-test('batch_run_reports gives each request 100 rows unless it says otherwise, and refuses another property', async () => {
+test('batch_run_reports gives each request 50 rows unless it says otherwise, and refuses another property', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'batch.json')));
   const { payload } = await callTool(module, 'batch_run_reports', {
     property_id: '300100100',
@@ -159,13 +159,30 @@ test('batch_run_reports gives each request 100 rows unless it says otherwise, an
     ],
   }, ctx);
   assert.equal(fetch.calls[0].url, `${DATA}/v1beta/properties/300100100:batchRunReports`);
-  assert.deepEqual(fetch.calls[0].json.requests.map((request) => request.limit), [100, 5]);
+  assert.deepEqual(fetch.calls[0].json.requests.map((request) => request.limit), [50, 5]);
   assert.equal(fetch.calls[0].json.requests[1].property, undefined);
   assert.deepEqual(payload.reports.map((report) => report.rows), [[{ sessions: 3120 }], [{ totalRevenue: 15210.4 }]]);
 
   const other = await callTool(module, 'batch_run_reports', { property_id: '300100100', requests: [{ property: 'properties/42', metrics: [{ name: 'sessions' }] }] }, ctx);
   assert.match(other.payload.error, /must be for property 300100100/);
   assert.equal(fetch.calls.length, 1);
+});
+
+test('batch_run_reports cuts each report\'s rows when the reports do not fit 32 KB together', async () => {
+  const big = (name) => ({
+    dimensionHeaders: [{ name: 'pagePath' }],
+    metricHeaders: [{ name }],
+    rows: Array.from({ length: 400 }, (_, index) => ({ dimensionValues: [{ value: `/blog/a-fairly-long-article-path-number-${index}` }], metricValues: [{ value: String(index) }] })),
+    rowCount: 400,
+  });
+  const { module, ctx } = setup(() => jsonResponse(200, { reports: [big('sessions'), big('screenPageViews')] }));
+  const { result, payload, isError } = await callTool(module, 'batch_run_reports', { property_id: '300100100', requests: [{ limit: 400 }, { limit: 400 }] }, ctx);
+  assert.equal(isError, false);
+  assert.ok(Buffer.byteLength(result.content[0].text) <= 32 * 1024);
+  assert.equal(payload.truncated, true);
+  assert.equal(payload.reports[0].rows_returned_of, 400);
+  assert.ok(payload.reports[0].rows.length > 10 && payload.reports[0].rows.length < 400);
+  assert.match(payload.note, /did not fit 32 KB together/);
 });
 
 test('get_metadata lists fields trimmed, filtered by kind, text and custom definitions', async () => {

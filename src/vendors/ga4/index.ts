@@ -10,7 +10,7 @@
 // Account picker `properties` (the GA4 properties the agent may use): every
 // tool that names a property checks it against ctx.accounts.properties.
 
-import { apiTools, defineConnector, requireAccounts, ToolFailure, truncate, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, jsonSize, OUTPUT_LIMIT_BYTES, requireAccounts, ToolFailure, truncate, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
 
 const DATA = 'https://analyticsdata.googleapis.com';
 const ADMIN = 'https://analyticsadmin.googleapis.com';
@@ -180,7 +180,7 @@ function propertiesNamed(request: ApiToolRequest): string[] {
     if (segment === 'properties' && next) ids.add(next.split(':')[0] as string);
   });
   if (request.json) {
-    for (const match of JSON.stringify(request.json).matchAll(/properties\/([0-9]+)/g)) ids.add(match[1] as string);
+    for (const match of JSON.stringify(request.json).matchAll(/(?<![A-Za-z])properties\/([0-9]+)/g)) ids.add(match[1] as string);
   }
   return [...ids].filter(Boolean);
 }
@@ -424,11 +424,17 @@ const connector = defineConnector({
           if (property !== undefined && propertyId(String(property)) !== id) {
             throw new ToolFailure(`Each request must be for property ${id}, the one in property_id. Nothing was sent.`);
           }
-          return { limit: 100, ...rest };
+          return { limit: 50, ...rest };
         });
         const { data } = await h.api({ method: 'POST', origin: DATA, path: `/v1beta/properties/${id}:batchRunReports`, json: { requests }, safe: true, errors: REPORT_ERRORS });
-        const reports = Array.isArray(data?.reports) ? data.reports : [];
-        return { property_id: id, reports: reports.map((report: any) => ({ ...reportExtras(report), rows: flattenRows(report, report?.rows) })) };
+        const reports = (Array.isArray(data?.reports) ? data.reports : []).map((report: any) => ({ ...reportExtras(report), rows: flattenRows(report, report?.rows) }));
+        // Several reports share the 32 KB: when they do not fit, each keeps its first rows.
+        let share = 1;
+        const cut = () => reports.map((report: { rows: unknown[] }) => (share < 1 ? { ...report, rows: report.rows.slice(0, Math.floor(report.rows.length * share)), rows_returned_of: report.rows.length } : report));
+        while (share > 0.01 && jsonSize({ property_id: id, reports: cut() }) > OUTPUT_LIMIT_BYTES - 600) share *= 0.8;
+        return share < 1
+          ? { property_id: id, reports: cut(), truncated: true, note: 'The reports did not fit 32 KB together: each lists its first rows. Lower the limit of each request, or run them one by one with run_report.' }
+          : { property_id: id, reports };
       },
     },
     {
