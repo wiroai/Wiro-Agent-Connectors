@@ -1,0 +1,65 @@
+{
+  "name": "@wiro-ai/wiro-agent-connectors",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependency-free MCP connectors for services without an official MCP server. One small module per service, runnable over stdio with npx or loadable into your own MCP host.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "connectors",
+    "ai-agents",
+    "serper",
+    "devto",
+    "bluesky"
+  ],
+  "license": "MIT",
+  "author": "Wiro AI",
+  "homepage": "https://github.com/wiroai/Wiro-Agent-Connectors#readme",
+  "bugs": {
+    "url": "https://github.com/wiroai/Wiro-Agent-Connectors/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wiroai/Wiro-Agent-Connectors.git"
+  },
+  "type": "commonjs",
+  "main": "./dist/host/index.js",
+  "types": "./dist/host/index.d.ts",
+  "bin": {
+    "wiro-agent-connectors": "dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/host/index.d.ts",
+      "default": "./dist/host/index.js"
+    },
+    "./vendors/*": "./dist/vendors/*.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true});require('node:fs').rmSync('build',{recursive:true,force:true})\"",
+    "typecheck": "tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node scripts/build-modules.mjs",
+    "test": "npm run build && node --test \"tests/*.test.mjs\" \"src/vendors/*/*.test.mjs\"",
+    "smoke": "node scripts/smoke.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
+  }
+}

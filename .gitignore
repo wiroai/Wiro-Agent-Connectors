@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+coverage/
+*.tgz
+*.log
+.DS_Store
+
+# Credentials for local runs and the smoke script
+.env
+.env.*
+!.env.example
+
+# Local editor and assistant settings
+.claude/
+.cursor/
