@@ -1,0 +1,49 @@
+{
+  "campaigns": [
+    {
+      "id": 101,
+      "name": "November newsletter",
+      "subject": "What is new in November",
+      "type": "classic",
+      "status": "sent",
+      "testSent": true,
+      "header": "[DEFAULT_HEADER]",
+      "footer": "[DEFAULT_FOOTER]",
+      "sender": { "name": "Example News", "id": 1, "email": "news@example.com" },
+      "replyTo": "news@example.com",
+      "toField": "",
+      "htmlContent": "",
+      "tag": "newsletter",
+      "createdAt": "2026-11-18T09:00:00.000+01:00",
+      "modifiedAt": "2026-11-20T14:00:00.000+01:00",
+      "sentDate": "2026-11-20T14:00:00.000+01:00",
+      "recipients": { "lists": [5], "exclusionLists": [] },
+      "statistics": {
+        "globalStats": { "uniqueClicks": 45, "clickers": 42, "complaints": 0, "delivered": 1180, "sent": 1200, "softBounces": 15, "hardBounces": 5, "uniqueViews": 230, "unsubscriptions": 3, "viewed": 260 },
+        "campaignStats": [],
+        "mirrorClick": 0,
+        "remaining": 0,
+        "linksStats": {},
+        "statsByDomain": {}
+      }
+    },
+    {
+      "id": 102,
+      "name": "December draft",
+      "subject": "December news",
+      "type": "classic",
+      "status": "draft",
+      "testSent": false,
+      "header": "",
+      "footer": "",
+      "sender": { "name": "Example News", "id": 1, "email": "news@example.com" },
+      "replyTo": "news@example.com",
+      "htmlContent": "",
+      "createdAt": "2026-11-21T09:00:00.000+01:00",
+      "modifiedAt": "2026-11-21T09:00:00.000+01:00",
+      "recipients": { "lists": [5, 12], "exclusionLists": [] },
+      "statistics": { "globalStats": {}, "campaignStats": [], "linksStats": {} }
+    }
+  ],
+  "count": 2
+}

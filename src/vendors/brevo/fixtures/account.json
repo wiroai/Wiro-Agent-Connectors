@@ -1,0 +1,15 @@
+{
+  "organization_id": "5f8a2b0c9d1e2f3a4b5c6d7e",
+  "user_id": 1234567,
+  "email": "marketing@example.com",
+  "firstName": "Jane",
+  "lastName": "Doe",
+  "companyName": "Example Co",
+  "address": { "street": "1 Example Street", "city": "Paris", "zipCode": "75001", "country": "France" },
+  "plan": [
+    { "type": "free", "creditsType": "sendLimit", "credits": 297, "startDate": "2026-11-01", "endDate": "2026-12-01" },
+    { "type": "sms", "creditsType": "sendLimit", "credits": 0 }
+  ],
+  "relay": { "enabled": true, "data": { "userName": "relay-user@example.com", "relay": "smtp-relay.example.com", "port": 587 } },
+  "marketingAutomation": { "enabled": false }
+}

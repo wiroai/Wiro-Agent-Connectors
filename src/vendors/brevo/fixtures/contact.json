@@ -1,0 +1,21 @@
+{
+  "email": "ann@example.com",
+  "id": 42,
+  "emailBlacklisted": false,
+  "smsBlacklisted": false,
+  "createdAt": "2026-11-20T09:12:01.000+01:00",
+  "modifiedAt": "2026-11-21T10:00:00.000+01:00",
+  "attributes": { "FIRSTNAME": "Ann", "LASTNAME": "Example", "SMS": "33600000000" },
+  "listIds": [5, 12],
+  "statistics": {
+    "messagesSent": [
+      { "campaignId": 101, "eventTime": "2026-11-20T14:00:00.000+01:00" },
+      { "campaignId": 102, "eventTime": "2026-11-21T14:00:00.000+01:00" }
+    ],
+    "opened": [
+      { "campaignId": 101, "count": 2, "eventTime": "2026-11-20T15:00:00.000+01:00", "ip": "203.0.113.7" }
+    ],
+    "clicked": [],
+    "unsubscriptions": { "userUnsubscription": [], "adminUnsubscription": [] }
+  }
+}

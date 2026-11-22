@@ -1,0 +1,6 @@
+{
+  "events": [
+    { "email": "ann@example.com", "date": "2026-11-21T10:01:00.000+01:00", "subject": "Your order 1234", "messageId": "<202611211001.12345@smtp-relay.example.com>", "event": "delivered", "tag": "orders", "ip": "198.51.100.4", "from": "shop@example.com", "templateId": 10 },
+    { "email": "ann@example.com", "date": "2026-11-21T10:00:30.000+01:00", "subject": "Your order 1234", "messageId": "<202611211001.12345@smtp-relay.example.com>", "event": "requests", "tag": "orders", "from": "shop@example.com", "templateId": 10 }
+  ]
+}

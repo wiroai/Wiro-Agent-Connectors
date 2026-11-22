@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_account", "args": {} },
+  "write": {
+    "tool": "create_folder",
+    "args": { "name": "Connector smoke test {{timestamp}}" },
+    "note": "Creates an empty contact folder. Delete it in Brevo (Contacts, Lists, Folders) or with api_request: DELETE /v3/contacts/folders/{id}."
+  }
+}
