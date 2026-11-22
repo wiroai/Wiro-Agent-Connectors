@@ -8,6 +8,6 @@
       "privacy_level": "SELF_ONLY",
       "wait_seconds": 20
     },
-    "note": "Replace video_url with a public MP4 you own (5 to 60 seconds, 23 to 60 FPS) before running it. It posts a private (SELF_ONLY) video and returns its publish_id: follow it with get_post_status if it is still processing, then delete the video in the TikTok app, as the API cannot delete posts."
+    "note": "Replace video_url with a public MP4 you own (5 to 60 seconds, 23 to 60 FPS) before running it; one up to 10 MB goes in a single call. A larger one comes back with done: false and a nextCursor: call post_video again with the same video_url and cursor set to nextCursor until done is true, within the hour. It posts a private (SELF_ONLY) video and returns its publish_id: follow it with get_post_status if it is still processing, then delete the video in the TikTok app, as the API cannot delete posts."
   }
 }
