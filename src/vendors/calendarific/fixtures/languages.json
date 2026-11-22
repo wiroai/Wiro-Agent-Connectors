@@ -1,0 +1,25 @@
+{
+  "meta": {
+    "code": 200
+  },
+  "response": {
+    "url": "https://calendarific.com/supported-languages",
+    "languages": [
+      {
+        "code": "en",
+        "name": "English",
+        "nativeName": "English"
+      },
+      {
+        "code": "fr",
+        "name": "French",
+        "nativeName": "français"
+      },
+      {
+        "code": "tr",
+        "name": "Turkish",
+        "nativeName": "Türkçe"
+      }
+    ]
+  }
+}

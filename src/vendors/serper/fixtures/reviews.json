@@ -1,0 +1,36 @@
+{
+  "searchParameters": { "fid": "0x89c25a197c06b7cb:0x40a06c78f79e5de6", "sortBy": "newest", "type": "reviews", "engine": "google" },
+  "reviews": [
+    {
+      "rating": 5,
+      "date": "a week ago",
+      "isoDate": "2026-11-14T18:22:05.000Z",
+      "snippet": "Great selection of new fiction and a quiet reading room upstairs.",
+      "likes": 3,
+      "user": {
+        "name": "A. Reader",
+        "thumbnail": "https://lh3.example.com/a/reader-1",
+        "link": "https://www.google.com/maps/contrib/100000000000000000001",
+        "reviews": 41,
+        "photos": 12
+      },
+      "media": [{ "type": "image", "imageUrl": "https://lh5.example.com/p/review-photo-1.jpg" }],
+      "response": { "date": "6 days ago", "snippet": "Thank you for visiting! See you at the next author talk." },
+      "id": "ChdDSUhNMG9nS0VJQ0FnSURBZ3ZPQXJ3RRAB"
+    },
+    {
+      "rating": 3,
+      "date": "2 weeks ago",
+      "isoDate": "2026-11-07T10:03:40.000Z",
+      "snippet": "Nice shop, but the cafe was closed when we came.",
+      "likes": 0,
+      "user": { "name": "B. Visitor", "reviews": 7, "photos": 0 }
+    }
+  ],
+  "topics": [
+    { "id": "/m/0examplereading", "keyword": "reading room", "count": 58 },
+    { "id": "/m/0exampleevents", "keyword": "author talks", "count": 21 }
+  ],
+  "nextPageToken": "CAESY0NBRVFBUnBmQ2hVSWF4RVNaWGhoYlhCc1pTMXdZV2RsTFhSdmEyVnU",
+  "credits": 1
+}

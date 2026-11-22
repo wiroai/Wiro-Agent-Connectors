@@ -1,0 +1,41 @@
+{
+  "timestamp": 1795262400000,
+  "tokensLeft": 246,
+  "refillIn": 41000,
+  "refillRate": 5,
+  "tokenFlowReduction": 0,
+  "tokensConsumed": 50,
+  "processingTimeInMs": 120,
+  "bestSellersList": {
+    "domainId": 1,
+    "lastUpdate": 8356980,
+    "categoryId": 172282,
+    "asinList": [
+      "B0BEST0001",
+      "B0BEST0002",
+      "B0BEST0003",
+      "B0BEST0004",
+      "B0BEST0005",
+      "B0BEST0006",
+      "B0BEST0007",
+      "B0BEST0008",
+      "B0BEST0009",
+      "B0BEST0010",
+      "B0BEST0011",
+      "B0BEST0012",
+      "B0BEST0013",
+      "B0BEST0014",
+      "B0BEST0015",
+      "B0BEST0016",
+      "B0BEST0017",
+      "B0BEST0018",
+      "B0BEST0019",
+      "B0BEST0020",
+      "B0BEST0021",
+      "B0BEST0022",
+      "B0BEST0023",
+      "B0BEST0024",
+      "B0BEST0025"
+    ]
+  }
+}

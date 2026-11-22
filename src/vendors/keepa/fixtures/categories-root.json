@@ -1,0 +1,36 @@
+{
+  "timestamp": 1795262400000,
+  "tokensLeft": 295,
+  "refillIn": 41000,
+  "refillRate": 5,
+  "tokenFlowReduction": 0,
+  "tokensConsumed": 1,
+  "processingTimeInMs": 120,
+  "categories": {
+    "172282": {
+      "domainId": 1,
+      "catId": 172282,
+      "name": "Electronics",
+      "children": [
+        281407,
+        502394,
+        667846011
+      ],
+      "parent": 0,
+      "productCount": 9400000,
+      "avgBuyBox": 7450
+    },
+    "3760911": {
+      "domainId": 1,
+      "catId": 3760911,
+      "name": "Beauty & Personal Care",
+      "children": [
+        11058281,
+        11060451
+      ],
+      "parent": 0,
+      "productCount": 2100000,
+      "avgBuyBox": 1899
+    }
+  }
+}

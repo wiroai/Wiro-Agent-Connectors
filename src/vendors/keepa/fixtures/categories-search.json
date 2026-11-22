@@ -1,0 +1,63 @@
+{
+  "timestamp": 1795262400000,
+  "tokensLeft": 295,
+  "refillIn": 41000,
+  "refillRate": 5,
+  "tokenFlowReduction": 0,
+  "tokensConsumed": 1,
+  "processingTimeInMs": 120,
+  "categories": {
+    "15428437031": {
+      "domainId": 3,
+      "catId": 15428437031,
+      "name": "Speaker Accessories",
+      "children": [
+        111111,
+        222222
+      ],
+      "parent": 1384526031,
+      "highestRank": 90000,
+      "lowestRank": 1,
+      "productCount": 9800,
+      "contextFreeName": "Speaker Accessories",
+      "avgBuyBox": -1,
+      "isBrowseNode": true
+    },
+    "15428436031": {
+      "domainId": 3,
+      "catId": 15428436031,
+      "name": "Portable Speakers",
+      "children": [],
+      "parent": 1384526031,
+      "highestRank": 120000,
+      "lowestRank": 1,
+      "productCount": 41250,
+      "contextFreeName": "Portable Bluetooth Speakers",
+      "avgBuyBox": 4590,
+      "isBrowseNode": true
+    }
+  },
+  "categoryParents": {
+    "562066": {
+      "domainId": 3,
+      "catId": 562066,
+      "name": "Electronics & Photo",
+      "children": [
+        1384526031
+      ],
+      "parent": 0,
+      "productCount": 9100000
+    },
+    "1384526031": {
+      "domainId": 3,
+      "catId": 1384526031,
+      "name": "Audio & HiFi",
+      "children": [
+        15428436031,
+        15428437031
+      ],
+      "parent": 562066,
+      "productCount": 650000
+    }
+  }
+}

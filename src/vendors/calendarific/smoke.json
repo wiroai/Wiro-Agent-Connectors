@@ -1,0 +1,4 @@
+{
+  "read": { "tool": "list_holidays", "args": { "country": "US", "year": 2026, "month": 12 } },
+  "write": null
+}

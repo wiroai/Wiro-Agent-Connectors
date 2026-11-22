@@ -1,0 +1,82 @@
+{
+  "meta": {
+    "code": 200
+  },
+  "response": {
+    "holidays": [
+      {
+        "name": "New Year's Day",
+        "description": "New Year's Day is the first day of the year.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2027-01-01",
+          "datetime": {
+            "year": 2027,
+            "month": 1,
+            "day": 1
+          }
+        },
+        "type": [
+          "National holiday"
+        ],
+        "primary_type": "Federal Holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/new-year-day",
+        "urlid": "us/new-year-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Orthodox Christmas Day",
+        "description": "Many Orthodox Christians celebrate Christmas Day on January 7.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2027-01-07",
+          "datetime": {
+            "year": 2027,
+            "month": 1,
+            "day": 7
+          }
+        },
+        "type": [
+          "Orthodox",
+          "Observance"
+        ],
+        "primary_type": "Orthodox",
+        "canonical_url": "https://calendarific.com/holiday/us/orthodox-christmas-day",
+        "urlid": "us/orthodox-christmas-day",
+        "locations": "All",
+        "states": "All"
+      },
+      {
+        "name": "Martin Luther King Jr. Day",
+        "description": "Martin Luther King Jr. Day honors the civil rights leader.",
+        "country": {
+          "id": "us",
+          "name": "United States"
+        },
+        "date": {
+          "iso": "2027-01-18",
+          "datetime": {
+            "year": 2027,
+            "month": 1,
+            "day": 18
+          }
+        },
+        "type": [
+          "National holiday"
+        ],
+        "primary_type": "Federal Holiday",
+        "canonical_url": "https://calendarific.com/holiday/us/martin-luther-king-day",
+        "urlid": "us/martin-luther-king-day",
+        "locations": "All",
+        "states": "All"
+      }
+    ]
+  }
+}
