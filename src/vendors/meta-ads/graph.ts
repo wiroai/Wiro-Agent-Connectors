@@ -99,7 +99,11 @@ export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Text that could hand out a token or an app secret is kept out of the generic tools. */
+/**
+ * Text that could hand out a token or an app secret is kept out of the generic
+ * tools: a second check, on the request as the core resolved it, after the
+ * full check of every argument (graph-rules.ts).
+ */
 export function refuseSecrets(request: ApiToolRequest): void {
   const texts = [...request.segments, ...Object.keys(request.query), ...Object.values(request.query).flat()];
   if (request.segments.includes('oauth') || texts.some((text) => /access_token|appsecret|app_secret|client_secret|debug_token/i.test(text))) {

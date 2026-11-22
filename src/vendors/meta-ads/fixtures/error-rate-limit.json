@@ -1,0 +1,9 @@
+{
+  "error": {
+    "message": "(#80004) There have been too many calls to this ad-account. Wait a bit and try again. For more info, please refer to https://developers.facebook.com/docs/graph-api/overview/rate-limiting#ads-management.",
+    "type": "OAuthException",
+    "code": 80004,
+    "error_subcode": 2446079,
+    "fbtrace_id": "AQ3xExampleTrace03"
+  }
+}

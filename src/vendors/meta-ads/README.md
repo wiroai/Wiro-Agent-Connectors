@@ -49,7 +49,9 @@ The Pages an older setup chose for each ad account, as JSON text such as `[{"ada
 | `ad_accounts` | The ad accounts the agent may report on and manage (several may be chosen; by default the list shows the active ones with ADVERTISE and ANALYZE). An older setup kept this choice in `adaccountid`. | `list_ad_accounts` |
 | `pages` | The Facebook Pages the agent may use in ad creatives. An older setup kept this choice per ad account in `pagemappings`. | `list_pages` |
 
-Tools take an optional `ad_account_id` (with or without `act_`), which may be left out when one ad account is chosen; campaigns, ad sets and ads named by id are checked against the chosen ad accounts before any change. App campaigns take their app (`application_id`, `object_store_url`) from the store connectors in `promoted_object`.
+Tools take an optional `ad_account_id` (with or without `act_`), which may be left out when one ad account is chosen; campaigns, ad sets and ads named by id are checked against the chosen ad accounts before any change, and a Page named in a creative, an ad set's `promoted_object` or a generic request's body must be one of the chosen Pages.
+
+For app campaigns, `promoted_object` takes the app's Meta app ID as `application_id` (the Meta app registered for the mobile app: `api_get` on `/v26.0/act_<id>/advertisable_applications` lists them, and the app's Meta dashboard shows it) and its store link as `object_store_url`, such as `https://apps.apple.com/app/id<App Store id>` or `https://play.google.com/store/apps/details?id=<package>`. The store connectors give only the App Store id or the package name that the link is built from, never the Meta app ID.
 
 ## Tools
 
@@ -81,9 +83,10 @@ Tools take an optional `ad_account_id` (with or without `act_`), which may be le
 
 - Writes are never retried: duplicates are worse than failures. When a create's outcome is unclear, check `list_objects` (or `get_object` after an update) before trying again.
 - Images: JPEG, PNG or GIF up to 30 MB (a host may cap downloads lower), downloaded from a public https URL and sent to Meta. Videos are fetched by Meta from a public https URL; a call waits at most 45 seconds for processing. Files behind a sign-in (such as a private cloud drive) need a public URL first.
-- Lead forms and lead data are out of reach, as are tokens, app secrets and `/oauth` endpoints. With ad accounts chosen, generic calls must name one of them (`act_<id>`) or one of their objects; `/v26.0/search` is allowed.
+- `api_get` and `api_request` send one request per call, with parameters in `query`, or for `api_request` in `json` or a form `body` (`application/x-www-form-urlencoded`); other bodies are refused. Batch requests (`batch`) and method overrides (`method`) are refused. Lead forms and lead data (by path or in `fields`), the `accounts` edge (Pages with their tokens), and any request that names a token or an app secret anywhere, however it is encoded, are out of reach, as are `/oauth` endpoints; a reply never carries a token or an app secret proof back.
+- With ad accounts chosen, generic calls must name one of them (`act_<id>`) or one of their objects (`/v26.0/search` is allowed), may not reach businesses, agencies or other ad accounts through the path or nested `fields` (such as `business{owned_ad_accounts}`), and may not look objects up by `ids`. A Page they name in a body or the query (`page_id`, `actor_id`, `object_story_id`) must be one of the chosen Pages.
 - Meta removed the Instagram explore placement and some delivery estimate fields in v26; Housing, Employment and Financial Products ad sets with detailed targeting must set `targeting_automation.advantage_audience` in `targeting`.
-- Rate limits come back with `retryAfter` when Meta says how long to wait; nothing is queued or retried.
+- Meta throttles with HTTP 400 or 403 and a rate limit code (4, 17, 613, or 80000 to 80014 for business use cases, such as 80004 for ads management), not with HTTP 429. Such an error says "rate limit reached"; wait before trying again, since Meta counts calls over a rolling hour. Meta's estimate of the wait comes in the `X-Business-Use-Case-Usage` header, which the result does not carry yet. Nothing is queued or retried.
 
 ## Repository README rows
 

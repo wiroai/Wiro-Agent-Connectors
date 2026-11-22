@@ -326,7 +326,7 @@ test('api_get and api_request keep to the chosen ad accounts, add the proof, and
   assert.match(other.payload.error, /The ad account 999 is not among the ad accounts chosen/);
   const otherObject = await callTool(module, 'api_request', { method: 'POST', path: '/v26.0/120200000000000777', json: { status: 'ACTIVE' } }, ctx);
   assert.match(otherObject.payload.error, /The ad account 999 is not among/);
-  const me = await callTool(module, 'api_get', { path: '/v26.0/me/businesses' }, ctx);
+  const me = await callTool(module, 'api_get', { path: '/v26.0/me/permissions' }, ctx);
   assert.match(me.payload.error, /a path must name one of them \(act_<id>\)/);
   const leads = await callTool(module, 'api_get', { path: `/v26.0/act_${ACCOUNT}/leadgen_forms` }, ctx);
   assert.match(leads.payload.error, /Lead forms and lead data are not available/);
@@ -335,14 +335,113 @@ test('api_get and api_request keep to the chosen ad accounts, add the proof, and
   assert.deepEqual(fetch.calls.slice(before).map((call) => `${call.method} ${call.path}`), ['GET /v26.0/120200000000000777']);
 });
 
-test('errors: an unclear create names its check tool after one write, and a 429 carries retryAfter', async () => {
+test('a batch never gets past the ad account lock or the token guard, in the query, in JSON or in a form body', async () => {
+  const { module, fetch, ctx } = setup(router({}), { accounts: { ad_accounts: ['111'] } });
+  const batch = '[{"method":"GET","relative_url":"v26.0/me/accounts"},{"method":"POST","relative_url":"v26.0/act_999/campaigns","body":"name=x&objective=OUTCOME_TRAFFIC&status=ACTIVE&special_ad_categories=[]"}]';
+  const attempts = [
+    { method: 'POST', path: '/v26.0/act_111', query: { batch } },
+    { method: 'POST', path: '/v26.0/act_111', json: { batch: JSON.parse(batch) } },
+    { method: 'POST', path: '/v26.0/act_111', content_type: 'application/x-www-form-urlencoded', body: `batch=${encodeURIComponent(batch)}` },
+    { method: 'POST', path: '/v26.0/act_111', content_type: 'application/json', body: JSON.stringify({ batch }) },
+    { method: 'POST', path: '/v26.0/act_111/campaigns', query: { method: 'get', fields: 'id' } },
+  ];
+  for (const args of attempts) {
+    const { payload, isError } = await callTool(module, 'api_request', args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, /^The (batch|method) parameter is not available through the generic Meta Ads tools/, JSON.stringify(args));
+  }
+  const leads = await callTool(module, 'api_get', { path: '/v26.0/act_111', query: { fields: 'name,promote_pages{leadgen_forms{leads{field_data}}}' } }, ctx);
+  assert.match(leads.payload.error, /Lead forms and lead data are not available/);
+  const text = await callTool(module, 'api_request', { method: 'POST', path: '/v26.0/act_111/adcreatives', content_type: 'text/plain', body: 'batch=[]' }, ctx);
+  assert.match(text.payload.error, /send parameters as a JSON object \(json\) or as a form/);
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('without an account lock, the accounts edge and its Page tokens stay out of reach, and a reply never carries a token', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me': { id: '5001', name: 'Example Person', access_token: 'EAALeakedToken01' },
+  }), { accounts: null });
+  for (const args of [{ path: '/v26.0/me/accounts' }, { path: '/v26.0/me', query: { fields: 'id,accounts{name}' } }, { path: '/v26.0/5001/accounts' }]) {
+    const { payload } = await callTool(module, 'api_get', args, ctx);
+    assert.match(payload.error, /The accounts edge \(Pages with their tokens\) is not available/, JSON.stringify(args));
+  }
+  assert.equal(fetch.calls.length, 0);
+  const { payload, text } = await callTool(module, 'api_get', { path: '/v26.0/me', query: { fields: 'id,name' } }, ctx);
+  assert.deepEqual(payload.data, { id: '5001', name: 'Example Person' });
+  assert.doesNotMatch(text, /EAALeaked/);
+});
+
+test('with ad accounts chosen, nested fields and edges never reach a business or another ad account', async () => {
+  const { module, fetch, ctx } = setup(router({ 'GET /v26.0/act_111': { id: 'act_111', name: 'Ours' } }), { accounts: { ad_accounts: ['111'] } });
+  const attempts = [
+    { path: '/v26.0/act_111', query: { fields: 'business{owned_ad_accounts{account_id,name,amount_spent,insights{spend}}}' } },
+    { path: '/v26.0/act_111', query: { fields: 'id,users{adaccounts}' } },
+    { path: '/v26.0/act_111/agencies' },
+    { path: '/v26.0/act_111', query: { ids: 'act_999' } },
+    { path: '/v26.0/me/businesses' },
+  ];
+  for (const args of attempts) {
+    const { payload } = await callTool(module, 'api_get', args, ctx);
+    assert.match(payload.error, /the generic Meta Ads tools stay inside them/, JSON.stringify(args));
+  }
+  assert.equal(fetch.calls.length, 0);
+  const ours = await callTool(module, 'api_get', { path: '/v26.0/act_111', query: { fields: 'id,name,business_name' } }, ctx);
+  assert.equal(ours.payload.status, 200);
+
+  const open = setup(router({ 'GET /v26.0/act_111': { id: 'act_111', business: { id: '2001' } } }), { accounts: null });
+  const unlocked = await callTool(open.module, 'api_get', { path: '/v26.0/act_111', query: { fields: 'business' } }, open.ctx);
+  assert.equal(unlocked.payload.status, 200, 'without a lock nothing is held back but tokens and leads');
+});
+
+test('with Pages chosen, api_request and create_ad_set use no other Page', async () => {
+  const { module, fetch, ctx } = setup(router({
+    [`POST /v26.0/act_${ACCOUNT}/adcreatives`]: { id: '120230000000000009' },
+  }));
+  const story = (pageId) => ({ page_id: pageId, link_data: { link: 'https://a.example', image_hash: '0123456789abcdef0123456789abcdef' } });
+  const attempts = [
+    { method: 'POST', path: `/v26.0/act_${ACCOUNT}/adcreatives`, json: { name: 'c', object_story_spec: story('2002') } },
+    { method: 'POST', path: `/v26.0/act_${ACCOUNT}/adcreatives`, content_type: 'application/x-www-form-urlencoded', body: `name=c&object_story_spec=${encodeURIComponent(JSON.stringify(story('2002')))}` },
+    { method: 'POST', path: `/v26.0/act_${ACCOUNT}/adcreatives`, query: { object_story_spec: JSON.stringify(story('2002')) } },
+    { method: 'POST', path: `/v26.0/act_${ACCOUNT}/adcreatives`, json: { name: 'c', object_story_id: '2002_3001' } },
+    { method: 'POST', path: `/v26.0/act_${ACCOUNT}/ads`, json: { name: 'a', adset_id: '1', creative: { object_story_spec: story('2002') } } },
+  ];
+  for (const args of attempts) {
+    const { payload } = await callTool(module, 'api_request', args, ctx);
+    assert.match(payload.error, /The Page 2002 is not among the Pages chosen for this connection\. Use one of: 1001\. Nothing was sent\./, JSON.stringify(args));
+  }
+  const adSet = await callTool(module, 'create_ad_set', { campaign_id: CAMPAIGN, name: 'x', optimization_goal: 'PAGE_LIKES', targeting: { geo_locations: { countries: ['US'] } }, promoted_object: { page_id: '2002' } }, ctx);
+  assert.match(adSet.payload.error, /The Page 2002 is not among the Pages chosen/);
+  assert.equal(fetch.calls.length, 0);
+
+  const ours = await callTool(module, 'api_request', { method: 'POST', path: `/v26.0/act_${ACCOUNT}/adcreatives`, json: { name: 'c', object_story_spec: story('1001') } }, ctx);
+  assert.equal(ours.payload.status, 200);
+  assert.equal(fetch.calls.length, 1);
+});
+
+test('errors: an unclear create names its check tool after one write, and Meta\'s throttling reads as a rate limit', async () => {
   const broken = setup(router({ [`POST /v26.0/act_${ACCOUNT}/campaigns`]: () => jsonResponse(500, { error: { message: 'An unknown error occurred', code: 1 } }) }));
   const unknown = await callTool(broken.module, 'create_campaign', { name: 'x', objective: 'OUTCOME_TRAFFIC' }, broken.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'list_objects');
   assert.equal(broken.fetch.calls.length, 1);
 
-  const limited = setup(router({ [`GET /v26.0/act_${ACCOUNT}/insights`]: () => jsonResponse(429, { error: { message: 'User request limit reached', code: 17 } }, { 'retry-after': '300' }) }));
+  // Meta throttles ads management with HTTP 400 and code 80004, and puts the wait in a usage header.
+  const usage = { 'x-business-use-case-usage': JSON.stringify({ [ACCOUNT]: [{ type: 'ads_management', call_count: 100, total_cputime: 24, total_time: 43, estimated_time_to_regain_access: 5, ads_api_access_tier: 'standard_access' }] }) };
+  const throttled = setup(router({ [`POST /v26.0/act_${ACCOUNT}/campaigns`]: () => jsonResponse(400, f('error-rate-limit.json'), usage) }));
+  const limit = await callTool(throttled.module, 'create_campaign', { name: 'x', objective: 'OUTCOME_TRAFFIC' }, throttled.ctx);
+  assert.equal(limit.isError, true);
+  assert.equal(limit.payload.status, 400);
+  assert.match(limit.payload.error, /^Meta Ads rate limit reached \(HTTP 400\): \(#80004\) There have been too many calls to this ad-account\..* Nothing was changed\. Wait a while before trying again/);
+  assert.equal(throttled.fetch.calls.length, 1, 'never retried');
+  const insights = setup(router({ [`GET /v26.0/act_${ACCOUNT}/insights`]: () => jsonResponse(400, { error: { message: '(#17) User request limit reached', type: 'OAuthException', code: 17, error_subcode: 2446079 } }) }));
+  const read = await callTool(insights.module, 'get_insights', {}, insights.ctx);
+  assert.match(read.payload.error, /^Meta Ads rate limit reached \(HTTP 400\): \(#17\) User request limit reached\. Wait a while/);
+  const invalid = setup(router({ [`GET /v26.0/act_${ACCOUNT}/insights`]: () => jsonResponse(400, { error: { message: '(#100) Invalid parameter', code: 100 } }) }));
+  const other = await callTool(invalid.module, 'get_insights', {}, invalid.ctx);
+  assert.match(other.payload.error, /^Meta Ads rejected the request \(HTTP 400\): \(#100\) Invalid parameter\.$/);
+
+  // A plain HTTP 429 keeps the core's retryAfter.
+  const limited = setup(router({ [`GET /v26.0/act_${ACCOUNT}/insights`]: () => new Response('Too Many Requests', { status: 429, headers: { 'retry-after': '300' } }) }));
   const rate = await callTool(limited.module, 'get_insights', {}, limited.ctx);
   assert.equal(rate.payload.retryAfter, 300);
   assert.match(rate.payload.error, /Meta Ads rate limit reached/);

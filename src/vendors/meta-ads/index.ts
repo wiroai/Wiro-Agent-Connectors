@@ -41,6 +41,7 @@ import {
   tokenOf,
   VERSION,
 } from './graph.js';
+import { readGraphRequest, refuseUnsafe, withoutSecrets, withRateLimits, type GraphRequestParts } from './graph-rules.js';
 
 type SchemaType = ToolDefinition['inputSchema'];
 
@@ -134,6 +135,48 @@ function allowedPages(h: ToolHelpers, adAccountId?: string): string[] | null {
   return mappedPages(h.credentials, adAccountId);
 }
 
+const PAGE_KEYS = new Set(['page_id', 'actor_id']);
+const STORY_KEYS = new Set(['object_story_id', 'effective_object_story_id']);
+
+/** The Page ids that parameters name at any depth (JSON text included): page_id, actor_id, and the Page of an object_story_id. */
+function pageIdsIn(value: unknown, into: Set<string>, depth = 0): void {
+  if (depth > 32) return;
+  if (typeof value === 'string') {
+    if (!/^\s*[[{]/.test(value)) return;
+    try {
+      pageIdsIn(JSON.parse(value), into, depth + 1);
+    } catch {
+      // text, not JSON
+    }
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) pageIdsIn(item, into, depth + 1);
+    return;
+  }
+  if (typeof value !== 'object' || value === null) return;
+  for (const [key, item] of Object.entries(value)) {
+    const name = key.trim().toLowerCase();
+    if (PAGE_KEYS.has(name) && (typeof item === 'string' || typeof item === 'number')) into.add(String(item).trim());
+    else if (STORY_KEYS.has(name) && typeof item === 'string') into.add(item.trim().split('_')[0] ?? '');
+    else pageIdsIn(item, into, depth + 1);
+  }
+}
+
+/** Refuses any Page outside the ones chosen for the connection, wherever the parameters name one. */
+function requirePages(h: ToolHelpers, values: unknown[], adAccountId?: string): void {
+  const allowed = allowedPages(h, adAccountId);
+  if (allowed === null) return;
+  const ids = new Set<string>();
+  for (const value of values) pageIdsIn(value, ids);
+  const refused = [...ids].filter((id) => !allowed.includes(id)).map((id) => truncate(id, 40));
+  if (!refused.length) return;
+  throw new ToolFailure(
+    `The Page ${refused.join(', ')} ${refused.length > 1 ? 'are' : 'is'} not among the Pages chosen for this connection. `
+      + (allowed.length ? `Use one of: ${allowed.join(', ')}.` : 'No Page is chosen for it yet.') + ' Nothing was sent.',
+  );
+}
+
 function choosePage(h: ToolHelpers, given: string | undefined, adAccountId: string): string {
   const allowed = allowedPages(h, adAccountId);
   if (given) {
@@ -179,9 +222,35 @@ function checkPlacements(targeting: any): void {
   }
 }
 
-function refuseLeads(request: ApiToolRequest): void {
-  if (request.segments.some((segment) => segment === 'leads' || segment === 'leadgen_forms')) {
+// Words in a path segment or a fields selection (where Graph names edges and
+// nested fields) that lead out of what the generic tools may reach.
+const LEAD_WORDS = /(?<![a-z0-9_])(?:leads|leadgen_forms|field_data)(?![a-z0-9_])/i;
+const USER_PAGE_WORDS = /(?<![a-z0-9_])accounts(?![a-z0-9_])/i;
+const OTHER_ACCOUNT_WORDS = new RegExp(
+  '(?<![a-z0-9_])(?:business|businesses|owned_businesses|client_businesses|agencies|adaccounts|ad_accounts|owned_ad_accounts|client_ad_accounts'
+    + '|pending_owned_ad_accounts|pending_client_ad_accounts|assigned_ad_accounts|shared_accounts)(?![a-z0-9_])',
+  'i',
+);
+
+/**
+ * What the generic tools keep out of reach besides tokens: lead data, the
+ * accounts edge (each Page with its token), and, while ad accounts are chosen,
+ * businesses and other ad accounts (by path, nested fields or ids).
+ */
+function refuseOutOfReach(parts: GraphRequestParts, h: ToolHelpers): void {
+  const selection = [...parts.segments, ...parts.fields];
+  if (selection.some((text) => LEAD_WORDS.test(text))) {
     throw new ToolFailure('Lead forms and lead data are not available on this connection. Nothing was sent.');
+  }
+  if (selection.some((text) => USER_PAGE_WORDS.test(text))) {
+    throw new ToolFailure('The accounts edge (Pages with their tokens) is not available through the generic Meta Ads tools: list_pages lists the Pages. Nothing was sent.');
+  }
+  if (allowedAccounts(h.ctx.accounts, 'ad_accounts') === null) return;
+  if (selection.some((text) => OTHER_ACCOUNT_WORDS.test(text)) || parts.params.some(({ name }) => name.trim().toLowerCase() === 'ids')) {
+    throw new ToolFailure(
+      'With ad accounts chosen for this connection, the generic Meta Ads tools stay inside them: businesses, agencies, other ad accounts and '
+        + 'lookups by ids are not available. Nothing was sent.',
+    );
   }
 }
 
@@ -295,6 +364,45 @@ function objectStory(args: CreativeArgs): Record<string, unknown> {
   };
 }
 
+/**
+ * api_get and api_request. Before anything is sent, every argument is read the
+ * way Graph reads it (query, JSON or form body, nested JSON text): no batch,
+ * method override, token, lead data or accounts edge; with accounts chosen, no
+ * other ad account or business, and no Page outside the chosen ones; then the
+ * path must name a chosen ad account or one of its objects. Replies lose any
+ * token they carry.
+ */
+function genericTools(): ToolDefinition[] {
+  const tools = apiTools({
+    label: 'Meta Ads',
+    description:
+      'The Marketing API v26.0 on https://graph.facebook.com, with the connection\'s token: paths start with /v26.0/, such as /v26.0/act_<id>/insights, '
+      + '/v26.0/act_<id>/customaudiences, /v26.0/<campaign_id> or /v26.0/<ad_id>/previews, with parameters in query (lists and objects as JSON text). '
+      + 'With ad accounts chosen, a path must name one of them or one of their objects, and Pages in a body must be chosen ones. One request per call: '
+      + 'batch and method are refused; lead data and tokens stay out of reach. Reference: https://developers.facebook.com/docs/marketing-api.',
+    basePath: `/${VERSION}/`,
+    methods: ['POST', 'DELETE'],
+    guard: async (request, h) => {
+      refuseSecrets(request);
+      await adAccountLock(request, h);
+    },
+    send: async (request, h) => {
+      const response = await graph(h, request);
+      return { ...response, data: withoutSecrets(response.data) };
+    },
+  });
+  return tools.map((tool) => ({
+    ...tool,
+    async run(args: Record<string, unknown>, h: ToolHelpers) {
+      const parts = readGraphRequest(args, 'Meta Ads');
+      refuseUnsafe(parts, 'Meta Ads');
+      refuseOutOfReach(parts, h);
+      requirePages(h, parts.params.map(({ name, value }) => ({ [name]: value })));
+      return tool.run(args, h);
+    },
+  }));
+}
+
 const connector = defineConnector({
   vendor: 'meta-ads',
   label: 'Meta Ads',
@@ -330,7 +438,7 @@ const connector = defineConnector({
       legacyField: 'pagemappings',
     },
   ],
-  tools: [
+  tools: withRateLimits([
     {
       name: 'list_ad_accounts',
       kind: 'read',
@@ -771,8 +879,9 @@ const connector = defineConnector({
       title: 'Create a Meta ad set (paused)',
       description:
         'Creates an ad set in a campaign, always paused: targeting, optimization goal, billing event (default IMPRESSIONS), and, unless the campaign has its own '
-        + 'budget, a daily or lifetime budget in minor units; optionally a bid, schedule, promoted object (an app from the store connectors: application_id and '
-        + 'object_store_url; or a pixel and event), destination and attribution.',
+        + 'budget, a daily or lifetime budget in minor units; optionally a bid, schedule, promoted object (an app: its Meta app ID as application_id, from '
+        + 'api_get /v26.0/act_<id>/advertisable_applications, and its store link as object_store_url; a pixel and event; or one of the chosen Pages), '
+        + 'destination and attribution.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -788,7 +897,12 @@ const connector = defineConnector({
           bid_strategy: { type: 'string', enum: ['LOWEST_COST_WITHOUT_CAP', 'COST_CAP', 'LOWEST_COST_WITH_BID_CAP', 'LOWEST_COST_WITH_MIN_ROAS'], description: 'The bid strategy.' },
           start_time: TIME,
           end_time: TIME,
-          promoted_object: { type: 'object', description: 'What the ad set promotes, e.g. {"application_id": "...", "object_store_url": "https://apps.apple.com/app/id..."} or {"pixel_id": "...", "custom_event_type": "PURCHASE"} or {"page_id": "..."}.' },
+          promoted_object: {
+            type: 'object',
+            description: 'What the ad set promotes, e.g. {"application_id": "<the app\'s Meta app ID>", "object_store_url": "https://apps.apple.com/app/id<App Store id>"} '
+              + '(application_id is the Meta app registered for the app, listed by /v26.0/act_<id>/advertisable_applications; a store connector gives only the App Store id '
+              + 'or the package name the store link is built from), {"pixel_id": "...", "custom_event_type": "PURCHASE"}, or {"page_id": "<a chosen Page>"}.',
+          },
           destination_type: { type: 'string', pattern: '^[A-Z_]{2,40}$', description: 'Where people go, e.g. WEBSITE, APP, MESSENGER, WHATSAPP, ON_AD.' },
           attribution_spec: { type: 'array', maxItems: 4, items: { type: 'object' }, description: 'e.g. [{"event_type": "CLICK_THROUGH", "window_days": 7}].' },
           dsa_beneficiary: { type: 'string', maxLength: 200, description: 'For ads shown in the EU: who benefits from the ad.' },
@@ -801,6 +915,7 @@ const connector = defineConnector({
         const accountId = adAccountOf(h, args['ad_account_id']);
         checkPlacements(args['targeting']);
         if (args['daily_budget'] && args['lifetime_budget']) throw new ToolFailure('Give daily_budget or lifetime_budget, not both. Nothing was sent.');
+        requirePages(h, [args['promoted_object']], accountId);
         const { ad_account_id: _account, ...fields } = args;
         const { data } = await graph(h, {
           method: 'POST',
@@ -1074,23 +1189,8 @@ const connector = defineConnector({
         return { id: args.object_id, name: before?.name, deleted: data?.success !== false };
       },
     },
-    ...apiTools({
-      label: 'Meta Ads',
-      description:
-        'The Marketing API v26.0 on https://graph.facebook.com, with the connection\'s token: paths start with /v26.0/, such as /v26.0/act_<id>/insights, '
-        + '/v26.0/act_<id>/customaudiences, /v26.0/<campaign_id> or /v26.0/<ad_id>/previews, with parameters in query (lists and objects as JSON text). '
-        + 'With ad accounts chosen, a path must name one of them or one of their objects; lead data stays out of reach. '
-        + 'Reference: https://developers.facebook.com/docs/marketing-api.',
-      basePath: `/${VERSION}/`,
-      methods: ['POST', 'DELETE'],
-      guard: async (request, h) => {
-        refuseSecrets(request);
-        refuseLeads(request);
-        await adAccountLock(request, h);
-      },
-      send: (request, h) => graph(h, request),
-    }),
-  ],
+    ...genericTools(),
+  ], 'Meta Ads'),
 });
 
 export = connector;
