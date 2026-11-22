@@ -34,7 +34,7 @@ Members are named by email; the connector computes Mailchimp's subscriber hash (
 | `remove_member` | delete | Archives a member, or deletes the member and their data for good. |
 | `list_campaigns` | read | Campaigns with status, audience, recipients and, once sent, opens and clicks. |
 | `get_campaign` | read | One campaign, optionally with its HTML and plain text. |
-| `create_campaign` | create | A draft campaign to an audience or a segment. |
+| `create_campaign` | create | A draft campaign (regular, plain text, RSS or A/B test) to an audience or a segment. |
 | `update_campaign` | update | Changes a draft's audience, segment or settings. |
 | `set_campaign_content` | update | Sets a draft's HTML, plain text, imported page or template sections. |
 | `get_send_checklist` | read | Whether a campaign is ready to send, item by item. |

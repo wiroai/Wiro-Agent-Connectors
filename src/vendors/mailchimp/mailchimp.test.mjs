@@ -298,6 +298,8 @@ test('the campaign flow: create a draft, set its content, check, test, send, sch
     `POST /3.0/campaigns/${CAMPAIGN}/actions/unschedule`,
   ]);
 
+  const rss = await callTool(module, 'create_campaign', { type: 'rss', list_id: LIST, subject_line: 'Weekly posts', from_name: 'Example Team', reply_to: 'hello@example.com' }, ctx);
+  assert.match(rss.payload.error, /rss campaign needs rss_opts/);
   const offQuarter = await callTool(module, 'schedule_campaign', { campaign_id: CAMPAIGN, schedule_time: '2026-12-01T14:10:00Z' }, ctx);
   assert.match(offQuarter.payload.error, /`schedule_time` does not have the expected format/);
   const twoBodies = await callTool(module, 'set_campaign_content', { campaign_id: CAMPAIGN, html: '<p>x</p>', template_id: 5 }, ctx);

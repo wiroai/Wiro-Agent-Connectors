@@ -575,18 +575,27 @@ const connector = defineConnector({
       inputSchema: {
         type: 'object',
         properties: {
-          type: { type: 'string', enum: ['regular', 'plaintext'], default: 'regular', description: 'regular (HTML, default) or plaintext.' },
+          type: {
+            type: 'string',
+            enum: ['regular', 'plaintext', 'rss', 'variate'],
+            default: 'regular',
+            description: 'regular (HTML, default), plaintext, rss (from a feed, with rss_opts) or variate (an A/B test, with variate_settings).',
+          },
           ...RECIPIENT_FIELDS,
           ...SETTINGS_FIELDS,
+          rss_opts: { type: 'object', description: 'For rss: {"feed_url": "https://...", "frequency": "daily" | "weekly" | "monthly", "schedule": {...}}.' },
+          variate_settings: { type: 'object', description: 'For variate: {"winner_criteria": "opens" | "clicks" | "manual", "test_size": 20, "subject_lines": [...], ...}.' },
         },
         required: ['list_id', 'subject_line', 'from_name', 'reply_to'],
         additionalProperties: false,
       },
-      async run(args: SettingsArgs & { type: string }, h) {
+      async run(args: SettingsArgs & { type: string; rss_opts?: Record<string, unknown>; variate_settings?: Record<string, unknown> }, h) {
+        if (args.type === 'rss' && !args.rss_opts) throw new ToolFailure('An rss campaign needs rss_opts with its feed_url and frequency. Nothing was changed.');
+        if (args.type === 'variate' && !args.variate_settings) throw new ToolFailure('A variate campaign needs variate_settings. Nothing was changed.');
         const { data } = await mc(h)({
           method: 'POST',
           path: '/3.0/campaigns',
-          json: { type: args.type, ...campaignParts(args) },
+          json: compact({ type: args.type, ...campaignParts(args), rss_opts: args.rss_opts, variate_settings: args.variate_settings }),
           write: true,
           errors: { 400: 'Mailchimp did not accept the campaign' },
         });
