@@ -223,6 +223,8 @@ function dayStats(date: string, entry: any): DayStats {
   };
 }
 
+const LIST_STATUSES = ['all', 'published', 'unpublished'];
+
 const connector = defineConnector({
   vendor: 'devto',
   label: 'dev.to',
@@ -247,7 +249,7 @@ const connector = defineConnector({
         properties: {
           status: {
             type: 'string',
-            enum: ['all', 'published', 'unpublished'],
+            enum: [...LIST_STATUSES],
             default: 'all',
             description: 'all (default), published, or unpublished (drafts).',
           },
@@ -261,14 +263,16 @@ const connector = defineConnector({
         const page = typeof state?.['p'] === 'number' ? state['p'] : 1;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
         const perPage = typeof state?.['n'] === 'number' ? state['n'] : args.per_page;
-        const { data } = await h.api({ path: `/api/articles/me/${args.status}`, query: { page, per_page: perPage } });
+        // A cursor pages the list it came from, whatever status comes with it.
+        const status = typeof state?.['s'] === 'string' && LIST_STATUSES.includes(state['s']) ? state['s'] : args.status;
+        const { data } = await h.api({ path: `/api/articles/me/${status}`, query: { page, per_page: perPage } });
         const articles: unknown[] = Array.isArray(data) ? data : [];
         return h.page({
           key: 'articles',
           items: articles.map(trimArticle).slice(skip),
-          extra: { status: args.status, page },
-          resumeAt: (index) => h.makeCursor({ p: page, o: skip + index, n: perPage }),
-          ...(articles.length >= perPage ? { nextPage: h.makeCursor({ p: page + 1, o: 0, n: perPage }) } : {}),
+          extra: { status, page },
+          resumeAt: (index) => h.makeCursor({ s: status, p: page, o: skip + index, n: perPage }),
+          ...(articles.length >= perPage ? { nextPage: h.makeCursor({ s: status, p: page + 1, o: 0, n: perPage }) } : {}),
         });
       },
     },

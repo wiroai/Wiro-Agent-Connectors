@@ -66,6 +66,10 @@ test('status picks the endpoint, and a full page gives a cursor to the next one'
   assert.equal(fetch.calls[0].url, 'https://dev.to/api/articles/me/unpublished?page=1&per_page=2');
   await callTool(module, 'list_my_articles', { status: 'unpublished', cursor: first.payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].url, 'https://dev.to/api/articles/me/unpublished?page=2&per_page=2');
+  // The cursor keeps the list it came from: passed back alone, it still pages the drafts.
+  const alone = await callTool(module, 'list_my_articles', { cursor: first.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[2].url, 'https://dev.to/api/articles/me/unpublished?page=2&per_page=2');
+  assert.equal(alone.payload.status, 'unpublished');
 });
 
 test('a page over 32 KB is cut and continues after the last article returned', async () => {
