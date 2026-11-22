@@ -1028,7 +1028,7 @@ const connector = defineConnector({
       description:
         'The SendGrid Web API v3 at https://api.sendgrid.com/v3, with the connected API key: paths start with /v3/, such as /v3/marketing/segments/2.0, '
         + '/v3/marketing/contacts/count, /v3/marketing/lists/{id}, /v3/asm/groups/{id}/suppressions, /v3/user/webhooks/event/settings or /v3/whitelabel/domains. '
-        + 'Reference: https://www.twilio.com/docs/sendgrid/api-reference.',
+        + 'Reference: https://docs.sendgrid.com/api-reference.',
       basePath: '/v3/',
       guard(request) {
         // API keys, teammates, subusers and access settings are account administration.

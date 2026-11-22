@@ -1,6 +1,6 @@
 # SendGrid (`sendgrid`)
 
-Email through the [SendGrid Web API v3](https://www.twilio.com/docs/sendgrid/api-reference): send email with text, HTML or dynamic templates and attachments from public URLs; manage Marketing Campaigns contacts (add, update, search, delete), lists and custom fields; build, schedule, send and measure Single Sends; manage dynamic templates and their versions, verified senders and unsubscribe groups; read statistics, email activity and suppressions. `api_get` and `api_request` reach the rest of the API, such as segments, event webhooks and domain authentication.
+Email through the [SendGrid Web API v3](https://docs.sendgrid.com/api-reference): send email with text, HTML or dynamic templates and attachments from public URLs; manage Marketing Campaigns contacts (add, update, search, delete), lists and custom fields; build, schedule, send and measure Single Sends; manage dynamic templates and their versions, verified senders and unsubscribe groups; read statistics, email activity and suppressions. `api_get` and `api_request` reach the rest of the API, such as segments, event webhooks and domain authentication.
 
 ## README rows
 
