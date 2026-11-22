@@ -1,0 +1,31 @@
+{
+  "searchParameters": { "q": "red panda", "gl": "us", "hl": "en", "type": "images", "num": 2, "page": 1, "engine": "google" },
+  "images": [
+    {
+      "title": "Red panda resting on a branch",
+      "imageUrl": "https://photos.example.com/red-panda-branch.jpg",
+      "imageWidth": 1920,
+      "imageHeight": 1280,
+      "thumbnailUrl": "https://encrypted-tbn0.example.com/images?q=tbn:red-panda-1",
+      "thumbnailWidth": 275,
+      "thumbnailHeight": 183,
+      "source": "Example Photos",
+      "domain": "photos.example.com",
+      "link": "https://photos.example.com/animals/red-panda",
+      "googleUrl": "https://www.google.com/imgres?imgurl=https://photos.example.com/red-panda-branch.jpg",
+      "position": 1
+    },
+    {
+      "title": "Red panda facts",
+      "imageUrl": "https://zoo.example.org/media/red-panda.png",
+      "imageWidth": 800,
+      "imageHeight": 600,
+      "thumbnailUrl": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+      "source": "Example Zoo",
+      "domain": "zoo.example.org",
+      "link": "https://zoo.example.org/animals/red-panda",
+      "position": 2
+    }
+  ],
+  "credits": 1
+}

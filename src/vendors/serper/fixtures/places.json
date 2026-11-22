@@ -1,0 +1,30 @@
+{
+  "searchParameters": { "q": "coffee shops in Austin", "gl": "us", "hl": "en", "type": "places", "page": 1, "engine": "google" },
+  "places": [
+    {
+      "position": 1,
+      "title": "Example Coffee Roasters",
+      "address": "100 Example St, Austin, TX 78701",
+      "latitude": 30.2672,
+      "longitude": -97.7431,
+      "rating": 4.6,
+      "ratingCount": 1284,
+      "category": "Coffee shop",
+      "phoneNumber": "(512) 555-0100",
+      "website": "https://coffee.example.com/",
+      "cid": "1234567890123456789"
+    },
+    {
+      "position": 2,
+      "title": "Second Example Cafe",
+      "address": "200 Sample Ave, Austin, TX 78702",
+      "latitude": 30.2601,
+      "longitude": -97.7225,
+      "rating": 4.4,
+      "ratingCount": 512,
+      "category": "Cafe",
+      "cid": "9876543210987654321"
+    }
+  ],
+  "credits": 1
+}

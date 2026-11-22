@@ -1,0 +1,27 @@
+{
+  "searchParameters": { "q": "trail running shoes", "gl": "us", "hl": "en", "type": "shopping", "num": 2, "page": 1, "engine": "google" },
+  "shopping": [
+    {
+      "title": "Example Trail Runner 3",
+      "source": "Example Outdoors",
+      "link": "https://shop.example.com/trail-runner-3",
+      "price": "$129.99",
+      "delivery": "Free delivery",
+      "imageUrl": "https://images.example.com/trail-runner-3.jpg",
+      "rating": 4.5,
+      "ratingCount": 862,
+      "offers": "12 offers",
+      "productId": "1234567890987654321",
+      "position": 1
+    },
+    {
+      "title": "Sample Mountain Shoe",
+      "source": "Sample Sports",
+      "link": "https://sports.example.org/mountain-shoe",
+      "price": "$99.00",
+      "imageUrl": "data:image/webp;base64,UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA",
+      "position": 2
+    }
+  ],
+  "credits": 1
+}

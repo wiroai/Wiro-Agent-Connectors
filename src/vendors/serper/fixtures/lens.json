@@ -1,0 +1,23 @@
+{
+  "searchParameters": { "url": "https://images.example.com/lamp.jpg", "type": "lens", "engine": "google-lens" },
+  "organic": [
+    {
+      "title": "Example brass desk lamp",
+      "source": "Example Home",
+      "link": "https://home.example.com/brass-desk-lamp",
+      "imageUrl": "https://home.example.com/media/brass-desk-lamp.jpg",
+      "thumbnailUrl": "https://encrypted-tbn1.example.com/images?q=tbn:lamp-1",
+      "price": "$89.00",
+      "inStock": true,
+      "position": 1
+    },
+    {
+      "title": "Vintage desk lamps: a buying guide",
+      "source": "Example Blog",
+      "link": "https://blog.example.net/vintage-desk-lamps",
+      "thumbnailUrl": "https://encrypted-tbn1.example.com/images?q=tbn:lamp-2",
+      "position": 2
+    }
+  ],
+  "credits": 1
+}

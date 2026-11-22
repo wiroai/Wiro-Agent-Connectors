@@ -1,0 +1,23 @@
+{
+  "searchParameters": { "q": "foldable bicycle frame", "type": "patents", "num": 1, "page": 1, "engine": "google-patents" },
+  "organic": [
+    {
+      "title": "Folding frame for a bicycle",
+      "snippet": "A bicycle frame with a hinge that locks in the riding position.",
+      "link": "https://patents.example.com/patent/US0000001B2/en",
+      "priorityDate": "2021-04-02",
+      "filingDate": "2022-03-30",
+      "grantDate": "2024-08-13",
+      "publicationDate": "2024-08-13",
+      "inventor": "C. Inventor",
+      "assignee": "Example Cycles Inc",
+      "publicationNumber": "US0000001B2",
+      "language": "en",
+      "thumbnailUrl": "https://patentimages.example.com/thumb/US0000001.png",
+      "pdfUrl": "https://patentimages.example.com/pdfs/US0000001.pdf",
+      "figures": [{ "imageUrl": "https://patentimages.example.com/fig1.png", "thumbnailUrl": "https://patentimages.example.com/fig1-thumb.png" }],
+      "position": 1
+    }
+  ],
+  "credits": 1
+}

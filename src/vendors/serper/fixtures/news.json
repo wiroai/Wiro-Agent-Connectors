@@ -1,0 +1,32 @@
+{
+  "searchParameters": { "q": "electric bikes", "gl": "us", "hl": "en", "type": "news", "num": 3, "page": 1, "engine": "google" },
+  "news": [
+    {
+      "title": "City expands its e-bike rebate program",
+      "link": "https://news.example.com/2026/11/ebike-rebate",
+      "snippet": "The rebate now covers cargo bikes and adaptive models for residents of every district.",
+      "date": "2 hours ago",
+      "source": "Example News",
+      "imageUrl": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/",
+      "position": 1
+    },
+    {
+      "title": "Battery standards for e-bikes tighten next year",
+      "link": "https://daily.example.org/tech/ebike-battery-standards",
+      "snippet": "New certification rules aim to cut battery fires in apartment buildings.",
+      "date": "1 day ago",
+      "source": "Example Daily",
+      "imageUrl": "https://images.example.org/ebike-battery.jpg",
+      "position": 2
+    },
+    {
+      "title": "Review: five commuter e-bikes under 2,000 dollars",
+      "link": "https://reviews.example.net/commuter-ebikes",
+      "snippet": "We rode each bike for a month of daily commutes.",
+      "date": "3 days ago",
+      "source": "Example Reviews",
+      "position": 3
+    }
+  ],
+  "credits": 1
+}

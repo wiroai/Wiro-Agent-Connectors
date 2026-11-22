@@ -1,0 +1,27 @@
+{
+  "searchParameters": { "q": "bookstore", "ll": "@40.7128,-74.006,14z", "type": "maps", "page": 1, "engine": "google" },
+  "ll": "@40.7128,-74.006,14z",
+  "places": [
+    {
+      "position": 1,
+      "title": "Example Books",
+      "address": "12 Sample St, New York, NY 10007",
+      "latitude": 40.7131,
+      "longitude": -74.0072,
+      "rating": 4.7,
+      "ratingCount": 2210,
+      "priceLevel": "$$",
+      "type": "Book store",
+      "types": ["Book store", "Cafe"],
+      "website": "https://books.example.com/",
+      "phoneNumber": "(212) 555-0199",
+      "description": "Independent bookstore with a reading room and weekly author talks.",
+      "openingHours": { "Monday": "10 AM–8 PM", "Tuesday": "10 AM–8 PM", "Sunday": "11 AM–6 PM" },
+      "thumbnailUrl": "https://lh5.example.com/p/thumb-books.jpg",
+      "cid": "1122334455667788990",
+      "fid": "0x89c25a197c06b7cb:0x40a06c78f79e5de6",
+      "placeId": "ChIJExampleBooks0001"
+    }
+  ],
+  "credits": 3
+}

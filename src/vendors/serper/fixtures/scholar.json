@@ -1,0 +1,17 @@
+{
+  "searchParameters": { "q": "retrieval augmented generation", "type": "scholar", "page": 1, "engine": "google-scholar" },
+  "organic": [
+    {
+      "title": "Retrieval methods for language models: a survey",
+      "link": "https://papers.example.org/abs/2601.00001",
+      "publicationInfo": "A Author, B Author - Journal of Examples, 2026 - papers.example.org",
+      "snippet": "We survey retrieval methods that ground language model answers in documents.",
+      "year": 2026,
+      "citedBy": 154,
+      "pdfUrl": "https://papers.example.org/pdf/2601.00001",
+      "id": "AbCdEfGhIjKl",
+      "position": 1
+    }
+  ],
+  "credits": 1
+}

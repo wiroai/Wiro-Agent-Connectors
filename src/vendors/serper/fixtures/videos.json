@@ -1,0 +1,27 @@
+{
+  "searchParameters": { "q": "sourdough starter", "gl": "us", "hl": "en", "type": "videos", "num": 2, "page": 1, "engine": "google" },
+  "videos": [
+    {
+      "title": "How to make a sourdough starter from scratch",
+      "link": "https://video.example.com/watch?v=abc123",
+      "snippet": "Day by day: flour, water and patience.",
+      "imageUrl": "https://img.example.com/vi/abc123/default.jpg",
+      "duration": "12:41",
+      "source": "Example Video",
+      "channel": "Example Bakery",
+      "date": "Mar 3, 2026",
+      "position": 1
+    },
+    {
+      "title": "Sourdough starter mistakes to avoid",
+      "link": "https://video.example.com/watch?v=def456",
+      "snippet": "Five reasons a starter will not rise.",
+      "duration": "8:05",
+      "source": "Example Video",
+      "channel": "Example Kitchen",
+      "date": "Jan 19, 2026",
+      "position": 2
+    }
+  ],
+  "credits": 1
+}
