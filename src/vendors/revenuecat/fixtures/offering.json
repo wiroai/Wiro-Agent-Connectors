@@ -1,0 +1,34 @@
+{
+  "object": "offering",
+  "id": "ofrnge1a2b3c4d5",
+  "lookup_key": "default",
+  "display_name": "Default offering",
+  "is_current": true,
+  "created_at": 1658399423658,
+  "project_id": "proj1ab2c3d4",
+  "state": "active",
+  "metadata": { "paywall_variant": "b" },
+  "packages": {
+    "object": "list",
+    "items": [
+      {
+        "object": "package",
+        "id": "pkge1a2b3c4d5",
+        "lookup_key": "$rc_weekly",
+        "display_name": "Weekly",
+        "position": 1,
+        "created_at": 1658399423658,
+        "products": {
+          "object": "list",
+          "items": [
+            { "product": { "object": "product", "id": "prod1a2b3c4d5", "store_identifier": "com.example.photo.pro.weekly", "type": "subscription", "subscription": { "duration": "P1W", "trial_duration": "P3D" }, "app_id": "app1a2b3c4", "display_name": "Pro Weekly", "state": "active" }, "eligibility_criteria": "all" }
+          ],
+          "next_page": null,
+          "url": "/v2/projects/proj1ab2c3d4/packages/pkge1a2b3c4d5/products"
+        }
+      }
+    ],
+    "next_page": null,
+    "url": "/v2/projects/proj1ab2c3d4/offerings/ofrnge1a2b3c4d5/packages"
+  }
+}

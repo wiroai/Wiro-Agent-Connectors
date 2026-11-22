@@ -1,0 +1,10 @@
+{
+  "object": "overview_metrics",
+  "currency": "USD",
+  "metrics": [
+    { "object": "overview_metric", "id": "active_trials", "name": "Active Trials", "description": "In total", "unit": "#", "period": "P0D", "value": 1312, "last_updated_at": 1763740800000, "last_updated_at_iso8601": "2026-11-21T16:00:00Z" },
+    { "object": "overview_metric", "id": "active_subscriptions", "name": "Active Subscriptions", "description": "In total", "unit": "#", "period": "P0D", "value": 20451, "last_updated_at": 1763740800000, "last_updated_at_iso8601": "2026-11-21T16:00:00Z" },
+    { "object": "overview_metric", "id": "mrr", "name": "MRR", "description": "Monthly Recurring Revenue", "unit": "$", "period": "P28D", "value": 184233.5, "last_updated_at": 1763740800000, "last_updated_at_iso8601": "2026-11-21T16:00:00Z" },
+    { "object": "overview_metric", "id": "revenue", "name": "Revenue", "description": "Last 28 days", "unit": "$", "period": "P28D", "value": 201940.11, "last_updated_at": 1763740800000, "last_updated_at_iso8601": "2026-11-21T16:00:00Z" }
+  ]
+}
