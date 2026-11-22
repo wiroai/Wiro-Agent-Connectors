@@ -1,0 +1,7 @@
+{ "data": { "id": "post_00000000-0000-0000-0000-000000000001", "title": "Weekly digest", "subtitle": "Three changes worth knowing", "status": "confirmed", "publish_date": 1795300000, "audience": "free", "platform": "both", "subject_line": "Three changes worth knowing", "preview_text": "What shipped in November", "web_url": "https://acme.example.com/p/weekly-digest", "content_tags": ["product"],
+  "content": { "free": { "web": "<h1>Weekly digest</h1>\n<p>Hello</p>\n", "email": "<p>Hello by email</p>" } },
+  "stats": { "email": { "recipients": 100, "delivered": 98, "unique_opens": 45, "unique_clicks": 8, "unsubscribes": 1, "spam_reports": 0 }, "web": { "views": 200, "clicks": 40 },
+    "clicks": [
+      { "url": "https://acme.example.com/pricing", "total_unique_clicks": 3, "email": { "unique_clicks": 2 }, "web": { "unique_clicks": 1 } },
+      { "url": "https://acme.example.com/docs", "total_unique_clicks": 9, "email": { "unique_clicks": 7 }, "web": { "unique_clicks": 2 } }
+    ] } } }

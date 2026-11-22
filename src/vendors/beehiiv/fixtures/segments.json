@@ -1,0 +1,1 @@
+{ "data": [ { "id": "seg_00000000-0000-0000-0000-000000000001", "name": "Engaged", "type": "dynamic", "last_calculated": 1795300000, "total_results": 640, "status": "completed", "active": true } ], "limit": 100, "page": 1, "total_results": 1, "total_pages": 1 }

@@ -1,0 +1,1 @@
+{ "data": { "id": "sub_00000000-0000-0000-0000-000000000002", "email": "sam@example.com", "status": "validating", "created": 1795400000, "subscription_tier": "free", "utm_source": "" }, "warnings": [ { "message": "Unknown custom field: Plan", "code": "UNKNOWN_FIELD" } ] }

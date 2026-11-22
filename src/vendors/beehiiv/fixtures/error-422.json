@@ -1,0 +1,1 @@
+{ "status": 422, "statusText": "Unprocessable Entity", "errors": [ { "message": "Daily test send limit reached", "code": "TEST_SEND_LIMIT" } ] }
