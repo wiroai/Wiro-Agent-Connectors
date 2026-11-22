@@ -1,0 +1,9 @@
+{
+  "urls_clicked": [
+    { "id": "1b2c3d4e5f", "url": "https://example.com/blog/a", "total_clicks": 500, "click_percentage": 0.56, "unique_clicks": 400, "unique_click_percentage": 0.61, "last_click": "2026-11-21T08:00:00+00:00", "ab_split": {}, "campaign_id": "42694e9e57", "_links": [ { "rel": "self" } ] },
+    { "id": "6a7b8c9d0e", "url": "https://example.com/pricing", "total_clicks": 390, "click_percentage": 0.44, "unique_clicks": 254, "unique_click_percentage": 0.39, "last_click": "2026-11-21T07:00:00+00:00", "campaign_id": "42694e9e57", "_links": [] }
+  ],
+  "campaign_id": "42694e9e57",
+  "total_items": 2,
+  "_links": []
+}

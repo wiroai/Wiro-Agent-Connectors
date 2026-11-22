@@ -1,0 +1,22 @@
+{
+  "lists": [
+    {
+      "id": "abc123def4",
+      "web_id": 123456,
+      "name": "Main Newsletter",
+      "contact": { "company": "Example Co", "address1": "1 Example Street", "city": "Austin", "state": "TX", "zip": "78701", "country": "US" },
+      "permission_reminder": "You signed up on our website.",
+      "campaign_defaults": { "from_name": "Example Team", "from_email": "hello@example.com", "subject": "", "language": "en" },
+      "date_created": "2024-03-01T10:00:00+00:00",
+      "list_rating": 3,
+      "subscribe_url_short": "https://eepurl.com/abcdef",
+      "visibility": "pub",
+      "double_optin": false,
+      "stats": { "member_count": 5420, "unsubscribe_count": 85, "cleaned_count": 12, "member_count_since_send": 30, "unsubscribe_count_since_send": 2, "cleaned_count_since_send": 0, "campaign_count": 40, "campaign_last_sent": "2026-11-20T14:00:00+00:00", "merge_field_count": 5, "avg_sub_rate": 12, "avg_unsub_rate": 1, "target_sub_rate": 3, "open_rate": 42.5, "click_rate": 6.1, "last_sub_date": "2026-11-21T09:00:00+00:00", "last_unsub_date": "2026-11-19T09:00:00+00:00" },
+      "_links": [ { "rel": "self", "href": "https://us19.api.mailchimp.com/3.0/lists/abc123def4" } ]
+    }
+  ],
+  "total_items": 1,
+  "constraints": { "may_create": false, "max_instances": 1, "current_total_instances": 1 },
+  "_links": []
+}

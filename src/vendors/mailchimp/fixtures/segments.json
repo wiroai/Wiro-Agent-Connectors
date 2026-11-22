@@ -1,0 +1,9 @@
+{
+  "segments": [
+    { "id": 12345, "name": "VIP", "member_count": 42, "type": "static", "created_at": "2025-06-01T10:00:00+00:00", "updated_at": "2026-11-01T10:00:00+00:00", "options": {}, "list_id": "abc123def4", "_links": [] },
+    { "id": 12346, "name": "Active openers", "member_count": 1300, "type": "saved", "created_at": "2025-06-02T10:00:00+00:00", "updated_at": "2026-11-01T10:00:00+00:00", "options": { "match": "all", "conditions": [ { "condition_type": "Aim", "field": "aim", "op": "open", "value": "any" } ] }, "list_id": "abc123def4", "_links": [] }
+  ],
+  "list_id": "abc123def4",
+  "total_items": 2,
+  "_links": []
+}

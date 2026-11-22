@@ -1,0 +1,9 @@
+{
+  "new_members": [ { "id": "1d1b0a58d8c1e7c5f0a7b8c9d0e1f2a3", "email_address": "alice@example.com", "status": "subscribed", "_links": [] } ],
+  "updated_members": [ { "id": "b58996c504c5638798eb6b511e6f49af", "email_address": "user@example.com", "status": "subscribed", "_links": [] } ],
+  "errors": [ { "email_address": "bad@", "error": "bad@ looks fake or invalid, please enter a real email address.", "error_code": "ERROR_CONTACT_EXISTS", "field": "email_address", "field_message": "" } ],
+  "total_created": 1,
+  "total_updated": 1,
+  "error_count": 1,
+  "_links": []
+}
