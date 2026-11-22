@@ -22,17 +22,17 @@ People search and everything about your own records is free; enrichment, company
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `get_profile` | read | The key's user and team, and credits used and left. Connection check. |
+| `get_profile` | read | The key's user and team, and the user's credits: allowance and use per kind, lead credits left. Connection check. |
 | `get_usage` | read | API calls and rate limits left per endpoint, or credits used. |
 | `search_people` | read | Prospects by title, seniority, location, company and keywords (free; no emails or phones). |
-| `enrich_people` | read | Full profiles of 1 to 10 people with work email (credits); phones by request id. |
-| `get_enrichment_result` | read | The phones of an earlier enrichment, by request id. |
+| `enrich_people` | read | Full profiles of 1 to 10 people with work email (credits); phones later, by request id while Apollo's lookup is pending. |
+| `get_enrichment_result` | read | The phones of an earlier enrichment, by its request id (a signed number, passed exactly as given). |
 | `enrich_organizations` | read | Profiles of 1 to 10 companies by domain (credits). |
 | `search_organizations` | read | Companies by name, domain, size, location, keywords, technologies, funding (credits per page). |
 | `list_job_postings` | read | A company's open jobs (credits per page). |
 | `search_news` | read | News about companies (credits per page). |
 | `create_contacts` | create | Saves 1 to 100 contacts, without deduplication. |
-| `upsert_contacts` | update | Saves 1 to 100 contacts, updating the ones Apollo matches. |
+| `upsert_contacts` | update | Saves 1 to 100 contacts without duplicates: one contact updates its match in place; in bulk, matches come back unchanged for `update_contact`. |
 | `update_contact` | update | Changes a contact. |
 | `search_contacts` | read | Your contacts by keywords, stages or lists. |
 | `get_contact` | read | One contact. |
@@ -44,7 +44,7 @@ People search and everything about your own records is free; enrichment, company
 | `add_contacts_to_sequence` | create | Adds contacts (or lists) to a sequence, sending from an email account. |
 | `update_sequence_contacts` | update | Stops, finishes or removes contacts in sequences. |
 | `set_sequence_active` | update | Activates or deactivates a sequence. |
-| `search_outreach_emails` | read | Sequence emails by sequence, status, reply class, user or date. |
+| `search_outreach_emails` | read | Sequence emails by sequence, status, reply class (replies), user, or a range of due or sent dates. |
 | `get_outreach_email_activities` | read | One outreach email's deliveries, opens, clicks and reply. |
 | `create_deal` | create | A deal with amount, stage, owner, account and close date. |
 | `search_deals` | read | Deals by name, account, owner, stage, open or closed. |
@@ -84,5 +84,6 @@ The key goes only to `https://api.apollo.io/api/v1/`, in the `x-api-key` header.
 - Credits: people and company enrichment 1 per record found (8 more for a mobile phone), company search, job postings and news 1 per page; people search is free. `get_profile` shows the credits left.
 - Apollo limits each endpoint per minute, hour and day by plan (`get_usage` shows them); a 429 comes back with `retryAfter`, and nothing is queued or retried.
 - People search shows at most 50,000 people (500 pages of 100). Enrichment takes 10 people or companies a call; contacts, accounts and tasks are created 100 at a time.
-- Phone numbers come later: `enrich_people` with `reveal_phone_number` returns a `request_id` for `get_enrichment_result`, which Apollo keeps for 30 days.
+- Phone numbers come later: `enrich_people` with `reveal_phone_number` returns a `request_id` for `get_enrichment_result` only while `phone_enrichment` is `pending` (`skipped` or `not_attempted` means there is nothing to fetch). Apollo keeps the result for 30 days.
+- `upsert_contacts` needs an email, or a first and last name with a company, for each contact. Apollo's bulk endpoint never overwrites a contact it matches: with several contacts the matches come back in `unchanged_existing_contacts`, to change with `update_contact`.
 - Apollo's API cannot delete contacts, accounts or deals.

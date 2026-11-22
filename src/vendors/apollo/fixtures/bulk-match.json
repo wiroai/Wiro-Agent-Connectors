@@ -1,1 +1,20 @@
-{ "status": "success", "error_code": null, "error_message": null, "total_requested_enrichments": 2, "unique_enriched_records": 1, "missing_records": 1, "credits_consumed": 1, "matches": [ { "id": "64a7ff0cc4dfae00013df1a5", "first_name": "Tim", "last_name": "Example", "name": "Tim Example", "title": "Founder & CEO", "email": "tim@example.com", "email_status": "verified" }, null ] }
+{
+  "status": "success",
+  "error_code": null,
+  "error_message": null,
+  "total_requested_enrichments": 2,
+  "unique_enriched_records": 1,
+  "missing_records": 1,
+  "credits_consumed": 1,
+  "request_id": -9045486258674686251,
+  "request_id_str": "-9045486258674686251",
+  "phone_enrichment": {
+    "request_id": 7343,
+    "status": "pending",
+    "message": "Phone enrichment is in progress. Poll the result with the top-level request_id_str."
+  },
+  "matches": [
+    { "id": "person001", "first_name": "Sam", "last_name": "Example", "name": "Sam Example", "title": "Head of Growth", "email": "sam@example.com", "email_status": "verified" },
+    null
+  ]
+}

@@ -10,7 +10,7 @@
 // People search is free; enrichment, company search, job postings and news
 // use Apollo credits, and their tools say so.
 
-import { apiTools, defineConnector, ToolFailure, type ApiRequest, type ToolDefinition, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, ToolFailure, truncate, type ApiRequest, type ToolDefinition, type ToolHelpers } from '../../core/index.js';
 import {
   compact,
   paged,
@@ -59,17 +59,32 @@ const DATE_TIME = (what: string): JsonSchema => ({
   pattern: '^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}(:\\d{2}(\\.\\d+)?)?(Z|[+-]\\d{2}:?\\d{2})?)?$',
   description: `${what}, an ISO 8601 date or date-time.`,
 });
-const CUSTOM_FIELDS: JsonSchema = { type: 'object', description: 'Custom field values by field id (see list_team_data custom_fields), e.g. {"60c39ed82bd02f01154c470a": "value"}.' };
+const CUSTOM_FIELDS: JsonSchema = { type: 'object', description: 'Custom field values by field id (see list_team_data custom_fields), e.g. {"6650f0c0a1b2c3d4e5f60789": "value"}.' };
+const DATE: JsonSchema = { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
+
+/** The free filters with the typed arguments over them: a typed argument that was given wins. */
+function merged(typed: Record<string, unknown>, filters?: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...filters };
+  for (const [key, value] of Object.entries(typed)) {
+    if (value !== undefined) out[key] = value;
+  }
+  return out;
+}
 
 /** A JSON body from typed arguments and the free filters; typed arguments win. */
 function body(typed: Record<string, unknown>, filters?: Record<string, unknown>): Record<string, unknown> {
-  return compact({ ...filters, ...typed });
+  return compact(merged(typed, filters));
+}
+
+/** A {min, max} range, or undefined when neither end is given. */
+function range(min: unknown, max: unknown): Record<string, unknown> | undefined {
+  return min === undefined && max === undefined ? undefined : compact({ min, max });
 }
 
 /** Query parameters for Apollo's GET searches: lists repeat as name[]; names with brackets stay as they are. */
 function query(typed: Record<string, unknown>, filters?: Record<string, unknown>): Query {
   const out: Query = {};
-  for (const [key, value] of Object.entries({ ...filters, ...typed })) {
+  for (const [key, value] of Object.entries(merged(typed, filters))) {
     if (value === undefined || value === null || value === '') continue;
     if (Array.isArray(value)) {
       if (!value.length) continue;
@@ -137,7 +152,11 @@ const ACCOUNT_FIELDS: Record<string, JsonSchema> = {
 
 const TASK_TYPES = ['call', 'outreach_manual_email', 'linkedin_step_connect', 'linkedin_step_message', 'linkedin_step_view_profile', 'linkedin_step_interact_post', 'action_item'];
 
-/** One contact or account, or several with the bulk endpoint: the created records, and those Apollo matched instead. */
+/**
+ * One contact or account, or several with the bulk endpoint: the created records, and those Apollo matched instead.
+ * With dedupe, the single endpoint updates the record it matches in place, while the bulk endpoint returns its
+ * matches unchanged: they come back as unchanged_existing_<kind>.
+ */
 async function createRecords(
   h: ToolHelpers,
   kind: 'contacts' | 'accounts',
@@ -165,8 +184,61 @@ async function createRecords(
   });
   const created: unknown[] = Array.isArray(data?.[`created_${kind}`]) ? data[`created_${kind}`] : [];
   const existing: unknown[] = Array.isArray(data?.[`existing_${kind}`]) ? data[`existing_${kind}`] : [];
-  return compact({ [kind]: created.map(trim), [`existing_${kind}`]: existing.map(trim) });
+  if (!options.dedupe) return compact({ [kind]: created.map(trim), [`existing_${kind}`]: existing.map(trim) });
+  return compact({
+    [kind]: created.map(trim),
+    [`unchanged_existing_${kind}`]: existing.map(trim),
+    note: existing.length
+      ? `Apollo matched ${existing.length} of them to existing ${kind} and left those unchanged: change them with update_${kind === 'contacts' ? 'contact' : 'account'}.`
+      : undefined,
+  });
 }
+
+/** contacts[i] of upsert_contacts needs something Apollo matches on, or each call would add it again. */
+function requireMatchKeys(contacts: Record<string, unknown>[]): void {
+  const given = (contact: Record<string, unknown>, key: string) => typeof contact[key] === 'string' && (contact[key] as string).trim() !== '';
+  const index = contacts.findIndex((contact) => !given(contact, 'email')
+    && !(given(contact, 'first_name') && given(contact, 'last_name') && given(contact, 'organization_name')));
+  if (index !== -1) {
+    throw new ToolFailure(`contacts[${index}] needs an email, or a first_name and last_name with organization_name, for Apollo to match it on. Nothing was changed.`);
+  }
+}
+
+/** Apollo's request ids are signed 64-bit integers, as text. */
+const REQUEST_ID = /^-?\d{1,19}$/;
+
+/**
+ * What enrich_people says about phones. Apollo looks for them after answering, and only while
+ * phone_enrichment.status is pending is there a result to poll, by the top-level request id. That id is a
+ * signed 64-bit integer, which a JSON number cannot always hold exactly, so it is read from request_id_str.
+ */
+function phoneLookup(data: any): Record<string, unknown> {
+  const lookup = data?.phone_enrichment;
+  if (!lookup || typeof lookup !== 'object') return {};
+  const message = typeof lookup.message === 'string' && lookup.message ? truncate(lookup.message, 300) : undefined;
+  if (lookup.status !== 'pending') return { phone_enrichment: compact({ status: lookup.status, message }) };
+  const id = [data?.request_id_str, data?.request_id].find((value) => typeof value === 'string' && REQUEST_ID.test(value))
+    ?? (Number.isSafeInteger(data?.request_id) ? String(data.request_id) : undefined);
+  if (!id) return { phone_enrichment: { status: 'pending', message: 'Apollo gave no request id that can be read exactly, so the phones cannot be polled.' } };
+  return { request_id: id, phone_enrichment: compact({ status: 'pending', message }) };
+}
+
+/** get_profile's credit fields: Apollo answers them flat, next to the user's own fields. */
+function creditUsage(data: any): Record<string, unknown> {
+  const number = (key: string) => (typeof data?.[key] === 'number' ? data[key] : undefined);
+  const kind = (limit: string, used: string) => compact({ limit: number(limit), used: number(used) });
+  return compact({
+    lead_credits: compact({ limit: number('effective_num_lead_credits'), used: number('num_lead_credits_used'), remaining: number('num_credits_remaining') }),
+    direct_dial_credits: kind('effective_num_direct_dial_credits', 'num_direct_dial_credits_used'),
+    export_credits: kind('effective_num_export_credits', 'num_export_credits_used'),
+    ai_credits: kind('effective_num_ai_credits', 'num_ai_credits_used'),
+    power_up_credits: kind('effective_num_power_up_credits', 'num_power_up_credits_used'),
+    total_unified_credits_used: number('total_unified_credits_used'),
+  });
+}
+
+const EMAIL_STATUSES = ['delivered', 'scheduled', 'drafted', 'not_opened', 'opened', 'clicked', 'unsubscribed', 'demoed', 'bounced', 'spam_blocked', 'failed_other'];
+const REPLY_CLASSES = ['willing_to_meet', 'follow_up_question', 'person_referral', 'out_of_office', 'already_left_company_or_not_right_person', 'not_interested', 'unsubscribe', 'none_of_the_above'];
 
 const LIST_KINDS: Record<string, { path: string; field: string; trim(item: any): unknown; paged?: boolean }> = {
   users: { path: `${BASE}/users/search`, field: 'users', paged: true, trim: (user) => compact({ id: user?.id, first_name: user?.first_name, last_name: user?.last_name, email: user?.email, title: user?.title }) },
@@ -191,7 +263,9 @@ const connector = defineConnector({
       name: 'get_profile',
       kind: 'read',
       title: 'Get the Apollo user and credits',
-      description: 'The Apollo user the API key belongs to (name, email, team) and, with credits, the credits used and left. Free; a quick connection check.',
+      description:
+        'The Apollo user the API key belongs to (name, email, team) and, with credits, the user\'s credits: for lead, direct dial, export, AI and power-up '
+        + 'credits the allowance and how many are used, and the lead credits left. Free; a quick connection check.',
       inputSchema: {
         type: 'object',
         properties: { credits: { type: 'boolean', default: true, description: 'true (default) to include credit usage.' } },
@@ -199,15 +273,14 @@ const connector = defineConnector({
       },
       async run(args: { credits: boolean }, h) {
         const { data } = await ap(h, { path: `${BASE}/users/api_profile`, query: { include_credit_usage: args.credits || undefined } });
-        const user = data?.user ?? data;
         return compact({
-          id: user?.id,
-          team_id: user?.team_id,
-          first_name: user?.first_name,
-          last_name: user?.last_name,
-          email: user?.email,
-          title: user?.title,
-          credit_usage: data?.credit_usage ?? user?.credit_usage,
+          id: data?.id,
+          team_id: data?.team_id,
+          first_name: data?.first_name,
+          last_name: data?.last_name,
+          email: data?.email,
+          title: data?.title,
+          credit_usage: args.credits ? creditUsage(data) : undefined,
           key: h.credentials['masterapikey'] ? 'master API key' : 'API key',
         });
       },
@@ -297,7 +370,8 @@ const connector = defineConnector({
       description:
         'Looks up 1 to 10 people (by Apollo id, email, LinkedIn URL, or name with company) and returns their full profile: work email, title, '
         + 'location, employment and company. Uses Apollo credits: 1 per person for email or details found, 8 more for a mobile phone. '
-        + 'Phones arrive later: reveal_phone_number returns a request_id for get_enrichment_result.',
+        + 'Phones arrive later: with reveal_phone_number, phone_enrichment says whether Apollo is looking for them; while it is pending, '
+        + 'the result has a request_id for get_enrichment_result. Skipped or not_attempted means there is nothing to wait for.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -319,7 +393,7 @@ const connector = defineConnector({
         });
         if (args.people.length === 1) {
           const { data } = await ap(h, { method: 'POST', path: `${BASE}/people/match`, json: { ...args.people[0], ...options }, safe: true });
-          return compact({ matches: [trimPerson(data?.person)], request_id: data?.request_id, credits_consumed: data?.credits_consumed });
+          return compact({ matches: [trimPerson(data?.person)], credits_consumed: data?.credits_consumed, ...phoneLookup(data) });
         }
         const { data } = await ap(h, { method: 'POST', path: `${BASE}/people/bulk_match`, json: { details: args.people, ...options }, safe: true });
         const matches: unknown[] = Array.isArray(data?.matches) ? data.matches : [];
@@ -327,7 +401,7 @@ const connector = defineConnector({
           matches: matches.map(trimPerson),
           missing_records: data?.missing_records,
           credits_consumed: data?.credits_consumed,
-          request_id: data?.request_id,
+          ...phoneLookup(data),
         });
       },
     },
@@ -335,17 +409,27 @@ const connector = defineConnector({
       name: 'get_enrichment_result',
       kind: 'read',
       title: 'Get an Apollo enrichment result',
-      description: 'The phone numbers (or waterfall results) of an earlier enrich_people with reveal_phone_number, by its request_id. While Apollo is still working it answers 404 with result_pending: try again a little later.',
+      description:
+        'The phone numbers (or waterfall results) of an earlier enrich_people with reveal_phone_number, by the request_id it returned while '
+        + 'phone_enrichment was pending. While Apollo is still looking it answers 404: try again in about 10 seconds, a few times at most.',
       inputSchema: {
         type: 'object',
-        properties: { request_id: { type: 'string', pattern: '^\\d{1,20}$', description: 'The request_id from enrich_people.' } },
+        properties: { request_id: { type: 'string', pattern: REQUEST_ID.source, description: 'The request_id from enrich_people, exactly as given, e.g. "-9045486258674686251".' } },
         required: ['request_id'],
         additionalProperties: false,
       },
       async run(args: { request_id: string }, h) {
         const { data } = await ap(h, {
           path: `${BASE}/webhook_result/${args.request_id}`,
-          errors: { 404: 'Apollo has no result for that request_id yet (still pending) or does not know it', 410: 'Apollo no longer keeps that result (it is older than 30 days)' },
+          errors: {
+            // Apollo's 404 is either result_pending (still looking) or request_id_unknown (an id it never issued). Its
+            // body carries only that code, under error_code, so the sentence says what to do in each case.
+            404: 'Apollo has no result for that request_id. If its phone lookup is still running (result_pending), try again in about 10 seconds, '
+              + 'a few times at most; if it keeps answering 404, Apollo does not know the id (request_id_unknown): stop, since only a request_id '
+              + 'that enrich_people returned with phone_enrichment pending can be polled',
+            400: 'Apollo did not take that request_id (it must be the signed number enrich_people returned)',
+            410: 'Apollo no longer keeps that result (it is older than 30 days)',
+          },
         });
         const result = data?.webhook_result ?? data;
         const people: unknown[] = Array.isArray(result?.people) ? result.people : Array.isArray(result?.matches) ? result.matches : result?.person ? [result.person] : [];
@@ -478,7 +562,7 @@ const connector = defineConnector({
             json: body({
               organization_ids: args.organization_ids,
               categories: args.categories,
-              published_at: compact({ min: args.published_after, max: args.published_before }),
+              published_at: range(args.published_after, args.published_before),
               page,
               per_page: perPage,
             }),
@@ -496,7 +580,7 @@ const connector = defineConnector({
       title: 'Create Apollo contacts',
       description:
         'Saves 1 to 100 people as contacts in your Apollo account, with their email, title, company, phones, lists and owner. Apollo does not check '
-        + 'for duplicates here: to update a matching contact instead, use upsert_contacts. Free.',
+        + 'for duplicates here: to avoid them, use upsert_contacts. Free.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -516,18 +600,21 @@ const connector = defineConnector({
       check: 'search_contacts',
       title: 'Create or update Apollo contacts',
       description:
-        'Saves 1 to 100 contacts, updating the existing contact Apollo matches (by email, Apollo person, CRM id, or name with company) instead of '
-        + 'adding a duplicate. A match is overwritten with the values given (others are kept). Free.',
+        'Saves 1 to 100 contacts without adding duplicates. Each needs an email, or a first and last name with organization_name, for Apollo to match on. '
+        + 'One contact (without append_label_names): the contact Apollo matches is updated in place with the values given (others are kept), or a new '
+        + 'one is created. Several, or append_label_names: Apollo creates the new ones and leaves those it matches unchanged; they come back in '
+        + 'unchanged_existing_contacts, to change with update_contact. Free.',
       inputSchema: {
         type: 'object',
         properties: {
           contacts: { type: 'array', items: CONTACT, minItems: 1, maxItems: 100, description: 'The contacts.' },
-          append_label_names: STRINGS('Lists (labels) to add every contact to.', 50),
+          append_label_names: STRINGS('Lists (labels) to add the contacts to. Given, it makes this a bulk save: contacts Apollo matches are left as they are.', 50),
         },
         required: ['contacts'],
         additionalProperties: false,
       },
       async run(args: { contacts: Record<string, unknown>[]; append_label_names?: string[] }, h) {
+        requireMatchKeys(args.contacts);
         return createRecords(h, 'contacts', args.contacts, { dedupe: true, labels: args.append_label_names });
       },
     },
@@ -830,19 +917,24 @@ const connector = defineConnector({
       kind: 'read',
       title: 'Search Apollo outreach emails',
       description:
-        'Emails sent or scheduled by your sequences: by sequence, status (scheduled, delivered, opened, clicked, bounced...), reply class '
-        + '(willing_to_meet, follow_up_question, person_referral, out_of_office, already_left_company_or_not_right_person, not_interested, unsubscribe), '
-        + 'user, keywords or date. Free. Pass nextCursor back as cursor for more.',
+        'Emails sent or scheduled by your sequences: by sequence, status (delivered, opened, clicked, bounced...), reply class (replies are found '
+        + 'by reply_classes, not by a status), user, keywords, or a range of the dates they were due or sent. Free. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           sequence_ids: STRINGS('Only emails of these sequences.'),
-          statuses: STRINGS('emailer_message_stats values, e.g. ["delivered", "opened", "replied", "bounced"].'),
-          reply_classes: STRINGS('emailer_message_reply_classes values, e.g. ["willing_to_meet"].'),
+          statuses: { type: 'array', items: { type: 'string', enum: EMAIL_STATUSES }, uniqueItems: true, description: `Only emails in these statuses: ${EMAIL_STATUSES.join(', ')}.` },
+          reply_classes: {
+            type: 'array',
+            items: { type: 'string', enum: REPLY_CLASSES },
+            uniqueItems: true,
+            description: `Only emails whose reply Apollo classed as one of these: ${REPLY_CLASSES.join(', ')}. All of them find every reply.`,
+          },
           user_ids: STRINGS('Only emails of these users.'),
           q_keywords: { type: 'string', maxLength: 300, description: 'Keywords.' },
-          date_after: DATE_TIME('Only emails on or after this date'),
-          date_before: DATE_TIME('Only emails on or before this date'),
+          date_after: { ...DATE, description: 'Only emails due or sent (see date_mode) on or after this date, YYYY-MM-DD.' },
+          date_before: { ...DATE, description: 'Only emails due or sent (see date_mode) on or before this date, YYYY-MM-DD.' },
+          date_mode: { type: 'string', enum: ['completed_at', 'due_at'], default: 'completed_at', description: 'What date_after and date_before apply to: completed_at (default), when the email was sent, or due_at, when it is due.' },
           filters: FILTERS,
           per_page: PER_PAGE(),
           cursor: CURSOR,
@@ -850,6 +942,7 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: Record<string, any>, h) {
+        const dated = Boolean(args['date_after'] || args['date_before']);
         return paged(h, args['cursor'], {
           key: 'emailer_messages',
           perPage: args['per_page'],
@@ -861,7 +954,8 @@ const connector = defineConnector({
               emailer_message_reply_classes: args['reply_classes'],
               user_ids: args['user_ids'],
               q_keywords: args['q_keywords'],
-              emailer_message_date_range: compact({ min: args['date_after'], max: args['date_before'] }),
+              emailer_message_date_range_mode: dated ? args['date_mode'] : undefined,
+              emailer_message_date_range: range(args['date_after'], args['date_before']),
               page,
               per_page: perPage,
             }, args['filters']),
@@ -1125,7 +1219,7 @@ const connector = defineConnector({
           request: (page, perPage) => ({
             path: `${BASE}/phone_calls/search`,
             query: query({
-              date_range: compact({ min: args['date_after'], max: args['date_before'] }),
+              date_range: range(args['date_after'], args['date_before']),
               inbound: args['inbound'],
               user_ids: args['user_ids'],
               q_keywords: args['q_keywords'],

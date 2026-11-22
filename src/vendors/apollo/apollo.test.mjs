@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import test from 'node:test';
 import { callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, textBytes, textResponse } from '../../../tests/helpers.mjs';
 
 const KEY = 'apollo-key-0123456789abcdefghij';
 const MASTER = 'apollo-master-key-0123456789abcd';
 const json = (name) => fixture(import.meta.url, name);
+/** A fixture as Apollo sends it, with numbers too big for a JSON number left as they are. */
+const rawJson = (status, name) => new Response(fs.readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8'), {
+  status,
+  headers: { 'content-type': 'application/json; charset=utf-8' },
+});
 
 function setup(handler, credentials = { apikey: KEY }) {
   const { module } = loadModuleFor(import.meta.url);
@@ -28,13 +34,19 @@ test('calls use the master key when there is one, the API key otherwise', async 
   assert.equal(standard.fetch.calls[0].url, 'https://api.apollo.io/api/v1/users/api_profile?include_credit_usage=true');
   assert.equal(standard.fetch.calls[0].headers['x-api-key'], KEY);
   assert.deepEqual(plain.payload, {
-    id: '66c8db577ed7f201b25c0eef',
-    team_id: '6095a710bd01d100a506d4ac',
+    id: 'user001',
+    team_id: 'team001',
     first_name: 'Jane',
     last_name: 'Doe',
     email: 'jane@example.com',
     title: 'Head of Sales',
-    credit_usage: json('profile.json').credit_usage,
+    credit_usage: {
+      lead_credits: { limit: 1000, used: 120, remaining: 880 },
+      direct_dial_credits: { limit: 100, used: 8 },
+      export_credits: { limit: 500, used: 25 },
+      ai_credits: { limit: 200, used: 4 },
+      power_up_credits: { limit: 50, used: 0 },
+    },
     key: 'API key',
   });
 
@@ -43,6 +55,7 @@ test('calls use the master key when there is one, the API key otherwise', async 
   assert.equal(both.fetch.calls[0].headers['x-api-key'], MASTER);
   assert.equal(both.fetch.calls[0].url, 'https://api.apollo.io/api/v1/users/api_profile');
   assert.equal(master.payload.key, 'master API key');
+  assert.equal(master.payload.credit_usage, undefined);
 
   const masterOnly = setup(() => jsonResponse(200, json('profile.json')), { masterapikey: MASTER });
   await callTool(masterOnly.module, 'get_profile', {}, masterOnly.ctx);
@@ -77,10 +90,10 @@ test('search_people posts the filters as a free read and pages up to Apollo\'s 5
   });
   assert.equal(first.payload.total_entries, 232);
   assert.deepEqual(first.payload.people[0], {
-    id: '67bdafd0c3a4c50001bbd7c2',
-    first_name: 'Andrew',
-    last_name_obfuscated: 'Hu***n',
-    title: 'Chief Executive Officer',
+    id: 'person002',
+    first_name: 'Alex',
+    last_name_obfuscated: 'Ex***e',
+    title: 'Marketing Director',
     has_email: true,
     has_direct_phone: 'Yes',
     has_city: true,
@@ -92,26 +105,27 @@ test('search_people posts the filters as a free read and pages up to Apollo\'s 5
   assert.equal(fetch.calls[1].json.per_page, 1);
 });
 
-test('enrich_people uses people/match for one person and bulk_match for several, and polls for phones', async () => {
-  const { module, fetch, ctx } = setup((request) => jsonResponse(200, request.path.endsWith('/bulk_match') ? { ...json('bulk-match.json'), request_id: '4567' } : json('person-match.json')));
-  const one = await callTool(module, 'enrich_people', { people: [{ email: 'tim@example.com' }], reveal_personal_emails: true }, ctx);
+test('enrich_people uses people/match for one person and bulk_match for several', async () => {
+  const { module, fetch, ctx } = setup((request) => rawJson(200, request.path.endsWith('/bulk_match') ? 'bulk-match.json' : 'person-match.json'));
+  const one = await callTool(module, 'enrich_people', { people: [{ email: 'sam@example.com' }], reveal_personal_emails: true, reveal_phone_number: true }, ctx);
   assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/people/match');
-  assert.deepEqual(fetch.calls[0].json, { email: 'tim@example.com', reveal_personal_emails: true });
+  assert.deepEqual(fetch.calls[0].json, { email: 'sam@example.com', reveal_personal_emails: true, reveal_phone_number: true, poll_only: true });
   const person = one.payload.matches[0];
-  assert.equal(person.email, 'tim@example.com');
+  assert.equal(person.email, 'sam@example.com');
   assert.equal(person.organization.name, 'Example');
   assert.equal(person.organization.phone, '+15550100');
   assert.deepEqual(person.employment_history, [
-    { title: 'Founder & CEO', organization_name: 'Example', start_date: '2015-01-01', current: true },
-    { title: 'Engineer', organization_name: 'Prior Co', start_date: '2010-01-01', end_date: '2014-12-01', current: false },
+    { title: 'Head of Growth', organization_name: 'Example', start_date: '2019-03-01', current: true },
+    { title: 'Marketing Manager', organization_name: 'Prior Co', start_date: '2014-01-01', end_date: '2019-02-01', current: false },
   ]);
+  assert.equal(one.payload.credits_consumed, 1);
 
-  const many = await callTool(module, 'enrich_people', { people: [{ id: '64a7ff0cc4dfae00013df1a5' }, { first_name: 'No', last_name: 'Body', domain: 'example.com' }], reveal_phone_number: true }, ctx);
+  const many = await callTool(module, 'enrich_people', { people: [{ id: 'person001' }, { first_name: 'No', last_name: 'Body', domain: 'example.com' }] }, ctx);
   assert.equal(fetch.calls[1].path, '/api/v1/people/bulk_match');
-  assert.deepEqual(fetch.calls[1].json, { details: [{ id: '64a7ff0cc4dfae00013df1a5' }, { first_name: 'No', last_name: 'Body', domain: 'example.com' }], reveal_phone_number: true, poll_only: true });
+  assert.deepEqual(fetch.calls[1].json, { details: [{ id: 'person001' }, { first_name: 'No', last_name: 'Body', domain: 'example.com' }] });
   assert.equal(many.payload.matches.length, 2);
   assert.equal(many.payload.matches[1], null);
-  assert.equal(many.payload.request_id, '4567');
+  assert.equal(many.payload.missing_records, 1);
   assert.equal(many.payload.credits_consumed, 1);
 
   const vague = await callTool(module, 'enrich_people', { people: [{ domain: 'example.com' }] }, ctx);
@@ -119,21 +133,61 @@ test('enrich_people uses people/match for one person and bulk_match for several,
   assert.equal(fetch.calls.length, 2);
 });
 
-test('get_enrichment_result reads the polled phones, and explains a pending result', async () => {
+test('enrich_people returns Apollo\'s exact request id to poll, and only while the phone lookup is pending', async () => {
+  // Apollo's request_id is a signed 64-bit integer that a JSON number rounds: request_id_str carries it whole.
+  const { module, ctx } = setup((request) => rawJson(200, request.path.endsWith('/bulk_match') ? 'bulk-match.json' : 'person-match.json'));
+  const one = await callTool(module, 'enrich_people', { people: [{ email: 'sam@example.com' }], reveal_phone_number: true }, ctx);
+  assert.equal(JSON.parse(fs.readFileSync(new URL('./fixtures/person-match.json', import.meta.url), 'utf8')).request_id, 1039995589705121900);
+  assert.equal(one.payload.request_id, '1039995589705121891');
+  assert.equal(one.payload.phone_enrichment.status, 'pending');
+  const many = await callTool(module, 'enrich_people', { people: [{ id: 'person001' }, { email: 'no@example.com' }], reveal_phone_number: true }, ctx);
+  assert.equal(many.payload.request_id, '-9045486258674686251');
+  assert.equal(many.payload.phone_enrichment.status, 'pending');
+
+  for (const [status, message] of [['skipped', 'Direct dial access is not available on this plan.'], ['not_attempted', 'The person is not a saved Apollo person record.']]) {
+    const nothing = setup(() => jsonResponse(200, { ...json('person-match.json'), request_id_str: '1039995589705121891', phone_enrichment: { status, message } }));
+    const { payload } = await callTool(nothing.module, 'enrich_people', { people: [{ email: 'sam@example.com' }], reveal_phone_number: true }, nothing.ctx);
+    assert.equal(payload.request_id, undefined, status);
+    assert.deepEqual(payload.phone_enrichment, { status, message });
+  }
+
+  const rounded = setup(() => jsonResponse(200, { ...json('person-match.json'), request_id_str: undefined }));
+  const unreadable = await callTool(rounded.module, 'enrich_people', { people: [{ email: 'sam@example.com' }], reveal_phone_number: true }, rounded.ctx);
+  assert.equal(unreadable.payload.request_id, undefined);
+  assert.match(unreadable.payload.phone_enrichment.message, /cannot be polled/);
+
+  const plain = setup(() => jsonResponse(200, { person: json('person-match.json').person }));
+  const noPhones = await callTool(plain.module, 'enrich_people', { people: [{ email: 'sam@example.com' }] }, plain.ctx);
+  assert.equal(noPhones.payload.request_id, undefined);
+  assert.equal(noPhones.payload.phone_enrichment, undefined);
+});
+
+test('get_enrichment_result polls by Apollo\'s signed request id, and explains a 404', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, json('webhook-result.json')));
-  const { payload } = await callTool(module, 'get_enrichment_result', { request_id: '1039995589705121900' }, ctx);
-  assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/webhook_result/1039995589705121900');
+  const { payload } = await callTool(module, 'get_enrichment_result', { request_id: '1039995589705121891' }, ctx);
+  assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/webhook_result/1039995589705121891');
   assert.deepEqual(payload, {
     request_type: 'phone',
     status: 'success',
     credits_consumed: 1,
-    people: [{ id: '587cf802f65125cad923a266', phone_numbers: [{ number: '+15555550164', type: 'other', status: 'valid_number' }, { number: '+14155550117', type: 'other', status: 'valid_number' }] }],
+    people: [{ id: 'person001', phone_numbers: [{ number: '+15555550164', type: 'other', status: 'valid_number' }, { number: '+14155550117', type: 'other', status: 'valid_number' }] }],
   });
+  const negative = await callTool(module, 'get_enrichment_result', { request_id: '-9045486258674686251' }, ctx);
+  assert.equal(negative.isError, false, negative.payload.error);
+  assert.equal(fetch.calls[1].url, 'https://api.apollo.io/api/v1/webhook_result/-9045486258674686251');
+  for (const bad of ['12a', '92233720368547758070', '--1']) {
+    const refused = await callTool(module, 'get_enrichment_result', { request_id: bad }, ctx);
+    assert.match(refused.payload.error, /^Invalid arguments for get_enrichment_result/, bad);
+  }
+  assert.equal(fetch.calls.length, 2);
 
-  const pending = setup(() => jsonResponse(404, { error_code: 'result_pending', retry_after_seconds: 10 }));
-  const later = await callTool(pending.module, 'get_enrichment_result', { request_id: '4567' }, pending.ctx);
-  assert.equal(later.payload.status, 404);
-  assert.equal(later.payload.error, 'Apollo has no result for that request_id yet (still pending) or does not know it (HTTP 404).');
+  for (const body of [{ error_code: 'result_pending', retry_after_seconds: 10 }, { error_code: 'request_id_unknown' }]) {
+    const missing = setup(() => jsonResponse(404, body));
+    const later = await callTool(missing.module, 'get_enrichment_result', { request_id: '4567' }, missing.ctx);
+    assert.equal(later.payload.status, 404);
+    assert.match(later.payload.error, /^Apollo has no result for that request_id\. If its phone lookup is still running \(result_pending\), try again in about 10 seconds/);
+    assert.match(later.payload.error, /Apollo does not know the id \(request_id_unknown\): stop, since only a request_id that enrich_people returned with phone_enrichment pending can be polled \(HTTP 404\)\.$/);
+  }
   const expired = setup(() => jsonResponse(410, { error_code: 'request_id_expired' }));
   const gone = await callTool(expired.module, 'get_enrichment_result', { request_id: '4567' }, expired.ctx);
   assert.match(gone.payload.error, /no longer keeps that result/);
@@ -144,23 +198,23 @@ test('enrich_organizations uses a GET for one domain and bulk_enrich for several
   const one = await callTool(module, 'enrich_organizations', { domains: ['example.com'] }, ctx);
   assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/organizations/enrich?domain=example.com');
   assert.deepEqual(one.payload.organizations[0], {
-    id: '5e66b6381e05b4008c8331b8',
+    id: 'org001',
     name: 'Example',
     website_url: 'http://www.example.com',
     primary_domain: 'example.com',
     linkedin_url: 'http://www.linkedin.com/company/example',
-    industry: 'information technology & services',
-    keywords: ['sales'],
-    estimated_num_employees: 1600,
-    annual_revenue: 100000000,
-    annual_revenue_printed: '100M',
-    total_funding_printed: '251.2M',
-    latest_funding_stage: 'Series D',
-    founded_year: 2015,
-    city: 'San Francisco',
-    state: 'California',
+    industry: 'computer software',
+    keywords: ['analytics'],
+    estimated_num_employees: 240,
+    annual_revenue: 20000000,
+    annual_revenue_printed: '20M',
+    total_funding_printed: '12.5M',
+    latest_funding_stage: 'Series A',
+    founded_year: 2016,
+    city: 'Austin',
+    state: 'Texas',
     country: 'United States',
-    short_description: 'Example builds sales tools.',
+    short_description: 'Example builds analytics tools.',
     technology_names: ['Salesforce'],
   });
   const many = await callTool(module, 'enrich_organizations', { domains: ['example.com', 'example.org'] }, ctx);
@@ -177,7 +231,7 @@ test('search_organizations returns companies and the saved accounts Apollo match
   assert.deepEqual(fetch.calls[0].json, { q_organization_name: 'Example', page: 1, per_page: 2 });
   assert.equal(payload.total_entries, 3);
   assert.equal(payload.organizations.length, 2);
-  assert.deepEqual(payload.saved_accounts, [{ id: 'acc456', name: 'Example', domain: 'example.com', organization_id: '5e66b6381e05b4008c8331b8' }]);
+  assert.deepEqual(payload.saved_accounts, [{ id: 'acc456', name: 'Example', domain: 'example.com', organization_id: 'org001' }]);
   assert.ok(payload.nextCursor, 'page 1 of 2');
 });
 
@@ -188,15 +242,33 @@ test('create_contacts posts one contact, or several in bulk; upsert_contacts ask
   assert.deepEqual(fetch.calls[0].json, { first_name: 'Jane', last_name: 'Doe', email: 'jane@example.com', label_names: ['Prospect'] });
   assert.deepEqual(one.payload.contacts[0].phone_numbers, [{ number: '+14155551234', type: 'work_direct' }]);
   assert.equal('typed_custom_fields' in one.payload.contacts[0], false);
+  const plainBulk = await callTool(module, 'create_contacts', { contacts: [{ email: 'john@example.com' }, { email: 'jane@example.com' }] }, ctx);
+  assert.deepEqual(fetch.calls[1].json, { contacts: [{ email: 'john@example.com' }, { email: 'jane@example.com' }] });
+  assert.deepEqual(plainBulk.payload.existing_contacts.map((contact) => contact.id), ['cnt789']);
 
-  const many = await callTool(module, 'upsert_contacts', { contacts: [{ email: 'john@example.com' }, { email: 'jane@example.com' }], append_label_names: ['Inbound'] }, ctx);
-  assert.equal(fetch.calls[1].path, '/api/v1/contacts/bulk_create');
-  assert.deepEqual(fetch.calls[1].json, { contacts: [{ email: 'john@example.com' }, { email: 'jane@example.com' }], run_dedupe: true, append_label_names: ['Inbound'] });
+  // Apollo's bulk endpoint never overwrites a match: the result says so and names the contacts to update.
+  const many = await callTool(module, 'upsert_contacts', { contacts: [{ email: 'john@example.com' }, { email: 'jane@example.com', title: 'CTO' }], append_label_names: ['Inbound'] }, ctx);
+  assert.equal(fetch.calls[2].path, '/api/v1/contacts/bulk_create');
+  assert.deepEqual(fetch.calls[2].json, { contacts: [{ email: 'john@example.com' }, { email: 'jane@example.com', title: 'CTO' }], run_dedupe: true, append_label_names: ['Inbound'] });
   assert.deepEqual(many.payload.contacts.map((contact) => contact.id), ['cnt790']);
-  assert.deepEqual(many.payload.existing_contacts.map((contact) => contact.id), ['cnt789']);
+  assert.deepEqual(many.payload.unchanged_existing_contacts.map((contact) => contact.id), ['cnt789']);
+  assert.equal(many.payload.existing_contacts, undefined);
+  assert.equal(many.payload.note, 'Apollo matched 1 of them to existing contacts and left those unchanged: change them with update_contact.');
 
-  await callTool(module, 'upsert_contacts', { contacts: [{ email: 'jane@example.com' }] }, ctx);
-  assert.deepEqual(fetch.calls[2].json, { email: 'jane@example.com', run_dedupe: true });
+  // One contact goes to the endpoint that updates a match in place.
+  const single = await callTool(module, 'upsert_contacts', { contacts: [{ email: 'jane@example.com' }] }, ctx);
+  assert.equal(fetch.calls[3].path, '/api/v1/contacts');
+  assert.deepEqual(fetch.calls[3].json, { email: 'jane@example.com', run_dedupe: true });
+  assert.equal(single.payload.contacts[0].id, 'cnt789');
+  await callTool(module, 'upsert_contacts', { contacts: [{ first_name: 'Jane', last_name: 'Doe', organization_name: 'Example' }] }, ctx);
+  assert.deepEqual(fetch.calls[4].json, { first_name: 'Jane', last_name: 'Doe', organization_name: 'Example', run_dedupe: true });
+
+  // Without an email, or a full name with a company, Apollo has nothing to match on.
+  for (const contacts of [[{ first_name: 'Jane', last_name: 'Doe' }], [{ email: 'a@example.com' }, { first_name: 'Jane', organization_name: 'Example' }], [{ title: 'CEO', account_id: 'acc456' }]]) {
+    const refused = await callTool(module, 'upsert_contacts', { contacts }, ctx);
+    assert.match(refused.payload.error, /^contacts\[\d\] needs an email, or a first_name and last_name with organization_name, for Apollo to match it on\. Nothing was changed\.$/);
+  }
+  assert.equal(fetch.calls.length, 5);
 });
 
 test('contacts and accounts: update with PATCH, search, read; a validation error keeps Apollo\'s words', async () => {
@@ -261,11 +333,23 @@ test('sequences: search, add contacts from an email account, change their status
 test('GET searches send lists as name[] and ranges as name[min]', async () => {
   const { module, fetch, ctx } = setup((request) => jsonResponse(200, request.path.includes('opportunities') ? json('deals.json') : { pagination: { page: 1, total_pages: 1 }, emailer_messages: [{ id: 'msg001', subject: 'Hi', status: 'delivered', emailer_campaign_id: 'seq001' }] }));
   const emails = await callTool(module, 'search_outreach_emails', { sequence_ids: ['seq001'], statuses: ['opened'], date_after: '2026-11-01' }, ctx);
-  assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/emailer_messages/search?emailer_campaign_ids%5B%5D=seq001&emailer_message_stats%5B%5D=opened&emailer_message_date_range%5Bmin%5D=2026-11-01&page=1&per_page=25');
+  assert.equal(fetch.calls[0].url, 'https://api.apollo.io/api/v1/emailer_messages/search?emailer_campaign_ids%5B%5D=seq001&emailer_message_stats%5B%5D=opened&emailer_message_date_range_mode=completed_at&emailer_message_date_range%5Bmin%5D=2026-11-01&page=1&per_page=25');
   assert.equal(emails.payload.emailer_messages[0].id, 'msg001');
 
   await callTool(module, 'search_deals', { account_ids: ['acc456'], is_closed: false, filters: { opportunity_amount_range: { min: 1000 } } }, ctx);
   assert.equal(fetch.calls[1].url, 'https://api.apollo.io/api/v1/opportunities/search?opportunity_amount_range%5Bmin%5D=1000&account_ids%5B%5D=acc456&opportunity_is_closed=false&page=1&per_page=25');
+
+  // Replies are found by reply class, with the date range on when emails were due when asked.
+  await callTool(module, 'search_outreach_emails', { reply_classes: ['willing_to_meet', 'follow_up_question'], date_after: '2026-11-01', date_before: '2026-11-21', date_mode: 'due_at' }, ctx);
+  assert.equal(fetch.calls[2].url, 'https://api.apollo.io/api/v1/emailer_messages/search?emailer_message_reply_classes%5B%5D=willing_to_meet&emailer_message_reply_classes%5B%5D=follow_up_question&emailer_message_date_range_mode=due_at&emailer_message_date_range%5Bmin%5D=2026-11-01&emailer_message_date_range%5Bmax%5D=2026-11-21&page=1&per_page=25');
+  // Without dates no mode is sent, and a filter of the same name as an argument left out stays.
+  await callTool(module, 'search_outreach_emails', { filters: { not_emailer_campaign_ids: ['seq002'], emailer_message_date_range_mode: 'due_at', emailer_message_date_range: { min: '2026-10-01' } } }, ctx);
+  assert.equal(fetch.calls[3].url, 'https://api.apollo.io/api/v1/emailer_messages/search?not_emailer_campaign_ids%5B%5D=seq002&emailer_message_date_range_mode=due_at&emailer_message_date_range%5Bmin%5D=2026-10-01&page=1&per_page=25');
+  for (const args of [{ statuses: ['replied'] }, { reply_classes: ['positive'] }, { date_after: '2026-11-01T10:00:00Z' }, { date_mode: 'sent_at' }]) {
+    const refused = await callTool(module, 'search_outreach_emails', args, ctx);
+    assert.match(refused.payload.error, /^Invalid arguments for search_outreach_emails/, JSON.stringify(args));
+  }
+  assert.equal(fetch.calls.length, 4);
 });
 
 test('deals: create with the amount as text, update with PATCH, read one', async () => {
@@ -384,8 +468,8 @@ test('api_get and api_request reach the rest of /api/v1/ with the key', async ()
 
 test('logs never carry a key or a person', async () => {
   const { module, ctx, logs } = setup(() => jsonResponse(200, json('person-match.json')), { apikey: KEY, masterapikey: MASTER });
-  await callTool(module, 'enrich_people', { people: [{ email: 'tim@example.com' }] }, ctx);
+  await callTool(module, 'enrich_people', { people: [{ email: 'sam@example.com' }] }, ctx);
   assert.deepEqual(logs.map((line) => line.replace(/\d+ms$/, 'Nms')), ['apollo enrich_people POST 200 Nms']);
   const text = logs.join('\n');
-  for (const secret of [KEY, MASTER, 'tim@example.com']) assert.equal(text.includes(secret), false, secret);
+  for (const secret of [KEY, MASTER, 'sam@example.com']) assert.equal(text.includes(secret), false, secret);
 });

@@ -1,25 +1,33 @@
 {
+  "request_id": 1039995589705121891,
+  "request_id_str": "1039995589705121891",
+  "credits_consumed": 1,
+  "phone_enrichment": {
+    "request_id": 7342,
+    "status": "pending",
+    "message": "Phone enrichment is in progress. Poll the result with the top-level request_id_str."
+  },
   "person": {
-    "id": "64a7ff0cc4dfae00013df1a5",
-    "first_name": "Tim",
+    "id": "person001",
+    "first_name": "Sam",
     "last_name": "Example",
-    "name": "Tim Example",
-    "linkedin_url": "http://www.linkedin.com/in/tim-example",
-    "title": "Founder & CEO",
+    "name": "Sam Example",
+    "linkedin_url": "http://www.linkedin.com/in/sam-example",
+    "title": "Head of Growth",
     "email_status": "verified",
     "photo_url": "https://example.com/photo.jpg",
-    "headline": "Founder & CEO at Example",
-    "email": "tim@example.com",
-    "organization_id": "5e66b6381e05b4008c8331b8",
+    "headline": "Head of Growth at Example",
+    "email": "sam@example.com",
+    "organization_id": "org001",
     "employment_history": [
-      { "_id": "1", "created_at": null, "current": true, "degree": null, "description": null, "emails": null, "end_date": null, "grade_level": null, "kind": null, "major": null, "organization_id": "5e66b6381e05b4008c8331b8", "organization_name": "Example", "raw_address": null, "start_date": "2015-01-01", "title": "Founder & CEO", "updated_at": null, "id": "1", "key": "1" },
-      { "current": false, "organization_name": "Prior Co", "start_date": "2010-01-01", "end_date": "2014-12-01", "title": "Engineer" }
+      { "_id": "1", "created_at": null, "current": true, "degree": null, "description": null, "emails": null, "end_date": null, "grade_level": null, "kind": null, "major": null, "organization_id": "org001", "organization_name": "Example", "raw_address": null, "start_date": "2019-03-01", "title": "Head of Growth", "updated_at": null, "id": "1", "key": "1" },
+      { "current": false, "organization_name": "Prior Co", "start_date": "2014-01-01", "end_date": "2019-02-01", "title": "Marketing Manager" }
     ],
-    "state": "California",
-    "city": "San Francisco",
+    "state": "Texas",
+    "city": "Austin",
     "country": "United States",
-    "departments": ["c_suite"],
-    "seniority": "founder",
-    "organization": { "id": "5e66b6381e05b4008c8331b8", "name": "Example", "website_url": "http://www.example.com", "linkedin_url": "http://www.linkedin.com/company/example", "primary_phone": { "number": "+1 555-0100", "source": "Account", "sanitized_number": "+15550100" }, "industry": "information technology & services", "keywords": ["sales", "crm"], "estimated_num_employees": 1600, "annual_revenue": 100000000, "total_funding": 251200000, "latest_funding_stage": "Series D", "founded_year": 2015, "technology_names": ["Salesforce", "Gmail"], "primary_domain": "example.com" }
+    "departments": ["master_marketing"],
+    "seniority": "head",
+    "organization": { "id": "org001", "name": "Example", "website_url": "http://www.example.com", "linkedin_url": "http://www.linkedin.com/company/example", "primary_phone": { "number": "+1 555-0100", "source": "Account", "sanitized_number": "+15550100" }, "industry": "computer software", "keywords": ["analytics", "saas"], "estimated_num_employees": 240, "annual_revenue": 20000000, "total_funding": 12500000, "latest_funding_stage": "Series A", "founded_year": 2016, "technology_names": ["Salesforce", "Gmail"], "primary_domain": "example.com" }
   }
 }
