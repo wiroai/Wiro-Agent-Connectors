@@ -170,6 +170,22 @@ function membership(data: any): Record<string, unknown> {
   });
 }
 
+/**
+ * A path as a server that decodes percent-escapes routes it: the decoded segments split again at "/" and "\",
+ * each cut at ";" (a path parameter), lower-cased, with empty and "." parts dropped and ".." resolved. The guard
+ * decides on these parts, so an escape (%6Fauth, crm%2F..%2Foauth) or a capital letter cannot get past it.
+ */
+function routedParts(segments: readonly string[]): string[] {
+  const parts: string[] = [];
+  for (const piece of segments.join('/').split(/[\\/]/)) {
+    const part = (piece.split(';')[0] ?? '').toLowerCase();
+    if (part === '' || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  return parts;
+}
+
 const connector = defineConnector({
   vendor: 'hubspot',
   label: LABEL,
@@ -1089,7 +1105,7 @@ const connector = defineConnector({
         + '/crm/v3/objects/{type}/batch/update, /crm/v4/associations/{from}/{to}/labels, /crm/v3/lists, /marketing/v3/emails/{id}/draft, '
         + '/communication-preferences/v3/definitions, /automation/v4/flows or /cms/v3/pages. Reference: https://developers.hubspot.com/docs/api-reference.',
       guard(request) {
-        if (/^\/oauth(\/|$)/.test(request.path)) throw new ToolFailure('HubSpot\'s OAuth endpoints are not available here. Nothing was sent.');
+        if (routedParts(request.segments)[0] === 'oauth') throw new ToolFailure('HubSpot\'s OAuth endpoints are not available here. Nothing was sent.');
       },
     }),
   ],

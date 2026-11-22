@@ -376,6 +376,11 @@ test('api_get and api_request reach any HubSpot path but OAuth', async () => {
   assert.equal(merge.isError, false);
   const token = await callTool(module, 'api_get', { path: '/oauth/v1/access-tokens/abc' }, ctx);
   assert.match(token.payload.error, /OAuth endpoints are not available here/);
+  // The guard looks at the path as a server that decodes escapes would, whatever the case.
+  for (const [method, path] of [['DELETE', '/OAuth/v1/refresh-tokens/abc'], ['POST', '/%6Fauth/v1/token'], ['DELETE', '/crm%2F..%2Foauth/v1/refresh-tokens/abc'], ['POST', '/oauth;x/v1/token']]) {
+    const refused = await callTool(module, 'api_request', { method, path }, ctx);
+    assert.equal(refused.payload.error, 'HubSpot\'s OAuth endpoints are not available here. Nothing was sent.', path);
+  }
   assert.equal(fetch.calls.length, 2);
 });
 
