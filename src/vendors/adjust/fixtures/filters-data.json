@@ -1,0 +1,9 @@
+{
+  "overview_metrics": [
+    { "id": "roas", "name": "ROAS", "short_name": "ROAS", "section": "revenue", "formatting": "percent", "description": "Return on ad spend across all revenue sources." },
+    { "id": "roas_ad", "name": "ROAS (Ad Revenue)", "short_name": "ROAS ad", "section": "revenue", "formatting": "percent", "description": "Return on ad spend from ad revenue." }
+  ],
+  "cohort_metrics": [
+    { "id": "cohort_all_revenue", "name": "All Revenue (Cohort)", "short_name": "Rev", "section": "revenue", "formatting": "money", "description": "" }
+  ]
+}

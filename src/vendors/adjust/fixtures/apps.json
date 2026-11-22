@@ -1,0 +1,6 @@
+{
+  "apps": [
+    { "id": "abc123def456", "name": "Acme Photo iOS", "short_name": "", "section": "", "formatting": "", "description": "" },
+    { "id": "ghi789jkl012", "name": "Acme Photo Android", "short_name": "", "section": "", "formatting": "", "description": "" }
+  ]
+}

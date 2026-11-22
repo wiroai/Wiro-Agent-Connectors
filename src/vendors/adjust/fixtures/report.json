@@ -1,0 +1,35 @@
+{
+  "rows": [
+    {
+      "attr_dependency": { "campaign_id_network": "123456789", "partner_id": "34", "partner": "facebook" },
+      "app": "Acme Photo iOS",
+      "partner_name": "Facebook Installs",
+      "campaign": "Spring Sale (123456789)",
+      "campaign_id_network": "123456789",
+      "creative_network": "Hero Video 16x9",
+      "creative_id_network": "987654321",
+      "roas": "1.83",
+      "roas_ad": "0.92",
+      "cost": "412.50",
+      "paid_installs": "187",
+      "all_revenue": "754.88"
+    },
+    {
+      "attr_dependency": { "campaign_id_network": "555000111", "partner_id": "254", "partner": "adwords" },
+      "app": "Acme Photo iOS",
+      "partner_name": "Google Ads",
+      "campaign": "UAC Global",
+      "campaign_id_network": "555000111",
+      "creative_network": "Asset 7",
+      "creative_id_network": "333222111",
+      "roas": "0.71",
+      "roas_ad": "0.10",
+      "cost": "980.00",
+      "paid_installs": "402",
+      "all_revenue": "695.80"
+    }
+  ],
+  "totals": { "roas": 1.41, "roas_ad": 0.4, "cost": 1392.5, "paid_installs": 589.0, "all_revenue": 1450.68 },
+  "warnings": [],
+  "pagination": null
+}
