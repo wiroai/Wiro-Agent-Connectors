@@ -26,8 +26,8 @@ Quick start table:
 | `list_apps` | read | The project's apps with their store type and bundle ID or package name. |
 | `get_overview` | read | The overview cards: active trials and subscriptions (now), MRR, revenue, new and active customers (last 28 days), with update times. |
 | `get_revenue` | read | Revenue, revenue net of taxes or proceeds for a date range. |
-| `get_chart_options` | read | A chart's resolutions, filters (with values), segments and selectors. |
-| `get_chart` | read | A chart's measures, segments, dated points (partial periods marked) and summary, in pages. |
+| `get_chart_options` | read | A chart's resolutions, filters (with values), segments and selectors; a filter whose values do not fit shows its value count, and `filter_id` lists its values in pages. |
+| `get_chart` | read | A chart's measures, segments, dated points (partial periods marked; points RevenueCat sends as arrays of numbers stay as they came) and summary, in pages. |
 | `list_products` | read | Products with store identifier, type, duration and trial duration. |
 | `list_offerings` | read | Offerings, and which one is current. |
 | `get_offering` | read | One offering with its packages and their products. |
@@ -56,4 +56,4 @@ Every tool but `list_projects` takes an optional `project_id`; without it, the k
 - RevenueCat allows 25 requests a minute per key for Charts & Metrics (overview, revenue, charts) and 60 for Project configuration; a 429 comes back with `retryAfter`.
 - Charts count days in UTC; a period marked `incomplete` is still running (or starts before the range) and should be left out of trends.
 - Chart filter values must not contain a comma, and a chart needs its option ids from `get_chart_options`.
-- `get_chart_options` shows at most 200 values per filter.
+- `get_chart_options` keeps its result under 32 KB: the largest filters' values are left out (with `optionCount`) until it fits, and `filter_id` with `cursor` lists them.

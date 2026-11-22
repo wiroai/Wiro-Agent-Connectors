@@ -1,0 +1,31 @@
+{
+  "object": "chart_data",
+  "category": "subscription",
+  "display_type": "line",
+  "display_name": "Active Subscriptions",
+  "description": "Active, paid subscriptions at the end of each period.",
+  "documentation_link": "https://www.revenuecat.com/docs/dashboard-and-metrics/charts/active-subscriptions-chart",
+  "last_computed_at": 1763740800000,
+  "start_date": 1761955200000,
+  "end_date": 1764460800000,
+  "yaxis_currency": "USD",
+  "filtering_allowed": true,
+  "segmenting_allowed": true,
+  "resolution": "month",
+  "values": [
+    [1759276800, 15230],
+    [1761955200, 15912],
+    [1764547200, null]
+  ],
+  "summary": { "average": { "Active Subscriptions": 15571 } },
+  "yaxis": "#",
+  "segments": null,
+  "segments_limit": null,
+  "periods": null,
+  "measures": [
+    { "display_name": "Active Subscriptions", "description": "Active Subscriptions", "unit": "#", "decimal_precision": 0, "scale": 1, "chartable": true, "tabulable": true }
+  ],
+  "user_selectors": null,
+  "unsupported_params": null,
+  "annotations": []
+}

@@ -79,6 +79,53 @@ test('get_chart_options lists resolutions, segments, filters and selectors', asy
   assert.equal(payload.userSelectors.revenue_type.default, 'revenue');
 });
 
+test('get_chart_options leaves out the values of the largest filters when they do not fit, and lists one filter\'s values in pages', async () => {
+  const options = fixture(import.meta.url, 'chart-options.json');
+  options.filters.push({
+    object: 'chart_filter',
+    id: 'product',
+    display_name: 'Product',
+    group_display_name: 'Product',
+    value_mode: 'dynamic',
+    options: Array.from({ length: 1500 }, (_, index) => ({ id: `com.example.app.product_${String(index).padStart(4, '0')}`, display_name: `Product number ${index} with a long display name` })),
+  });
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, options));
+  const overview = await callTool(module, 'get_chart_options', { project_id: PROJECT, chart_name: 'revenue' }, ctx);
+  assert.equal(overview.isError, false);
+  assert.ok(textBytes(overview.result) <= 32 * 1024);
+  const product = overview.payload.filters.find((filter) => filter.id === 'product');
+  assert.deepEqual(product, { id: 'product', displayName: 'Product', group: 'Product', valueMode: 'dynamic', optionCount: 1500 });
+  assert.deepEqual(overview.payload.filters[0].options, [{ id: 'app_store', displayName: 'App Store' }, { id: 'play_store', displayName: 'Play Store' }], 'small filters keep their values');
+  assert.deepEqual(overview.payload.notes, ['The values of product are left out to fit: pass filter_id to list them.']);
+
+  const seen = [];
+  let cursor;
+  for (let page = 0; page < 20; page++) {
+    const { payload, result } = await callTool(module, 'get_chart_options', { project_id: PROJECT, chart_name: 'revenue', filter_id: 'product', ...(cursor ? { cursor } : {}) }, ctx);
+    assert.ok(textBytes(result) <= 32 * 1024);
+    assert.equal(payload.filter.optionCount, 1500);
+    seen.push(...payload.options.map((option) => option.id));
+    cursor = payload.nextCursor;
+    if (!cursor) break;
+  }
+  assert.equal(seen.length, 1500);
+  assert.equal(new Set(seen).size, 1500);
+  assert.equal(seen[1499], 'com.example.app.product_1499');
+
+  const unknown = await callTool(module, 'get_chart_options', { project_id: PROJECT, chart_name: 'revenue', filter_id: 'nope' }, ctx);
+  assert.match(unknown.payload.error, /^The revenue chart has no filter nope\. Its filters: store, country, product\.$/);
+  assert.ok(fetch.calls.every((call) => call.path === `/v2/projects/${PROJECT}/charts/revenue/options`));
+});
+
+test('a chart that sends its points as arrays of numbers keeps them as they came (realtime false)', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'chart-arrays.json')));
+  const { payload, isError } = await callTool(module, 'get_chart', { project_id: PROJECT, chart_name: 'actives', realtime: false }, ctx);
+  assert.equal(isError, false);
+  assert.equal(fetch.calls[0].query.realtime, 'false');
+  assert.deepEqual(payload.values, [[1759276800, 15230], [1761955200, 15912], [1764547200, null]]);
+  assert.deepEqual(payload.summary, { average: { 'Active Subscriptions': 15571 } });
+});
+
 test('get_chart encodes filters and selectors as JSON, and returns measures, summary and dated points', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'chart.json')));
   const { payload } = await callTool(module, 'get_chart', {

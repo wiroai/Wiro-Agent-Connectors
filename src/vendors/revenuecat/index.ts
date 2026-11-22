@@ -12,14 +12,15 @@
 // nothing else. No customer, subscription, purchase, invoice, audience,
 // collaborator, audit log, webhook or key route, no v1, and no writes.
 
-import { apiTools, defineConnector, ToolFailure, truncate, type ApiRequest, type QueryValue, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, jsonSize, OUTPUT_LIMIT_BYTES, ToolFailure, truncate, type ApiRequest, type QueryValue, type ToolHelpers } from '../../core/index.js';
 
 const ORIGIN = 'https://api.revenuecat.com';
 /** The aggregate routes: everything the module may read. A percent-escape never passes. */
 const AGGREGATE_PATH =
   /^\/v2\/projects(?:\/[^/%]+\/(?:apps(?:\/[^/%]+)?|metrics\/(?:overview|revenue)|charts\/[^/%]+(?:\/options)?|products(?:\/[^/%]+)?|offerings(?:\/[^/%]+)?|entitlements(?:\/[^/%]+(?:\/products)?)?))?\/?$/;
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'JPY', 'BRL', 'KRW', 'CNY', 'MXN', 'SEK', 'PLN', 'NZD', 'CHF', 'DKK', 'HKD', 'IDR', 'INR', 'KES', 'MYR', 'NOK', 'PKR', 'SGD', 'TRY', 'TWD', 'ZAR'];
-const MAX_FILTER_OPTIONS = 200;
+/** Room kept under the output limit for the fields a folded result adds. */
+const ROOM = 1000;
 
 const ERRORS = {
   401: 'RevenueCat rejected the API key: it was revoked or mistyped, or it is a v1 key (a V2 secret key is needed)',
@@ -164,9 +165,14 @@ function trimEntitlement(entitlement: any): Record<string, unknown> {
   });
 }
 
-/** A chart point, with the period start as a date next to RevenueCat's Unix time. */
-function trimPoint(point: any): Record<string, unknown> {
-  const cohort = typeof point?.cohort === 'number' ? point.cohort : undefined;
+/**
+ * A chart point, with the period start as a date next to RevenueCat's Unix
+ * time. RevenueCat sends a point as an object, or for some charts as an array
+ * of numbers: those pass through as they came.
+ */
+function trimPoint(point: any): unknown {
+  if (typeof point !== 'object' || point === null || Array.isArray(point)) return point;
+  const cohort = typeof point.cohort === 'number' ? point.cohort : undefined;
   let date: string | undefined;
   if (cohort !== undefined) {
     const time = cohort > 1e11 ? cohort : cohort * 1000;
@@ -176,13 +182,21 @@ function trimPoint(point: any): Record<string, unknown> {
   return compact({
     date,
     cohort,
-    measure: point?.measure,
-    segment: point?.segment,
-    period: point?.period,
-    value: point?.value,
-    incomplete: point?.incomplete,
-    confidence: point?.confidence,
+    measure: point.measure,
+    segment: point.segment,
+    period: point.period,
+    value: point.value,
+    incomplete: point.incomplete,
+    confidence: point.confidence,
   });
+}
+
+function trimFilter(filter: any): Record<string, unknown> {
+  return compact({ id: filter?.id, displayName: filter?.display_name, group: filter?.group_display_name, valueMode: filter?.value_mode });
+}
+
+function trimOption(option: any): Record<string, unknown> {
+  return compact({ id: option?.id, displayName: option?.display_name });
 }
 
 function indexed(list: unknown, map: (item: any) => Record<string, unknown>): Array<Record<string, unknown>> | undefined {
@@ -294,41 +308,73 @@ const connector = defineConnector({
       title: 'Get a RevenueCat chart\'s options',
       description:
         'What a chart takes: its resolutions (pass the id as resolution), the filters with their values, the segments to group by, and its selectors '
-        + '(such as revenue_type or conversion_timeframe). Read it before get_chart; never guess an option id.',
+        + '(such as revenue_type or conversion_timeframe). Read it before get_chart; never guess an option id. A filter whose values do not fit '
+        + 'comes with optionCount only: pass its id as filter_id to list its values, in pages with cursor.',
       inputSchema: {
         type: 'object',
         properties: {
           project_id: PROJECT_ID,
           chart_name: CHART_NAME,
           realtime: { type: 'boolean', default: true, description: 'Realtime data (default true); some charts exist only in realtime.' },
+          filter_id: { type: 'string', minLength: 1, maxLength: 100, description: 'Only this filter\'s values, e.g. country or product.' },
+          cursor: CURSOR,
         },
         required: ['chart_name'],
         additionalProperties: false,
       },
-      async run(args: { project_id?: string; chart_name: string; realtime: boolean }, h) {
+      async run(args: { project_id?: string; chart_name: string; realtime: boolean; filter_id?: string; cursor?: string }, h) {
+        const state = h.cursor(args.cursor);
+        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
         const project = await projectOf(h, args.project_id);
         const data = await get(h, `/v2/projects/${encodeURIComponent(project)}/charts/${encodeURIComponent(args.chart_name)}/options`, { realtime: args.realtime });
-        const notes: string[] = [];
-        const filters = (Array.isArray(data?.filters) ? data.filters : []).map((filter: any) => {
-          const options: any[] = Array.isArray(filter?.options) ? filter.options : [];
-          if (options.length > MAX_FILTER_OPTIONS) notes.push(`The filter ${filter?.id} has ${options.length} values; the first ${MAX_FILTER_OPTIONS} are shown.`);
-          return compact({
-            id: filter?.id,
-            displayName: filter?.display_name,
-            group: filter?.group_display_name,
-            valueMode: filter?.value_mode,
-            options: options.length ? options.slice(0, MAX_FILTER_OPTIONS).map((option) => compact({ id: option?.id, displayName: option?.display_name })) : undefined,
+        const filters: any[] = Array.isArray(data?.filters) ? data.filters : [];
+        const optionsOf = (filter: any): any[] => (Array.isArray(filter?.options) ? filter.options : []);
+
+        if (args.filter_id !== undefined) {
+          const filter = filters.find((item) => item?.id === args.filter_id);
+          if (!filter) {
+            const ids = filters.map((item) => item?.id).filter((id) => typeof id === 'string').slice(0, 50);
+            throw new ToolFailure(`The ${args.chart_name} chart has no filter ${args.filter_id}.${ids.length ? ` Its filters: ${ids.join(', ')}.` : ' It has no filters.'}`);
+          }
+          const options = optionsOf(filter);
+          return h.page({
+            key: 'options',
+            items: options.slice(skip).map(trimOption),
+            extra: { projectId: project, chart: args.chart_name, filter: { ...trimFilter(filter), optionCount: options.length } },
+            resumeAt: (index) => h.makeCursor({ o: skip + index }),
           });
+        }
+
+        const listed = filters.map((filter) => {
+          const options = optionsOf(filter);
+          return { ...trimFilter(filter), ...(options.length ? { options: options.map(trimOption) } : {}) } as Record<string, unknown>;
         });
-        return compact({
+        const result = (notes?: string[]): Record<string, unknown> => compact({
           projectId: project,
           chart: args.chart_name,
           resolutions: (Array.isArray(data?.resolutions) ? data.resolutions : []).map((item: any) => compact({ id: item?.id, displayName: item?.display_name })),
           segments: (Array.isArray(data?.segments) ? data.segments : []).map((item: any) => compact({ id: item?.id, displayName: item?.display_name, group: item?.group_display_name })),
-          filters,
+          filters: listed,
           userSelectors: data?.user_selectors,
-          notes: notes.length ? notes : undefined,
+          notes: notes?.length ? notes : undefined,
         });
+        // The largest filters give up their values, one by one, until the result fits.
+        const folded: string[] = [];
+        const bySize = listed
+          .map((filter, index) => ({ index, size: jsonSize(filter['options'] ?? []) }))
+          .filter((item) => Array.isArray(listed[item.index]?.['options']))
+          .sort((a, b) => b.size - a.size);
+        for (const { index } of bySize) {
+          if (jsonSize(result()) <= OUTPUT_LIMIT_BYTES - ROOM) break;
+          const filter = listed[index] as Record<string, unknown>;
+          const count = (filter['options'] as unknown[]).length;
+          delete filter['options'];
+          filter['optionCount'] = count;
+          folded.push(String(filter['id']));
+        }
+        return result(folded.length
+          ? [`The values of ${folded.join(', ')} are left out to fit: pass filter_id to list them.`]
+          : undefined);
       },
     },
     {
@@ -336,9 +382,10 @@ const connector = defineConnector({
       kind: 'read',
       title: 'Get a RevenueCat chart',
       description:
-        "A chart's data, as the dashboard shows it: measures, segments (the total first), points by period (with incomplete marking a partial period) "
-        + 'and the summary (total and average per measure; quote it rather than adding points). Take resolution, filter, segment and selector ids from '
-        + 'get_chart_options. Long point lists come in pages: pass nextCursor back as cursor with the same other arguments.',
+        "A chart's data, as the dashboard shows it: measures, segments (the total first), points by period (with incomplete marking a partial period; "
+        + 'a chart that sends points as arrays of numbers keeps them as they came) and the summary (total and average per measure; quote it rather '
+        + 'than adding points). Take resolution, filter, segment and selector ids from get_chart_options. Long point lists come in pages: pass '
+        + 'nextCursor back as cursor with the same other arguments.',
       inputSchema: {
         type: 'object',
         properties: {
