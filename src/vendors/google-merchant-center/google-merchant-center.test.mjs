@@ -61,6 +61,13 @@ test('the accounts picker: list_accounts lists every account the Google account 
   assert.equal(fetch.calls[1].query.pageToken, 'accounts-page-2');
 });
 
+test('list_accounts marks the accounts chosen for the connection as selected, and lists the others too', async () => {
+  const { module, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'accounts.json')), { accounts: ['5550002'] });
+  const { payload } = await callTool(module, 'list_accounts', {}, ctx);
+  assert.deepEqual(payload.accounts.map((item) => [item.id, item.selected]), [['5550001', undefined], ['5550002', true]]);
+  assert.match(module.tools.find((tool) => tool.name === 'list_accounts').description, /marked selected: true/);
+});
+
 test('list_products trims each processed product to its key fields, price and status, and pages', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'products.json')));
   const { payload } = await callTool(module, 'list_products', { account_id: ACCOUNT, page_size: 2 }, ctx);
@@ -241,6 +248,42 @@ test('api_get and api_request reach the rest of the Merchant API inside the acco
   assert.equal(fetch.calls.length, 2);
 });
 
+test('api_request refuses another account anywhere in the body or query, every managed account, a raw body, services and registration', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, {}));
+  const subscriptions = { method: 'POST', path: `/notifications/v1/accounts/${ACCOUNT}/notificationsubscriptions` };
+  const callback = 'https://hooks.example.net/merchant';
+  const target = await callTool(module, 'api_request', { ...subscriptions, json: { registeredEvent: 'PRODUCT_STATUS_CHANGE', targetAccount: 'accounts/42', callBackUri: callback } }, ctx);
+  assert.match(target.payload.error, /The Merchant Center account 42 is not among/);
+  const managed = await callTool(module, 'api_request', { ...subscriptions, json: { registeredEvent: 'PRODUCT_STATUS_CHANGE', allManagedAccounts: true, callBackUri: callback } }, ctx);
+  assert.match(managed.payload.error, /allManagedAccounts reaches every account managed by this one/);
+  const inQuery = await callTool(module, 'api_get', { path: `/products/v1/accounts/${ACCOUNT}/products`, query: { filter: 'accounts/42/products/x' } }, ctx);
+  assert.match(inQuery.payload.error, /The Merchant Center account 42 is not among/);
+  // A body sent as text would pass the account check unread: only json is taken.
+  const raw = await callTool(module, 'api_request', { method: 'POST', path: `/promotions/v1/accounts/${ACCOUNT}/promotions:insert`, body: '{"promotion":{},"dataSource":"accounts/42/dataSources/1"}', content_type: 'application/json' }, ctx);
+  assert.match(raw.payload.error, /Invalid arguments for api_request: unknown arguments "body", "content_type"/);
+  const propose = await callTool(module, 'api_request', { method: 'POST', path: `/accounts/v1/accounts/${ACCOUNT}/services:propose`, json: { provider: 'providers/42', accountService: { accountManagement: {} } } }, ctx);
+  assert.match(propose.payload.error, /Proposing, approving or rejecting the services of a Merchant Center account is not offered here.*Apps and services/);
+  const approve = await callTool(module, 'api_request', { method: 'POST', path: `/accounts/v1/accounts/${ACCOUNT}/services/abc:approve`, json: {} }, ctx);
+  assert.match(approve.payload.error, /services of a Merchant Center account is not offered here/);
+  const register = await callTool(module, 'api_request', { method: 'POST', path: `/accounts/v1/accounts/${ACCOUNT}/developerRegistration:registerGcp`, json: { developerEmail: 'dev@example.com' } }, ctx);
+  assert.match(register.payload.error, /Registering or unregistering the Google Cloud project with a Merchant Center account is not offered here/);
+  assert.equal(fetch.calls.length, 0);
+
+  // Inside the lock, the same requests for the chosen account go out; a URL path holding "/accounts/<digits>" names no account.
+  const sent = await callTool(module, 'api_request', { ...subscriptions, json: { registeredEvent: 'PRODUCT_STATUS_CHANGE', targetAccount: `accounts/${ACCOUNT}`, callBackUri: `${callback}/accounts/42` } }, ctx);
+  assert.equal(sent.isError, false, sent.payload.error);
+  const read = await callTool(module, 'api_get', { path: `/accounts/v1/accounts/${ACCOUNT}/services` }, ctx);
+  assert.equal(read.isError, false);
+  assert.equal(fetch.calls.length, 2);
+
+  // Without a lock (the CLI with no CONNECTOR_ACCOUNTS), every managed account may be subscribed.
+  const open = setup(() => jsonResponse(200, {}), null);
+  const all = await callTool(open.module, 'api_request', { ...subscriptions, json: { registeredEvent: 'PRODUCT_STATUS_CHANGE', allManagedAccounts: true, callBackUri: callback } }, open.ctx);
+  assert.equal(all.isError, false);
+  const request = module.tools.find((tool) => tool.name === 'api_request');
+  assert.deepEqual(Object.keys(request.inputSchema.properties).sort(), ['json', 'method', 'path', 'query']);
+});
+
 test('errors: the vendor\'s words, an unregistered project explained, 429 retryAfter, and clean logs', async () => {
   const invalid = setup(() => jsonResponse(400, fixture(import.meta.url, 'error-invalid.json')));
   const bad = await callTool(invalid.module, 'insert_product', { ...KEY, data_source: '9990001', product_attributes: { availability: 'in stock' } }, invalid.ctx);
@@ -251,7 +294,8 @@ test('errors: the vendor\'s words, an unregistered project explained, 429 retryA
 
   const unregistered = setup(() => jsonResponse(401, fixture(import.meta.url, 'error-not-registered.json')), null);
   const denied = await callTool(unregistered.module, 'list_accounts', {}, unregistered.ctx);
-  assert.match(denied.payload.error, /not registered with this account yet \(register it once: see the connector's README\) \(HTTP 401\)/);
+  assert.match(denied.payload.error, /not registered with Merchant Center yet, and until it is every call is refused\. An admin of the account registers it once, outside this connector, with developerRegistration:registerGcp/);
+  assert.match(denied.payload.error, /calls work about 5 minutes later \(see the connector's setup steps\) \(HTTP 401\)/);
   assert.match(denied.payload.error, /is not registered with the merchant account/);
 
   const limited = setup(() => jsonResponse(429, { error: { code: 429, message: 'Quota exceeded', status: 'RESOURCE_EXHAUSTED' } }, { 'retry-after': '30' }));

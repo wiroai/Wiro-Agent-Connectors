@@ -4,13 +4,16 @@
 //
 // Credential: `access_token`, a Google OAuth access token with the scope
 // https://www.googleapis.com/auth/content, from an OAuth client in the user's
-// own Google Cloud project (registered once with Merchant Center, see the
-// README). The host signs in, refreshes the token and passes the current one.
+// own Google Cloud project. An admin of the Merchant Center account registers
+// that project once, before connecting (see the README): until then the
+// Merchant API refuses every call from it. The host signs in, refreshes the
+// token and passes the current one.
 //
 // Account picker `accounts` (the Merchant Center accounts the agent may use):
 // every tool that names an account checks it against ctx.accounts.accounts.
 
 import {
+  allowedAccounts,
   apiTools,
   base64UrlEncode,
   defineConnector,
@@ -19,6 +22,7 @@ import {
   truncate,
   utf8Bytes,
   type ApiToolRequest,
+  type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
 
@@ -209,7 +213,18 @@ function flattenRow(value: unknown, prefix = '', out: Record<string, unknown> = 
   return out;
 }
 
-/** The account IDs a generic request names: in its path, and in a dataSource name in its query or body. */
+/**
+ * "accounts/<id>" as a resource name (targetAccount, dataSource, a product's
+ * name): at the start of a value, or after a quote or a space, never inside a
+ * URL's path, such as a product link's.
+ */
+const ACCOUNT_NAME = /(?<![A-Za-z0-9_./-])accounts\/([0-9]+)/g;
+
+/**
+ * The account IDs a generic request names: in its path, and as accounts/<id>
+ * anywhere in its query values and its JSON body (the only body api_request
+ * sends, so no body goes out unread).
+ */
 function accountsNamed(request: ApiToolRequest): string[] {
   const ids = new Set<string>();
   // The first two segments are the sub-API and its version: /accounts/v1/accounts/{id}/...
@@ -217,31 +232,73 @@ function accountsNamed(request: ApiToolRequest): string[] {
     const next = request.segments[index + 1];
     if (index >= 2 && segment === 'accounts' && next) ids.add(next.split(':')[0] as string);
   });
-  const sources = [...(request.query['dataSource'] ?? []), typeof request.json?.['dataSource'] === 'string' ? request.json['dataSource'] : ''];
-  for (const source of sources) {
-    const match = /^accounts\/([0-9]+)\//.exec(String(source));
-    if (match) ids.add(match[1] as string);
+  const texts = [...Object.values(request.query).flat(), ...(request.json ? [JSON.stringify(request.json)] : [])];
+  for (const text of texts) {
+    for (const match of text.matchAll(ACCOUNT_NAME)) ids.add(match[1] as string);
   }
   return [...ids].filter(Boolean);
 }
 
-/** Endpoints the generic tools keep out of reach: deleting a whole account and managing its users. */
-function guardRequest(request: ApiToolRequest): void {
+/**
+ * Endpoints the generic tools keep out of reach: deleting a whole account,
+ * managing its users, the services that hand another account control of it,
+ * the Cloud project's registration (it adds an API developer user), and a
+ * write that reaches every managed account past the chosen ones.
+ */
+function guardRequest(request: ApiToolRequest, h: ToolHelpers): void {
   if (!/^\/[a-z_]+\/v1(alpha|beta)?\//.test(request.path)) {
     throw new ToolFailure('The path must start with a sub-API and its version, e.g. /accounts/v1/ or /products/v1/. Nothing was sent.');
   }
   if (request.method === 'GET') return;
-  if (request.segments.some((segment) => segment === 'users' || segment.startsWith('users:'))) {
-    throw new ToolFailure(`Managing the users of a ${ACCOUNT} is not offered here: do it in Merchant Center, Settings, People and access. Nothing was sent.`);
+  const has = (name: string) => request.segments.some((segment) => segment === name || segment.startsWith(`${name}:`));
+  if (has('users')) {
+    throw new ToolFailure(`Managing the users of a ${ACCOUNT} is not offered here: do it in Merchant Center, Settings, Access and services, People and access. Nothing was sent.`);
+  }
+  if (has('services')) {
+    throw new ToolFailure(
+      `Proposing, approving or rejecting the services of a ${ACCOUNT} is not offered here, since a service can hand another account control of it: `
+        + 'do it in Merchant Center, Settings, Access and services, Apps and services. Nothing was sent.',
+    );
+  }
+  if (has('developerRegistration')) {
+    throw new ToolFailure(
+      `Registering or unregistering the Google Cloud project with a ${ACCOUNT} is not offered here: an admin of the account does it once, `
+        + 'before connecting, with the same OAuth client (see the connector\'s setup steps). Nothing was sent.',
+    );
   }
   if (request.method === 'DELETE' && request.segments.length === 4 && request.segments[2] === 'accounts') {
     throw new ToolFailure(`Deleting a whole ${ACCOUNT} is not offered here: do it in Merchant Center. Nothing was sent.`);
   }
+  if (allowedAccounts(h.ctx.accounts, 'accounts') !== null && /"allManagedAccounts":true/.test(JSON.stringify(request.json ?? {}))) {
+    throw new ToolFailure(
+      `allManagedAccounts reaches every account managed by this one, past the ${ACCOUNT}s chosen for this connection: name a chosen one as `
+        + 'targetAccount instead. Nothing was sent.',
+    );
+  }
 }
 
-// A project that is not registered with the account gets HTTP 401 with Google's own explanation.
+/**
+ * api_request with a JSON body only. The Merchant API takes nothing else, and
+ * a body sent as text would reach it without the account check reading it.
+ */
+function jsonBodyOnly(tool: ToolDefinition): ToolDefinition {
+  if (tool.name !== 'api_request') return tool;
+  const properties = { ...tool.inputSchema.properties };
+  delete properties['body'];
+  delete properties['content_type'];
+  properties['json'] = { type: 'object', description: 'A JSON object to send as the body.' };
+  return {
+    ...tool,
+    description: tool.description.replace(' or another body (body and content_type)', ''),
+    inputSchema: { ...tool.inputSchema, properties },
+  };
+}
+
+// A project that is not registered with Merchant Center gets HTTP 401 with Google's own explanation.
 const UNAUTHORIZED = {
-  401: 'Google Merchant Center did not accept the access token, or the Google Cloud project of its OAuth client is not registered with this account yet (register it once: see the connector\'s README)',
+  401: 'Google Merchant Center did not accept the access token, or the Google Cloud project of its OAuth client is not registered with Merchant Center '
+    + 'yet, and until it is every call is refused. An admin of the account registers it once, outside this connector, with '
+    + 'developerRegistration:registerGcp from the same OAuth client, and calls work about 5 minutes later (see the connector\'s setup steps)',
 };
 
 const PRODUCT_ERRORS = {
@@ -277,12 +334,14 @@ const connector = defineConnector({
       title: 'List Merchant Center accounts',
       description:
         'Lists the Merchant Center accounts the connected Google account can open (standalone, advanced and sub-accounts): account ID, name, '
-        + 'time zone and language. Pass nextCursor back as cursor for more.',
+        + 'time zone and language. When the connection is limited to chosen accounts, those are marked selected: true, and only they can be '
+        + 'used. Pass nextCursor back as cursor for more.',
       inputSchema: { type: 'object', properties: { cursor: CURSOR }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
         const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
         const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const chosen = allowedAccounts(h.ctx.accounts, 'accounts');
         const { data } = await h.api({ path: '/accounts/v1/accounts', query: { pageSize: 250, pageToken }, errors: UNAUTHORIZED });
         const accounts = (Array.isArray(data?.accounts) ? data.accounts : []).map((account: any) => {
           const id = account?.accountId ?? (typeof account?.name === 'string' ? accountId(account.name) : undefined);
@@ -293,6 +352,7 @@ const connector = defineConnector({
             language: account?.languageCode,
             adult_content: account?.adultContent === true ? true : undefined,
             test_account: account?.testAccount === true ? true : undefined,
+            selected: id !== undefined && chosen?.includes(String(id)) ? true : undefined,
           });
         });
         return h.page({
@@ -715,8 +775,8 @@ const connector = defineConnector({
         + 'Prices are {"amountMicros", "currencyCode"}. Reference: https://developers.google.com/merchant/api/reference/rest.',
       methods: ['POST', 'PATCH', 'DELETE'],
       accounts: { key: 'accounts', label: ACCOUNT, ids: accountsNamed },
-      guard: (request) => guardRequest(request),
-    }),
+      guard: guardRequest,
+    }).map(jsonBodyOnly),
   ],
 });
 

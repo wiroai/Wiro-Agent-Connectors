@@ -23,15 +23,21 @@ The token comes from an OAuth client in your own Google Cloud project. A host th
 1. In the [Google Cloud console](https://console.cloud.google.com/), create a project (or pick one) and enable the [Merchant API](https://console.cloud.google.com/apis/library/merchantapi.googleapis.com).
 2. In [Google Auth Platform, Audience](https://console.cloud.google.com/auth/audience), choose **External**. While the app is in **Testing**, only its test users can sign in, and Google ends their sign-in after 7 days: add your Google account as a test user, or set the publishing status to **In production**.
 3. In [Data Access](https://console.cloud.google.com/auth/scopes), add the scope `https://www.googleapis.com/auth/content`.
-4. In [Clients](https://console.cloud.google.com/auth/clients), create an OAuth client of type **Web application** and add the redirect URI your host gives you. Copy the client ID and the client secret into your host, which then signs you in.
-5. Register the Cloud project with your Merchant Center account once (the API answers HTTP 401 "GCP project ... is not registered with the merchant account" until you do). With a token of an admin of the account, call `api_request` with `{"method": "POST", "path": "/accounts/v1/accounts/<ACCOUNT_ID>/developerRegistration:registerGcp", "json": {"developerEmail": "you@example.com"}}`, then wait about five minutes. The account needs a verified website; test accounts cannot be registered. Registering adds the email as an API developer user of the account.
-6. For the CLI, get a token with the same client, for example in the [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/) with **Use your own OAuth credentials** (add `https://developers.google.com/oauthplayground` as a redirect URI first) and the scope above. It lasts one hour, and the CLI does not refresh it.
+4. In [Clients](https://console.cloud.google.com/auth/clients), create an OAuth client of type **Web application**, add the redirect URI your host gives you and `https://developers.google.com/oauthplayground` (for the next step). Copy the client ID and the client secret (shown once).
+5. Before you connect, register the Cloud project with your Merchant Center account, once. Until you do, the Merchant API refuses every call from the project with HTTP 401 ("GCP project ... is not registered with the merchant account"), so the connector cannot even list your accounts, and it does not send the registration itself. In the [OAuth 2.0 Playground](https://developers.google.com/oauthplayground/):
+   1. Open the settings (gear icon), check **Use your own OAuth credentials** and enter the client ID and secret.
+   2. Authorize the scope `https://www.googleapis.com/auth/content` with a Google account that has admin access to the Merchant Center account, and exchange the code for tokens.
+   3. Send `POST https://merchantapi.googleapis.com/accounts/v1/accounts/<ACCOUNT_ID>/developerRegistration:registerGcp` with the content type `application/json` and the body `{"developerEmail": "you@example.com"}`. The email is optional and gets the API developer role on the account. For someone who is not a user of the account yet, Google sends an invitation, and the registration completes only once it is accepted (within 14 days). Without an email, send `{}`: that only links the project.
+   4. Wait about five minutes, then connect in your host, which signs you in with the same client.
+
+   Register your primary account only: an advanced account covers its sub-accounts. The account needs a verified website, and test accounts cannot be registered.
+6. For the CLI, get a token in the OAuth 2.0 Playground the same way (steps 5.1 and 5.2). It lasts one hour, and the CLI does not refresh it.
 
 ### How to revoke it
 
 - In your Google Account, open [Third-party apps and services](https://myaccount.google.com/connections), pick your app and choose **Delete all connections**.
 - Or delete the OAuth client in the Google Cloud console (Google Auth Platform, Clients).
-- To unlink the Cloud project from Merchant Center as well, call `developerRegistration:unregisterGcp` on the account, or remove the API developer user in Merchant Center, Settings, People and access.
+- To unlink the Cloud project from Merchant Center as well, send `POST https://merchantapi.googleapis.com/accounts/v1/accounts/<ACCOUNT_ID>/developerRegistration:unregisterGcp` with the body `{}` in the OAuth 2.0 Playground, as in step 5 (the connector does not send it), and remove the API developer user in Merchant Center, Settings, Access and services, People and access.
 
 ## Account picker
 
@@ -39,13 +45,13 @@ The token comes from an OAuth client in your own Google Cloud project. A host th
 | --- | --- | --- | --- |
 | `accounts` | The Merchant Center accounts the agent may read and change (several) | `list_accounts` | `merchantid` |
 
-With a selection, every tool refuses another account before sending anything, and `api_get` and `api_request` only reach paths (and `dataSource` names) of a chosen account. In the CLI, set `CONNECTOR_ACCOUNTS='{"accounts":["123456789"]}'`.
+With a selection, every tool refuses another account before sending anything, and `api_get` and `api_request` only reach paths of a chosen account, refuse any other account a query value or the JSON body names as `accounts/<id>` (a `dataSource`, a notification's `targetAccount`), and refuse `allManagedAccounts: true`. `list_accounts` marks the chosen accounts `selected: true`. In the CLI, set `CONNECTOR_ACCOUNTS='{"accounts":["123456789"]}'`.
 
 ## Tools
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `list_accounts` | read | The Merchant Center accounts the Google account can open. The `accounts` picker's list. |
+| `list_accounts` | read | The Merchant Center accounts the Google account can open; the chosen ones are marked `selected: true`. The `accounts` picker's list. |
 | `list_products` | read | Processed products of an account: offer ID, language, feed label, title, link, price, availability, brand, status per destination and item issues. |
 | `get_product` | read | One product by offer ID, language and feed label, with every attribute and each issue's detail and help link. |
 | `insert_product` | update | Inserts a product input into an API data source, or replaces the input with the same offer ID, language and feed label there. |
@@ -57,7 +63,7 @@ With a selection, every tool refuses another account before sending anything, an
 | `summarize_product_statuses` | read | Active, pending, disapproved and expiring counts per destination and country, with each issue and how many products it affects. |
 | `search_reports` | read | A Merchant Center Query Language report, rows returned flat with snake_case fields. Sent by POST, changes nothing. |
 | `api_get` | read | Any other GET of the Merchant API, such as `/accounts/v1/accounts/{id}/shippingSettings` or `/promotions/v1/accounts/{id}/promotions`. |
-| `api_request` | write | A POST, PATCH or DELETE to the Merchant API, such as `homepage:claim`, `shippingSettings:insert` or `promotions:insert`. Sent once, never retried. Deleting a whole account and managing its users are left out. |
+| `api_request` | write | A POST, PATCH or DELETE with a JSON body to the Merchant API, such as `homepage:claim`, `shippingSettings:insert` or `promotions:insert`. Sent once, never retried. Left out: deleting a whole account, managing its users, proposing, approving or rejecting its services (a service can hand another account control of it), and registering or unregistering the Cloud project. |
 
 ## Limits
 
@@ -69,5 +75,5 @@ With a selection, every tool refuses another account before sending anything, an
 <!--
 Rows for the repository README.
 Connectors: | `google-merchant-center` | [Google Merchant Center](https://merchants.google.com): products with status and issues, product inserts, updates and deletes through API data sources, feed health counts, account issues, reports, and the rest of the Merchant API | Google OAuth access token | Available |
-Quick start: | `google-merchant-center` | `GOOGLE_MERCHANT_CENTER_ACCESS_TOKEN` | A Google OAuth access token from your own Google Cloud OAuth client with the Merchant API enabled and the scope `content`; the Cloud project registered once with the account. Account key: `accounts`. |
+Quick start: | `google-merchant-center` | `GOOGLE_MERCHANT_CENTER_ACCESS_TOKEN` | A Google OAuth access token from your own Google Cloud OAuth client with the Merchant API enabled and the scope `content`; the Cloud project registered once with the account before connecting (see the connector's README). Account key: `accounts`. |
 -->
