@@ -567,9 +567,18 @@ function filesTaken(h: ToolHelpers): number {
   return limit;
 }
 
+/** Google's own file types, application/vnd.google-apps.*: none has a stored file. */
+const GOOGLE_APPS_TYPE = 'application/vnd.google-apps.';
+
 /** Why an item is not a stored file to hand back as it is (a folder, a shortcut, a Google file to export), or undefined for one. */
-function notStoredFile(kind: string): string | undefined {
-  if (kind === 'file') return undefined;
+function notStoredFile(mimeType: unknown): string | undefined {
+  const kind = kindOf(mimeType);
+  if (kind === 'file') {
+    // A Google file of a kind not named here (an Apps Script project, a Vids video, a My Maps map) has no stored file either.
+    return typeof mimeType === 'string' && mimeType.startsWith(GOOGLE_APPS_TYPE)
+      ? 'That is a Google file with no stored file to download, and export_file exports only Google Docs, Sheets, Slides files and Drawings.'
+      : undefined;
+  }
   if (kind === 'folder') return 'That is a folder: list its files with list_files.';
   if (kind === 'shortcut') return 'That is a shortcut: use its target, whose id get_file returns as shortcutTarget.';
   if (FILE_EXPORTS[kind]) return `That is a ${KIND_NAMES[kind]}, which has no stored file: export it with export_file.`;
@@ -958,7 +967,7 @@ const connector = defineConnector({
       async run(args: { file_id: string }, h) {
         const limit = filesTaken(h);
         const file = await getChecked(h, args.file_id, 'id,name,mimeType,size,md5Checksum,modifiedTime,webViewLink,capabilities(canDownload)');
-        const problem = notStoredFile(kindOf(file?.mimeType));
+        const problem = notStoredFile(file?.mimeType);
         if (problem) throw new ToolFailure(problem);
         assertDownloadable(h, file);
         const size = Number(file?.size);
@@ -1009,9 +1018,8 @@ const connector = defineConnector({
         const kind = kindOf(file?.mimeType);
         const formats = FILE_EXPORTS[kind];
         if (!formats) {
-          throw new ToolFailure(kind === 'file'
-            ? 'That is a stored file, not a Google Doc, Sheet, Slides file or Drawing: download it with download_file.'
-            : (notStoredFile(kind) as string));
+          throw new ToolFailure(notStoredFile(file?.mimeType)
+            ?? 'That is a stored file, not a Google Doc, Sheet, Slides file or Drawing: download it with download_file.');
         }
         if (!formats.includes(args.format)) throw new ToolFailure(`A ${KIND_NAMES[kind]} exports as ${orList(formats)}, not ${args.format}.`);
         assertDownloadable(h, file);

@@ -952,6 +952,9 @@ test('download_file refuses before downloading: no files taken, too large, a Goo
     [fixture(import.meta.url, 'file.json'), /^That is a Google Doc, which has no stored file: export it with export_file\.$/],
     [{ id: BANNER, name: 'Creatives', mimeType: 'application/vnd.google-apps.folder' }, /^That is a folder: list its files with list_files\.$/],
     [{ id: BANNER, name: 'Survey', mimeType: 'application/vnd.google-apps.form' }, /^A Google Form cannot be downloaded or exported\.$/],
+    // A Google file of a kind the tools do not name has no stored file either: never sent on to export_file.
+    [{ id: BANNER, name: 'Automation', mimeType: 'application/vnd.google-apps.script' }, /^That is a Google file with no stored file to download, and export_file exports only Google Docs, Sheets, Slides files and Drawings\.$/],
+    [{ id: BANNER, name: 'Launch video', mimeType: 'application/vnd.google-apps.vid' }, /^That is a Google file with no stored file to download/],
     [{ ...banner, capabilities: { canDownload: false } }, /^Google Drive does not let the service account asset-agent@example-project\.iam\.gserviceaccount\.com download this file: downloads are turned off for its role/],
   ];
   for (const [file, message] of cases) {
@@ -1010,6 +1013,7 @@ test('export_file takes the formats Google offers for each kind, says what a csv
     'GET /drive/v3/files/slides1': jsonResponse(200, slides),
     'GET /drive/v3/files/slides1/export': bytesResponse(200, PNG, { 'content-type': 'image/png' }),
     [`GET /drive/v3/files/${BANNER}`]: jsonResponse(200, fixture(import.meta.url, 'uploaded.json')),
+    'GET /drive/v3/files/script1': jsonResponse(200, { id: 'script1', name: 'Automation', mimeType: 'application/vnd.google-apps.script' }),
   });
   const csv = await callTool(module, 'export_file', { file_id: SHEET, format: 'csv' }, ctx);
   assert.equal(apiCalls()[1].query.mimeType, 'text/csv');
@@ -1024,7 +1028,10 @@ test('export_file takes the formats Google offers for each kind, says what a csv
   assert.equal(wrong.payload.error, 'A Google Sheet exports as pdf, xlsx, or csv, not docx.');
   const stored = await callTool(module, 'export_file', { file_id: BANNER }, ctx);
   assert.equal(stored.payload.error, 'That is a stored file, not a Google Doc, Sheet, Slides file or Drawing: download it with download_file.');
-  assert.deepEqual(apiCalls().slice(before).map((call) => call.path), [`/drive/v3/files/${SHEET}`, `/drive/v3/files/${BANNER}`], 'no export was asked for');
+  // A Google file of another kind is not sent back to download_file, which could not download it either.
+  const script = await callTool(module, 'export_file', { file_id: 'script1' }, ctx);
+  assert.equal(script.payload.error, 'That is a Google file with no stored file to download, and export_file exports only Google Docs, Sheets, Slides files and Drawings.');
+  assert.deepEqual(apiCalls().slice(before).map((call) => call.path), [`/drive/v3/files/${SHEET}`, `/drive/v3/files/${BANNER}`, '/drive/v3/files/script1'], 'no export was asked for');
 
   const invalid = await callTool(module, 'export_file', { file_id: SHEET, format: 'odt' }, ctx);
   assert.match(invalid.payload.error, /^Invalid arguments for export_file: `format` must be one of "pdf", "docx", "xlsx", "pptx", "csv", "txt", "png"/);

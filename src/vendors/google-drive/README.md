@@ -89,7 +89,7 @@ When the link cannot work, `share_file` says so:
 
 - A service account owns no Drive storage: Google refuses uploads and new files it would own in a My Drive folder with `storageQuotaExceeded`. Use a folder in a shared drive, where the files belong to the drive.
 - Files the service account creates belong to it: share them (`share_file`) with the people who need to edit them.
-- `read_file` returns text only, up to 4 MB, in pages of about 25 KB. `download_file` and `export_file` hand files to the host instead, within its file limit (25 MiB a call in the stdio CLI), and Google Drive exports up to 10 MB; for a service that downloads by URL, see [Handing a file to another service](#handing-a-file-to-another-service).
+- `read_file` returns text only, up to 4 MB, in pages of about 25 KB. `download_file` and `export_file` hand files to the host instead, within its file limit (25 MiB a call in the stdio CLI), and Google Drive exports up to 10 MB. Other Google files (Forms, Sites, Apps Script projects, Vids, My Maps) have no stored file, and `export_file` makes no copy of them. For a service that downloads by URL, see [Handing a file to another service](#handing-a-file-to-another-service).
 - A full-text search (`full_text`, or `fullText` in `query`) comes back by relevance: Google Drive takes no sort order with it, so `order_by` is refused there.
 - Google Drive reports usage limits (`rateLimitExceeded`, `userRateLimitExceeded`) as HTTP 403: the error then says it is a usage limit; wait a minute and try again. An HTTP 429 comes with `retryAfter` when Google sends a wait time.
 - Uploads from a URL take files up to 50 MB, or the host's media limit when it is lower (25 MiB in the stdio CLI).
