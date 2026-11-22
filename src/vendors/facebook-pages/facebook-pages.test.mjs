@@ -268,6 +268,19 @@ test('two Pages\' tokens kept from an older setup, both Pages chosen: a post nam
   assert.equal(fetch.calls.some((call) => call.path === '/v26.0/me/accounts' || 'appsecret_proof' in call.query), false);
 });
 
+test('one Page token an older setup kept as plain text, not a list, is read too', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET /v26.0/me': legacyMe,
+    'POST /v26.0/1001/feed': { id: '1001_3003' },
+    'GET /v26.0/1001_3003': { permalink_url: 'https://www.facebook.com/1001/posts/3003' },
+  }), { credentials: { accesstoken: LEGACY_BAKERY } });
+  const listed = await callTool(module, 'list_pages', {}, ctx);
+  assert.deepEqual(listed.payload.pages.map((page) => page.id), ['1001']);
+  const posted = await callTool(module, 'create_post', { message: 'Hello' }, ctx);
+  assert.equal(posted.payload.post_id, '1001_3003');
+  assert.equal(fetch.calls.find((call) => call.method === 'POST').headers.authorization, `Bearer ${LEGACY_BAKERY}`);
+});
+
 test('a scheduled post is sent unpublished with its time and gets no permalink; a time too soon is refused', async () => {
   const { module, fetch, ctx } = setup(router({ ...PAGE_ROUTES, 'POST /v26.0/1001/feed': f('feed-create.json') }));
   const when = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000);
