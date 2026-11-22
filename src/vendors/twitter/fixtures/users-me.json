@@ -1,0 +1,17 @@
+{
+  "data": {
+    "id": "1500000000000000001",
+    "name": "Acme",
+    "username": "acme",
+    "created_at": "2022-03-01T12:00:00.000Z",
+    "description": "We make boxes.",
+    "location": "",
+    "profile_image_url": "https://pbs.twimg.com/profile_images/1500000000000000001/example_normal.jpg",
+    "protected": false,
+    "verified": false,
+    "verified_type": "none",
+    "subscription_type": "None",
+    "url": "",
+    "public_metrics": { "followers_count": 1200, "following_count": 80, "tweet_count": 456, "listed_count": 7, "like_count": 300, "media_count": 40 }
+  }
+}
