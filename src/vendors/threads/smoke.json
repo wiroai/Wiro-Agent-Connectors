@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_profile", "args": {} },
+  "write": {
+    "tool": "publish_post",
+    "args": { "text": "Connector smoke test {{timestamp}}" },
+    "note": "Publishes a public text post on the connected profile. Remove it with delete_post and the returned media_id."
+  }
+}

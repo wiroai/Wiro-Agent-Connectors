@@ -1,0 +1,10 @@
+{
+  "data": [
+    { "name": "views", "period": "day", "values": [{ "value": 120, "end_time": "2026-10-02T07:00:00+0000" }, { "value": 80, "end_time": "2026-10-03T07:00:00+0000" }], "id": "25000000000000001/insights/views/day" },
+    { "name": "likes", "period": "day", "total_value": { "value": 310 }, "id": "25000000000000001/insights/likes/day" },
+    { "name": "replies", "period": "day", "total_value": { "value": 44 }, "id": "25000000000000001/insights/replies/day" },
+    { "name": "reposts", "period": "day", "total_value": { "value": 12 }, "id": "25000000000000001/insights/reposts/day" },
+    { "name": "quotes", "period": "day", "total_value": { "value": 3 }, "id": "25000000000000001/insights/quotes/day" },
+    { "name": "clicks", "period": "day", "link_total_values": [{ "value": 17, "link_url": "https://bakery.example.com/menu" }], "id": "25000000000000001/insights/clicks/day" }
+  ]
+}
