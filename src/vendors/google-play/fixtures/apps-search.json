@@ -1,0 +1,6 @@
+{
+  "apps": [
+    { "name": "apps/com.example.app", "packageName": "com.example.app", "displayName": "Example App" },
+    { "name": "apps/com.example.pro", "packageName": "com.example.pro", "displayName": "Example Pro" }
+  ]
+}

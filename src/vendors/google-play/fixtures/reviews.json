@@ -1,0 +1,52 @@
+{
+  "reviews": [
+    {
+      "reviewId": "gp:AOqpTOExampleReviewOne000000000000000000000000000000",
+      "authorName": "Jane S.",
+      "comments": [
+        {
+          "userComment": {
+            "text": "\tLove this app! Very useful for making videos.",
+            "lastModified": { "seconds": "1708293600", "nanos": 0 },
+            "starRating": 5,
+            "reviewerLanguage": "en",
+            "device": "sailfish",
+            "androidOsVersion": 34,
+            "appVersionCode": 42,
+            "appVersionName": "2.1.0",
+            "thumbsUpCount": 3,
+            "thumbsDownCount": 0,
+            "deviceMetadata": { "productName": "sailfish (Pixel)", "manufacturer": "Google", "ramMb": 4096 }
+          }
+        }
+      ]
+    },
+    {
+      "reviewId": "gp:AOqpTOExampleReviewTwo000000000000000000000000000000",
+      "authorName": "Ali K.",
+      "comments": [
+        {
+          "userComment": {
+            "text": "\tUygulama açılmıyor.",
+            "originalText": "Uygulama açılmıyor.",
+            "lastModified": { "seconds": "1708207200", "nanos": 0 },
+            "starRating": 2,
+            "reviewerLanguage": "tr",
+            "androidOsVersion": 33,
+            "appVersionCode": 41,
+            "appVersionName": "2.0.9",
+            "thumbsUpCount": 0,
+            "thumbsDownCount": 0
+          }
+        },
+        {
+          "developerComment": {
+            "text": "Sorry about that! Please update to 2.1.0, which fixes the crash.",
+            "lastModified": { "seconds": "1708210800", "nanos": 0 }
+          }
+        }
+      ]
+    }
+  ],
+  "tokenPagination": { "nextPageToken": "CmQKFgoUZXhhbXBsZS1uZXh0LXBhZ2U" }
+}

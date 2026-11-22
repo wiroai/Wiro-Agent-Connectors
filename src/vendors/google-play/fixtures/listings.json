@@ -1,0 +1,18 @@
+{
+  "kind": "androidpublisher#listingsListResponse",
+  "listings": [
+    {
+      "language": "en-US",
+      "title": "Example App",
+      "fullDescription": "Make short videos from text, edit photos and add music.\n\nFeatures:\n- Text to video\n- Photo editing",
+      "shortDescription": "Videos and photos from a sentence",
+      "video": "https://www.youtube.com/watch?v=exampleVid01"
+    },
+    {
+      "language": "tr-TR",
+      "title": "Example App",
+      "fullDescription": "Metinden kısa videolar yapın.",
+      "shortDescription": "Bir cümleden video"
+    }
+  ]
+}

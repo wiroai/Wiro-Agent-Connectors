@@ -1,0 +1,20 @@
+{
+  "oneTimeProducts": [
+    {
+      "packageName": "com.example.app",
+      "productId": "lifetime_pro",
+      "listings": [{ "languageCode": "en-US", "title": "Lifetime Pro", "description": "Pro, once, forever." }],
+      "purchaseOptions": [
+        {
+          "purchaseOptionId": "buy",
+          "state": "ACTIVE",
+          "buyOption": { "legacyCompatible": true },
+          "regionalPricingAndAvailabilityConfigs": [
+            { "regionCode": "US", "price": { "currencyCode": "USD", "units": "99", "nanos": 990000000 }, "availability": "AVAILABLE" }
+          ]
+        }
+      ],
+      "offerTags": [{ "tag": "lifetime" }]
+    }
+  ]
+}

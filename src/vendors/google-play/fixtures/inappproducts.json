@@ -1,0 +1,22 @@
+{
+  "kind": "androidpublisher#inappproductsListResponse",
+  "inappproduct": [
+    {
+      "packageName": "com.example.app",
+      "sku": "credits_50",
+      "status": "active",
+      "purchaseType": "managedUser",
+      "defaultPrice": { "priceMicros": "1990000", "currency": "USD" },
+      "prices": {
+        "TR": { "priceMicros": "49990000", "currency": "TRY" },
+        "US": { "priceMicros": "1990000", "currency": "USD" }
+      },
+      "listings": {
+        "en-US": { "title": "50 credits", "description": "50 credits for video renders." },
+        "tr-TR": { "title": "50 kredi", "description": "Video için 50 kredi." }
+      },
+      "defaultLanguage": "en-US"
+    }
+  ],
+  "tokenPagination": { "nextPageToken": "next-iap-page" }
+}

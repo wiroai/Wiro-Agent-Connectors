@@ -1,0 +1,32 @@
+{
+  "subscriptions": [
+    {
+      "packageName": "com.example.app",
+      "productId": "pro_subscription",
+      "listings": [
+        { "languageCode": "en-US", "title": "Pro", "benefits": ["Unlimited videos", "No watermark"], "description": "Everything in Example App, unlimited." }
+      ],
+      "basePlans": [
+        {
+          "basePlanId": "weekly",
+          "state": "ACTIVE",
+          "autoRenewingBasePlanType": { "billingPeriodDuration": "P1W", "gracePeriodDuration": "P3D", "resubscribeState": "RESUBSCRIBE_STATE_ACTIVE", "prorationMode": "SUBSCRIPTION_PRORATION_MODE_CHARGE_ON_NEXT_BILLING_DATE" },
+          "regionalConfigs": [
+            { "regionCode": "TR", "newSubscriberAvailability": true, "price": { "currencyCode": "TRY", "units": "199", "nanos": 990000000 } },
+            { "regionCode": "US", "newSubscriberAvailability": true, "price": { "currencyCode": "USD", "units": "8", "nanos": 990000000 } }
+          ],
+          "offerTags": [{ "tag": "weekly" }]
+        },
+        {
+          "basePlanId": "yearly",
+          "state": "ACTIVE",
+          "autoRenewingBasePlanType": { "billingPeriodDuration": "P1Y" },
+          "regionalConfigs": [
+            { "regionCode": "US", "newSubscriberAvailability": true, "price": { "currencyCode": "USD", "units": "49", "nanos": 990000000 } }
+          ]
+        }
+      ],
+      "taxAndComplianceSettings": { "eeaWithdrawalRightType": "WITHDRAWAL_RIGHT_SERVICE" }
+    }
+  ]
+}
