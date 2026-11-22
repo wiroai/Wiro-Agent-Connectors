@@ -161,14 +161,14 @@ test('a Reel still processing at the end of the wait is left as a container, the
   };
   const { module, context, fetch, ctx } = setup(router(routes));
   fastWaits(context);
-  const first = await callTool(module, 'publish_reel', { video_url: 'https://cdn.example.com/reel.mp4', caption: 'Shaping a baguette', thumb_offset: 1500, wait_seconds: 10 }, ctx);
+  const first = await callTool(module, 'publish_reel', { video_url: 'https://cdn.example.com/reel.mp4', caption: 'Shaping a baguette', thumb_offset: 1500, wait_seconds: 25 }, ctx);
   assert.equal(first.isError, false);
   assert.equal(first.payload.status, 'IN_PROGRESS');
   assert.equal(first.payload.container_id, CONTAINER);
   assert.match(first.payload.next, /publish_container/);
   assert.deepEqual(formOf(fetch.calls[1]), { media_type: 'REELS', video_url: 'https://cdn.example.com/reel.mp4', caption: 'Shaping a baguette', share_to_feed: 'true', thumb_offset: '1500' });
   const polls = fetch.calls.filter((call) => call.path === `/v26.0/${CONTAINER}`).length;
-  assert.ok(polls >= 3 && polls <= 5, `polled every 3 seconds within 10: ${polls}`);
+  assert.equal(polls, 3, 'checked about every 10 seconds within 25: at 0, 10 and 20');
   assert.equal(fetch.calls.some((call) => call.path.endsWith('/media_publish')), false);
 
   ready = true;
@@ -241,10 +241,13 @@ test('publish_carousel hands back the slide containers when they are still proce
   const { module, context, fetch, ctx } = setup(router(routes));
   fastWaits(context);
   const children = ['18000000000000011', '18000000000000012'];
-  const waiting = await callTool(module, 'publish_carousel', { child_container_ids: children, caption: 'Later', wait_seconds: 6 }, ctx);
+  const waiting = await callTool(module, 'publish_carousel', { child_container_ids: children, caption: 'Later', wait_seconds: 45 }, ctx);
   assert.equal(waiting.payload.status, 'IN_PROGRESS');
   assert.deepEqual(waiting.payload.child_container_ids, children);
   assert.equal(fetch.calls.some((call) => call.method === 'POST'), false);
+  // One round over the slides about every 20 seconds (at 0, 20 and 40), and a finished slide is not read again.
+  assert.equal(fetch.calls.filter((call) => call.path === '/v26.0/18000000000000012').length, 3);
+  assert.equal(fetch.calls.filter((call) => call.path === '/v26.0/18000000000000011').length, 1);
 
   ready = true;
   const done = await callTool(module, 'publish_carousel', { child_container_ids: children, caption: 'Later' }, ctx);
@@ -352,7 +355,7 @@ test('get_publishing_limit and list_media read what an agent needs', async () =>
   assert.equal(fetch.calls[3].query.after, 'QVFIUmQ');
 });
 
-test('errors: an unclear publish names its check tool after one publish request, and a 429 carries retryAfter', async () => {
+test('errors: an unclear publish names its check tool after one publish request, and Instagram\'s throttling reads as a rate limit', async () => {
   const broken = setup(router({
     ...LINKED,
     [`POST /v26.0/${IG}/media`]: f('container-create.json'),
@@ -364,9 +367,44 @@ test('errors: an unclear publish names its check tool after one publish request,
   assert.equal(unknown.payload.check, 'list_media');
   assert.equal(broken.fetch.calls.filter((call) => call.path.endsWith('/media_publish')).length, 1);
 
-  const limited = setup(router({ 'GET /v26.0/me/accounts': () => jsonResponse(429, { error: { message: 'Too many calls' } }, { 'retry-after': '60' }) }), { accounts: null });
+  // Instagram throttles with HTTP 400 and a rate limit code (80002 for Instagram), not with a 429.
+  const usage = { 'x-business-use-case-usage': JSON.stringify({ [IG]: [{ type: 'instagram', call_count: 100, total_cputime: 9, total_time: 11, estimated_time_to_regain_access: 30 }] }) };
+  const throttled = setup(router({ ...LINKED, [`POST /v26.0/${IG}/media`]: () => jsonResponse(400, f('error-rate-limit.json'), usage) }));
+  const limit = await callTool(throttled.module, 'publish_image', { image_url: 'https://cdn.example.com/a.jpg' }, throttled.ctx);
+  assert.equal(limit.payload.status, 400);
+  assert.match(limit.payload.error, /^Instagram rate limit reached \(HTTP 400\): \(#80002\) There have been too many calls to this Instagram account\..* Nothing was changed\. Wait a while before trying again/);
+  assert.equal(throttled.fetch.calls.filter((call) => call.method === 'POST').length, 1, 'never retried');
+
+  // A plain HTTP 429 keeps the core's retryAfter.
+  const limited = setup(router({ 'GET /v26.0/me/accounts': () => new Response('Too Many Requests', { status: 429, headers: { 'retry-after': '60' } }) }), { accounts: null });
   const rate = await callTool(limited.module, 'list_accounts', {}, limited.ctx);
   assert.equal(rate.payload.retryAfter, 60);
+});
+
+test('with Instagram Login, live stories are not listed (Instagram lists them only through a Facebook Page), and story ids still read', async () => {
+  const { module, fetch, ctx } = setup(router({
+    'GET https://graph.instagram.com/v26.0/17900000000000005/insights': f('media-insights.json'),
+  }), { credentials: { access_token: LOGIN_TOKEN, accountid: LOGIN_IG }, accounts: null });
+  const list = await callTool(module, 'list_media', { stories: true }, ctx);
+  assert.match(list.payload.error, /^Instagram lists live stories only for accounts reached through a Facebook Page .* Nothing was sent\.$/);
+  const live = await callTool(module, 'get_media_insights', { stories: true }, ctx);
+  assert.match(live.payload.error, /Give the stories' media_ids \(publish_story returns them\) to read their insights\. Nothing was sent\./);
+  assert.equal(fetch.calls.length, 0);
+
+  const byId = await callTool(module, 'get_media_insights', { stories: true, media_ids: ['17900000000000005'] }, ctx);
+  assert.equal(byId.isError, false);
+  assert.equal(fetch.calls[0].query.metric, 'reach,views,shares,total_interactions');
+  assert.equal(fetch.calls[0].origin, 'https://graph.instagram.com');
+});
+
+test('with Instagram Login, an account id an older setup kept as a JSON list is still the account that signed in', async () => {
+  const { module, fetch, ctx } = setup(router({ [`GET https://graph.instagram.com/v26.0/${LOGIN_IG}/content_publishing_limit`]: f('publishing-limit.json') }), {
+    credentials: { access_token: LOGIN_TOKEN, accountid: JSON.stringify([LOGIN_IG]) },
+    accounts: null,
+  });
+  const { payload } = await callTool(module, 'get_publishing_limit', {}, ctx);
+  assert.equal(payload.account_id, LOGIN_IG);
+  assert.equal(fetch.calls[0].path, `/v26.0/${LOGIN_IG}/content_publishing_limit`);
 });
 
 test('api_get and api_request use the chosen account\'s token and host, and never reach tokens', async () => {
@@ -386,6 +424,32 @@ test('api_get and api_request use the chosen account\'s token and host, and neve
   assert.equal(write.payload.status, 200);
   assert.equal(login.fetch.calls[0].origin, 'https://graph.instagram.com');
   assert.equal(login.fetch.calls[0].headers.authorization, `Bearer ${LOGIN_TOKEN}`);
+});
+
+test('the generic tools refuse a batch, a method override and a token asked for anywhere, before the linked Page token is fetched', async () => {
+  const { module, fetch, ctx } = setup(router({ ...LINKED }));
+  const batch = '[{"method":"GET","relative_url":"v26.0/1001?fields=access_token"}]';
+  const attempts = [
+    { method: 'POST', path: `/v26.0/${IG}`, content_type: 'application/x-www-form-urlencoded', body: `batch=${encodeURIComponent(batch)}` },
+    { method: 'POST', path: `/v26.0/${IG}`, query: { batch: '[{"method":"GET","relative_url":"v26.0/1001?fields=access%5Ftoken"}]' } },
+    { method: 'POST', path: `/v26.0/${IG}`, json: { batch: [{ method: 'GET', relative_url: 'v26.0/1001' }] } },
+    { method: 'POST', path: '/v26.0/17900000000000002', query: { method: 'delete' } },
+    { method: 'POST', path: '/v26.0/17900000000000002', json: { comment_enabled: true, fields: 'owner{access_token}' } },
+    { method: 'POST', path: '/v26.0/refresh_access_token', query: { grant_type: 'ig_refresh_token' } },
+  ];
+  for (const args of attempts) {
+    const { payload, isError } = await callTool(module, 'api_request', args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, /not available through the generic Instagram tools.* Nothing was sent\.$/, JSON.stringify(args));
+  }
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('a generic reply never carries a token or an app secret proof back', async () => {
+  const { module, ctx } = setup(router({ ...LINKED, [`GET /v26.0/${IG}/tags`]: { data: [{ id: '1', access_token: 'EAAPageTokenForBakery0001' }], paging: { next: `https://graph.facebook.com/v26.0/${IG}/tags?access_token=EAAPageTokenForBakery0001&after=QVFI` } } }));
+  const { payload, text } = await callTool(module, 'api_get', { path: `/v26.0/${IG}/tags` }, ctx);
+  assert.doesNotMatch(text, /EAAPageToken/);
+  assert.deepEqual(payload.data.data, [{ id: '1' }]);
 });
 
 test('log lines carry no tokens or arguments', async () => {

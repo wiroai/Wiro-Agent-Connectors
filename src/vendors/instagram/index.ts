@@ -43,6 +43,7 @@ import {
   tokenKey,
   VERSION,
 } from './graph.js';
+import { readGraphRequest, refuseUnsafe, withoutSecrets, withRateLimits } from './graph-rules.js';
 
 type SchemaType = ToolDefinition['inputSchema'];
 
@@ -91,7 +92,10 @@ const POST_METRICS = ['reach', 'views', 'saved', 'shares', 'comments', 'likes', 
 const STORY_METRICS = ['reach', 'views', 'shares', 'total_interactions'];
 const ACCOUNT_METRICS = ['reach', 'views', 'total_interactions', 'accounts_engaged'];
 const METRIC_NAME: SchemaType = { type: 'string', pattern: '^[a-z0-9_]{2,80}$' };
-const POLL_MS = 3000;
+/** How often a container is checked: one about every 10 seconds; the slides of a carousel in one round about every 20. */
+const POLL_ONE_MS = 10_000;
+const POLL_ROUND_MS = 20_000;
+const STORIES_NEED_PAGE = 'Instagram lists live stories only for accounts reached through a Facebook Page (a system user token), not with Instagram Login.';
 
 /** Where an account's calls go and with which token. */
 interface Access {
@@ -103,9 +107,23 @@ function signedIn(h: ToolHelpers): boolean {
   return Boolean(h.credentials['access_token']);
 }
 
+/** The id of the account that signed in, written by the host as text (an older setup kept it as a JSON list of one). */
+function signedInAccount(h: ToolHelpers): string | undefined {
+  let value: unknown = h.credentials['accountid'] ?? '';
+  if (typeof value === 'string' && value.startsWith('[')) {
+    try {
+      value = (JSON.parse(value) as unknown[])[0];
+    } catch {
+      return undefined;
+    }
+  }
+  const id = typeof value === 'string' || typeof value === 'number' ? String(value).trim() : '';
+  return /^[0-9]{1,30}$/.test(id) ? id : undefined;
+}
+
 /** The account a call acts on; with Instagram Login, the account that signed in when none is given. */
 function chooseAccount(h: ToolHelpers, given: string | undefined): string {
-  const own = signedIn(h) && /^[0-9]{1,30}$/.test(h.credentials['accountid'] ?? '') ? h.credentials['accountid'] : undefined;
+  const own = signedIn(h) ? signedInAccount(h) : undefined;
   if (!given && own) {
     const allowed = allowedAccounts(h.ctx.accounts, 'accounts');
     if (!allowed || allowed.length !== 1) {
@@ -183,10 +201,10 @@ async function readContainer(h: ToolHelpers, access: Access, id: string): Promis
   return { status_code: typeof data?.status_code === 'string' ? data.status_code : undefined, status: typeof data?.status === 'string' ? data.status : undefined };
 }
 
-/** Polls containers until none is still processing, or until the deadline. */
+/** Polls containers until none is still processing, or until the deadline: one container about every 10 seconds, the slides of a carousel in a round about every 20. */
 async function waitContainers(h: ToolHelpers, access: Access, ids: string[], deadline: number): Promise<Map<string, ContainerStatus>> {
   const statuses = new Map<string, ContainerStatus>();
-  await poll(h, deadline, POLL_MS, async () => {
+  await poll(h, deadline, ids.length > 1 ? POLL_ROUND_MS : POLL_ONE_MS, async () => {
     for (const id of ids) {
       const known = statuses.get(id);
       if (known && known.status_code !== 'IN_PROGRESS' && known.status_code !== undefined) continue;
@@ -309,13 +327,14 @@ const generic: ToolDefinition[] = apiTools({
     'The Instagram Graph API v26.0 for one of the accounts chosen for this connection (account_id; its token is added for you, and the call goes to '
     + 'graph.instagram.com for an account that signed in with Instagram, or graph.facebook.com for one reached through its Facebook Page): paths start '
     + 'with /v26.0/, such as /v26.0/<account_id>/tags, /v26.0/<media_id>/children or /v26.0/<media_id> (POST comment_enabled=false turns comments off). '
-    + 'Reference: https://developers.facebook.com/docs/instagram-platform.',
+    + 'One request per call: batch and method are refused, and tokens stay out of reach. Reference: https://developers.facebook.com/docs/instagram-platform.',
   basePath: `/${VERSION}/`,
   methods: ['POST', 'DELETE'],
   guard: (request) => refuseSecrets(request, 'Instagram'),
-  send: (request, h) => {
+  send: async (request, h) => {
     const access = accountTokens.get(h) as Access;
-    return h.api({ ...request, origin: access.origin, headers: { ...request.headers, ...bearer(access.token) } });
+    const response = await h.api({ ...request, origin: access.origin, headers: { ...request.headers, ...bearer(access.token) } });
+    return { ...response, data: withoutSecrets(response.data) };
   },
 });
 
@@ -324,6 +343,8 @@ const genericTools: ToolDefinition[] = generic.map((tool) => ({
   inputSchema: { ...tool.inputSchema, properties: { account_id: ACCOUNT_ID, ...tool.inputSchema.properties } },
   async run(args: Record<string, unknown>, h: ToolHelpers) {
     const { account_id: given, ...rest } = args;
+    // Everything Graph would read (query, json or form body, batch, method) is checked before the account's token is fetched.
+    refuseUnsafe(readGraphRequest(rest, 'Instagram'), 'Instagram');
     const accountId = chooseAccount(h, typeof given === 'string' ? given : undefined);
     accountTokens.set(h, await accountAccess(h, accountId));
     return tool.run(rest, h);
@@ -354,7 +375,7 @@ const connector = defineConnector({
       legacyField: 'accountid',
     },
   ],
-  tools: [
+  tools: withRateLimits([
     {
       name: 'list_accounts',
       kind: 'read',
@@ -435,12 +456,13 @@ const connector = defineConnector({
       title: 'List Instagram posts',
       description:
         "Lists an account's posts and Reels, newest first (or its live stories), with id, type, caption, permalink, time, likes and comments. "
-        + 'Use it to find a media id, or to check whether a post went out before trying again. Pass nextCursor back as cursor for more.',
+        + 'Use it to find a media id, or to check whether a post went out before trying again. Live stories are listed only for an account '
+        + 'reached through its Facebook Page, not with Instagram Login. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           account_id: ACCOUNT_ID,
-          stories: { type: 'boolean', default: false, description: 'true for the live stories (the last 24 hours) instead of posts.' },
+          stories: { type: 'boolean', default: false, description: 'true for the live stories (the last 24 hours) instead of posts; not with Instagram Login.' },
           since: { type: 'string', pattern: DATE_PATTERN, description: 'Posts from this day on (UTC), e.g. 2026-11-01.' },
           until: { type: 'string', pattern: DATE_PATTERN, description: 'Posts up to and including this day (UTC).' },
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 10, description: 'Items per call, 1 to 100 (default 10).' },
@@ -449,6 +471,7 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { account_id?: string; stories: boolean; since?: string; until?: string; limit: number; cursor?: string }, h) {
+        if (args.stories && signedIn(h)) throw new ToolFailure(`${STORIES_NEED_PAGE} Nothing was sent.`);
         const accountId = chooseAccount(h, args.account_id);
         const state = listState(h, args.cursor, args.limit);
         const range = !args.stories && (args.since || args.until) ? dayRange(args.since, args.until, 3650, 'today') : undefined;
@@ -760,14 +783,15 @@ const connector = defineConnector({
       title: 'Get Instagram post insights',
       description:
         'Reads insights of posts and Reels (the given media ids, or the latest posts): reach, views, saves (saved), shares, comments, likes and total '
-        + 'interactions by default; with stories: true, the live stories\' reach, views, shares and interactions. A null value means no data yet, not zero; '
-        + 'an item Instagram refuses carries its error. Needs the insights permission.',
+        + 'interactions by default; with stories: true, the live stories\' reach, views, shares and interactions (with Instagram Login, give the '
+        + 'stories\' media_ids, since their list is not available). A null value means no data yet, not zero; an item Instagram refuses carries its error. '
+        + 'Needs the insights permission.',
       inputSchema: {
         type: 'object',
         properties: {
           account_id: ACCOUNT_ID,
           media_ids: { type: 'array', items: MEDIA_ID, minItems: 1, maxItems: 25, uniqueItems: true, description: 'Media ids to read.' },
-          stories: { type: 'boolean', default: false, description: 'true for the live stories instead of posts.' },
+          stories: { type: 'boolean', default: false, description: 'true for stories instead of posts: the live stories, or with media_ids those stories (story metrics).' },
           limit: { type: 'integer', minimum: 1, maximum: 25, default: 10, description: 'Without media_ids: how many of the latest items, 1 to 25 (default 10).' },
           since: { type: 'string', pattern: DATE_PATTERN, description: 'Without media_ids: posts from this day on (UTC).' },
           until: { type: 'string', pattern: DATE_PATTERN, description: 'Without media_ids: posts up to and including this day (UTC).' },
@@ -776,6 +800,9 @@ const connector = defineConnector({
         additionalProperties: false,
       },
       async run(args: { account_id?: string; media_ids?: string[]; stories: boolean; limit: number; since?: string; until?: string; metrics?: string[] }, h) {
+        if (args.stories && !args.media_ids && signedIn(h)) {
+          throw new ToolFailure(`${STORIES_NEED_PAGE} Give the stories' media_ids (publish_story returns them) to read their insights. Nothing was sent.`);
+        }
         const accountId = chooseAccount(h, args.account_id);
         const metrics = args.metrics ?? (args.stories ? STORY_METRICS : POST_METRICS);
         const range = !args.media_ids && !args.stories && (args.since || args.until) ? dayRange(args.since, args.until, 3650, 'today') : undefined;
@@ -969,7 +996,7 @@ const connector = defineConnector({
       },
     },
     ...genericTools,
-  ],
+  ], 'Instagram'),
 });
 
 export = connector;

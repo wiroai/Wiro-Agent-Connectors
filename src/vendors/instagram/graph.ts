@@ -185,7 +185,11 @@ export function dayRange(
   return { since: day(new Date(first)), until: day(new Date(last)), untilExclusive: day(new Date(last + DAY_MS)), days };
 }
 
-/** Text that could hand out a token or an app secret is kept out of the generic tools. */
+/**
+ * Text that could hand out a token or an app secret is kept out of the generic
+ * tools: a second check, on the request as the core resolved it, after the
+ * full check of every argument (graph-rules.ts).
+ */
 export function refuseSecrets(request: ApiToolRequest, label: string): void {
   const texts = [...request.segments, ...Object.keys(request.query), ...Object.values(request.query).flat()];
   if (request.segments.includes('oauth') || texts.some((text) => /access_token|appsecret|app_secret|client_secret|debug_token/i.test(text))) {
