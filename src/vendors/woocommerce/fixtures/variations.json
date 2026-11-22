@@ -1,0 +1,4 @@
+[
+  { "id": 201, "sku": "TEE-S", "price": "20.00", "regular_price": "20.00", "sale_price": "", "status": "publish", "manage_stock": true, "stock_quantity": 10, "stock_status": "instock", "backorders": "no", "low_stock_amount": null, "weight": "", "image": { "id": 77, "src": "https://example.com/shop/wp-content/uploads/2026/11/tee.jpg" }, "attributes": [{ "id": 0, "name": "Size", "option": "S" }] },
+  { "id": 202, "sku": "TEE-M", "price": "20.00", "regular_price": "20.00", "sale_price": "", "status": "publish", "manage_stock": "parent", "stock_quantity": null, "stock_status": "instock", "backorders": "no", "low_stock_amount": null, "weight": "", "image": null, "attributes": [{ "id": 0, "name": "Size", "option": "M" }] }
+]

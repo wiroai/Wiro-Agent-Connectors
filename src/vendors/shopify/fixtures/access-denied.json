@@ -1,0 +1,1 @@
+{ "errors": [{ "message": "Access denied for customers field. Required access: `read_customers` access scope.", "extensions": { "code": "ACCESS_DENIED", "documentation": "https://shopify.dev/api/usage/access-scopes", "requiredAccess": "`read_customers` access scope." }, "locations": [{ "line": 2, "column": 3 }], "path": ["customers"] }], "data": null }

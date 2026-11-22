@@ -1,0 +1,9 @@
+{
+  "name": "Example Coffee &#8211; Notes",
+  "description": "Brewing guides &amp; reviews",
+  "url": "https://example.com/blog",
+  "home": "https://example.com/blog",
+  "gmt_offset": "3",
+  "timezone_string": "Europe/Istanbul",
+  "namespaces": ["oembed/1.0", "rankmath/v1", "wp/v2", "wp-site-health/v1", "wp-block-editor/v1"]
+}

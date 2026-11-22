@@ -1,0 +1,34 @@
+[
+  {
+    "id": 412,
+    "date": "2026-11-18T09:00:00",
+    "modified": "2026-11-18T09:12:44",
+    "slug": "pour-over-ratios",
+    "status": "publish",
+    "type": "post",
+    "link": "https://example.com/blog/pour-over-ratios/",
+    "title": { "rendered": "Pour&#x2d;over ratios that actually work" },
+    "excerpt": { "rendered": "<p>The 1:16 rule, and when to break it &hellip;</p>\n", "protected": false },
+    "author": 7,
+    "featured_media": 388,
+    "sticky": false,
+    "categories": [3],
+    "tags": [11, 12]
+  },
+  {
+    "id": 415,
+    "date": "2026-11-20T15:30:00",
+    "modified": "2026-11-20T15:30:00",
+    "slug": "",
+    "status": "draft",
+    "type": "post",
+    "link": "https://example.com/blog/?p=415",
+    "title": { "rendered": "Grinder buying guide" },
+    "excerpt": { "rendered": "", "protected": false },
+    "author": 7,
+    "featured_media": 0,
+    "sticky": false,
+    "categories": [1],
+    "tags": []
+  }
+]

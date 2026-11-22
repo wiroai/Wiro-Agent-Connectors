@@ -1,0 +1,1 @@
+{ "data": { "productVariant": { "inventoryItem": { "id": "gid://shopify/InventoryItem/6600000001", "tracked": true, "inventoryLevel": { "quantities": [{ "name": "available", "quantity": 10 }] } } } } }

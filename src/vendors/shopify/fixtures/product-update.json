@@ -1,0 +1,1 @@
+{ "data": { "productUpdate": { "product": { "id": "gid://shopify/Product/8800000002", "title": "Logo Tee", "handle": "logo-tee", "status": "ACTIVE", "vendor": "Example Coffee Co", "productType": "Apparel", "tags": ["apparel", "new"], "updatedAt": "2026-11-22T10:00:00Z", "onlineStoreUrl": null, "seo": { "title": "Logo Tee", "description": null } }, "userErrors": [] } } }

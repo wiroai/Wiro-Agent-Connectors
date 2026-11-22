@@ -1,0 +1,4 @@
+{ "data": { "discountNodes": { "nodes": [
+  { "id": "gid://shopify/DiscountCodeNode/1700000001", "discount": { "__typename": "DiscountCodeBasic", "title": "Welcome 10", "status": "ACTIVE", "summary": "10% off entire order • One use per customer", "startsAt": "2026-10-01T00:00:00Z", "endsAt": null, "usageLimit": 500, "asyncUsageCount": 41, "appliesOncePerCustomer": true, "codes": { "nodes": [{ "code": "WELCOME10" }] } } },
+  { "id": "gid://shopify/DiscountAutomaticNode/1700000002", "discount": { "__typename": "DiscountAutomaticFreeShipping", "title": "Free shipping over 50", "status": "ACTIVE", "summary": "Free shipping on orders over €50.00", "startsAt": "2026-09-01T00:00:00Z", "endsAt": null } }
+], "pageInfo": { "hasNextPage": false, "endCursor": "w" } } } }

@@ -1,0 +1,1 @@
+{ "code": "rest_cannot_publish", "message": "Sorry, you are not allowed to publish posts in this post type.", "data": { "status": 403 } }

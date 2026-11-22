@@ -1,0 +1,18 @@
+{
+  "data": {
+    "productSet": {
+      "product": {
+        "id": "gid://shopify/Product/8800000010",
+        "title": "Hoodie",
+        "handle": "hoodie",
+        "status": "DRAFT",
+        "onlineStorePreviewUrl": "https://example-shop.myshopify.com/products/hoodie?preview_key=def",
+        "variants": { "nodes": [
+          { "id": "gid://shopify/ProductVariant/5500000010", "title": "S", "sku": "HOOD-S", "price": "45.00", "inventoryItem": { "id": "gid://shopify/InventoryItem/6600000010" } },
+          { "id": "gid://shopify/ProductVariant/5500000011", "title": "M", "sku": "HOOD-M", "price": "45.00", "inventoryItem": { "id": "gid://shopify/InventoryItem/6600000011" } }
+        ] }
+      },
+      "userErrors": []
+    }
+  }
+}

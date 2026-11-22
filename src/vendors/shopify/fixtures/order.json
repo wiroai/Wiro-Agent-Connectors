@@ -1,0 +1,15 @@
+{
+  "data": { "order": {
+    "id": "gid://shopify/Order/9900000001", "name": "#1001", "createdAt": "2026-11-21T18:04:11Z", "processedAt": "2026-11-21T18:04:11Z", "cancelledAt": null, "cancelReason": null,
+    "closed": false, "closedAt": null, "test": false, "tags": [], "note": "Gift wrap please", "returnStatus": "NO_RETURN", "sourceName": "web", "paymentGatewayNames": ["shopify_payments"],
+    "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED", "currencyCode": "EUR", "subtotalLineItemsQuantity": 2,
+    "subtotalPriceSet": { "shopMoney": { "amount": "48.0" } }, "totalShippingPriceSet": { "shopMoney": { "amount": "5.9" } }, "totalTaxSet": { "shopMoney": { "amount": "8.6" } },
+    "totalDiscountsSet": { "shopMoney": { "amount": "0.0" } }, "currentTotalPriceSet": { "shopMoney": { "amount": "53.9" } }, "totalRefundedSet": { "shopMoney": { "amount": "0.0" } },
+    "lineItems": { "nodes": [{ "id": "gid://shopify/LineItem/1200000001", "name": "Ceramic Pour-Over Dripper", "sku": "DRIP-01", "quantity": 2, "currentQuantity": 2, "variant": { "id": "gid://shopify/ProductVariant/5500000100" }, "originalUnitPriceSet": { "shopMoney": { "amount": "24.0" } } }], "pageInfo": { "hasNextPage": false } },
+    "fulfillmentOrders": { "nodes": [{ "id": "gid://shopify/FulfillmentOrder/1300000001", "status": "OPEN", "requestStatus": "UNSUBMITTED", "assignedLocation": { "name": "Berlin warehouse", "location": { "id": "gid://shopify/Location/7700000001" } }, "lineItems": { "nodes": [{ "id": "gid://shopify/FulfillmentOrderLineItem/1400000001", "remainingQuantity": 2, "totalQuantity": 2, "lineItem": { "name": "Ceramic Pour-Over Dripper", "sku": "DRIP-01" } }] } }] },
+    "fulfillments": [],
+    "refunds": [],
+    "customer": null, "email": null, "phone": null, "shippingAddress": null, "billingAddress": null
+  } },
+  "errors": [{ "message": "This app is not approved to access the Customer object. See https://shopify.dev/docs/apps/launch/protected-customer-data for more details.", "extensions": { "code": "ACCESS_DENIED" }, "path": ["order", "customer"] }]
+}

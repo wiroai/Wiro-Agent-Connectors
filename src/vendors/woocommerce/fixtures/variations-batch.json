@@ -1,0 +1,6 @@
+{
+  "create": [
+    { "id": 301, "sku": "HOOD-S", "price": "45.00", "regular_price": "45.00", "sale_price": "", "status": "publish", "manage_stock": false, "stock_quantity": null, "stock_status": "instock", "attributes": [{ "id": 0, "name": "Size", "option": "S" }] },
+    { "id": 0, "error": { "code": "woocommerce_rest_invalid_or_duplicated_sku", "message": "Invalid or duplicated SKU.", "data": { "status": 400 } } }
+  ]
+}

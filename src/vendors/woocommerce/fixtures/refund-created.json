@@ -1,0 +1,1 @@
+{ "id": 5540, "date_created": "2026-11-22T10:35:00", "amount": "24.00", "reason": "Returned", "refunded_by": 7, "refunded_payment": false, "meta_data": [], "line_items": [{ "id": 9101, "name": "Ceramic Pour-Over Dripper", "product_id": 101, "variation_id": 0, "quantity": -1, "subtotal": "-24.00", "total": "-24.00", "total_tax": "0.00", "sku": "DRIP-01", "price": -24 }] }

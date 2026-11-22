@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "get_shop", "args": {} },
+  "write": {
+    "tool": "create_product",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "description_html": "<p>A draft product from the connector smoke test.</p>",
+      "variants": [{ "price": "1.00" }]
+    },
+    "note": "Leaves a draft product in the shop; customers do not see it. Delete it in Shopify admin → Products, or with graphql_mutation productDelete."
+  }
+}

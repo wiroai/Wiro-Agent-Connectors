@@ -1,0 +1,14 @@
+[
+  {
+    "id": 456,
+    "date": "2026-11-22T10:14:40",
+    "title": { "rendered": "Cold brew jar" },
+    "source_url": "https://example.com/blog/wp-content/uploads/2026/11/cover-image.png",
+    "mime_type": "image/png",
+    "media_type": "image",
+    "alt_text": "A glass jar of cold brew coffee",
+    "post": 431,
+    "link": "https://example.com/blog/cover-image/",
+    "media_details": { "width": 1200, "height": 630, "filesize": 48211 }
+  }
+]

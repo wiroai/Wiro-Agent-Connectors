@@ -1,0 +1,4 @@
+[
+  { "id": 3, "name": "Brewing &amp; Gear", "slug": "brewing-gear", "count": 14, "parent": 0, "description": "", "link": "https://example.com/blog/category/brewing-gear/" },
+  { "id": 1, "name": "Uncategorized", "slug": "uncategorized", "count": 2, "parent": 0, "description": "", "link": "https://example.com/blog/category/uncategorized/" }
+]

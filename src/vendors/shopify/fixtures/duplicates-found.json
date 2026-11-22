@@ -1,0 +1,1 @@
+{ "data": { "byHandle": { "id": "gid://shopify/Product/8800000009", "title": "Hoodie" }, "bySku": { "nodes": [{ "sku": "HOOD-S", "product": { "id": "gid://shopify/Product/8800000009", "title": "Hoodie" } }, { "sku": "OTHER", "product": { "id": "gid://shopify/Product/1", "title": "Other" } }] } } }

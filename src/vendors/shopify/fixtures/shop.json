@@ -1,0 +1,20 @@
+{
+  "data": {
+    "shop": {
+      "id": "gid://shopify/Shop/72000000001",
+      "name": "Example Coffee Co",
+      "myshopifyDomain": "example-shop.myshopify.com",
+      "url": "https://example-shop.myshopify.com",
+      "currencyCode": "EUR",
+      "ianaTimezone": "Europe/Berlin",
+      "weightUnit": "KILOGRAMS",
+      "enabledPresentmentCurrencies": ["EUR"],
+      "primaryDomain": { "host": "shop.example.com", "url": "https://shop.example.com" },
+      "plan": { "publicDisplayName": "Basic", "partnerDevelopment": false, "shopifyPlus": false }
+    },
+    "currentAppInstallation": {
+      "accessScopes": [{ "handle": "read_products" }, { "handle": "write_products" }, { "handle": "read_orders" }, { "handle": "read_inventory" }, { "handle": "write_inventory" }]
+    }
+  },
+  "extensions": { "cost": { "requestedQueryCost": 2, "actualQueryCost": 2, "throttleStatus": { "maximumAvailable": 2000, "currentlyAvailable": 1998, "restoreRate": 100 } } }
+}

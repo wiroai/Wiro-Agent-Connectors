@@ -1,0 +1,1 @@
+[ { "slug": "pending", "name": "Pending payment", "total": 1 }, { "slug": "processing", "name": "Processing", "total": 6 }, { "slug": "completed", "name": "Completed", "total": 140 } ]

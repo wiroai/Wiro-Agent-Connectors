@@ -1,0 +1,44 @@
+{
+  "data": {
+    "products": {
+      "nodes": [
+        {
+          "id": "gid://shopify/Product/8800000001",
+          "title": "Ceramic Pour-Over Dripper",
+          "handle": "ceramic-pour-over-dripper",
+          "status": "ACTIVE",
+          "vendor": "Example Coffee Co",
+          "productType": "Brewing",
+          "tags": ["brewing", "ceramic"],
+          "updatedAt": "2026-11-19T10:02:31Z",
+          "publishedAt": "2026-10-01T08:00:00Z",
+          "totalInventory": 18,
+          "tracksInventory": true,
+          "variantsCount": { "count": 1 },
+          "priceRangeV2": { "minVariantPrice": { "amount": "24.0", "currencyCode": "EUR" }, "maxVariantPrice": { "amount": "24.0" } },
+          "onlineStoreUrl": "https://shop.example.com/products/ceramic-pour-over-dripper",
+          "featuredMedia": { "preview": { "image": { "url": "https://cdn.shopify.example/s/files/dripper.jpg" } } }
+        },
+        {
+          "id": "gid://shopify/Product/8800000002",
+          "title": "Logo T-Shirt",
+          "handle": "logo-t-shirt",
+          "status": "DRAFT",
+          "vendor": "Example Coffee Co",
+          "productType": "Apparel",
+          "tags": [],
+          "updatedAt": "2026-11-21T07:40:00Z",
+          "publishedAt": null,
+          "totalInventory": 0,
+          "tracksInventory": false,
+          "variantsCount": { "count": 3 },
+          "priceRangeV2": { "minVariantPrice": { "amount": "20.0", "currencyCode": "EUR" }, "maxVariantPrice": { "amount": "22.0" } },
+          "onlineStoreUrl": null,
+          "featuredMedia": null
+        }
+      ],
+      "pageInfo": { "hasNextPage": true, "endCursor": "eyJsYXN0X2lkIjo4ODAwMDAwMDAyfQ==" }
+    }
+  },
+  "extensions": { "cost": { "requestedQueryCost": 202, "actualQueryCost": 14, "throttleStatus": { "maximumAvailable": 2000, "currentlyAvailable": 1986, "restoreRate": 100 } } }
+}

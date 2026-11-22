@@ -1,0 +1,42 @@
+[
+  {
+    "id": 101,
+    "name": "Ceramic Pour-Over Dripper",
+    "type": "simple",
+    "status": "publish",
+    "featured": false,
+    "sku": "DRIP-01",
+    "price": "24.00",
+    "regular_price": "29.00",
+    "sale_price": "24.00",
+    "on_sale": true,
+    "total_sales": 57,
+    "manage_stock": true,
+    "stock_quantity": 18,
+    "stock_status": "instock",
+    "categories": [{ "id": 15, "name": "Brewing &amp; Gear", "slug": "brewing-gear" }],
+    "variations": [],
+    "permalink": "https://example.com/shop/product/ceramic-pour-over-dripper/",
+    "date_modified": "2026-11-19T11:02:31"
+  },
+  {
+    "id": 102,
+    "name": "Logo T-Shirt",
+    "type": "variable",
+    "status": "draft",
+    "featured": false,
+    "sku": "TEE",
+    "price": "20.00",
+    "regular_price": "",
+    "sale_price": "",
+    "on_sale": false,
+    "total_sales": 0,
+    "manage_stock": false,
+    "stock_quantity": null,
+    "stock_status": "instock",
+    "categories": [{ "id": 16, "name": "Clothing", "slug": "clothing" }],
+    "variations": [201, 202, 203],
+    "permalink": "https://example.com/shop/?post_type=product&p=102",
+    "date_modified": "2026-11-21T08:40:00"
+  }
+]

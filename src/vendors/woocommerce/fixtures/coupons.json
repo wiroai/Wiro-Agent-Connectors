@@ -1,0 +1,3 @@
+[
+  { "id": 610, "code": "welcome10", "amount": "10.00", "status": "publish", "date_created": "2026-10-01T09:00:00", "discount_type": "percent", "description": "", "date_expires": "2026-12-31T00:00:00", "usage_count": 41, "individual_use": true, "product_ids": [], "excluded_product_ids": [], "usage_limit": 500, "usage_limit_per_user": 1, "limit_usage_to_x_items": null, "free_shipping": false, "product_categories": [], "excluded_product_categories": [], "exclude_sale_items": false, "minimum_amount": "0.00", "maximum_amount": "0.00", "email_restrictions": [], "used_by": ["88", "91"] }
+]

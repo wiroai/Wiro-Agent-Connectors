@@ -1,0 +1,4 @@
+[
+  { "id": 801, "author": "system", "date_created": "2026-11-21T19:04:15", "note": "<p>Payment received.</p>", "customer_note": false },
+  { "id": 802, "author": "shopmanager", "date_created": "2026-11-21T19:30:00", "note": "Packed &amp; ready", "customer_note": true }
+]

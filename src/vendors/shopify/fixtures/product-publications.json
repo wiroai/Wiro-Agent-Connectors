@@ -1,0 +1,1 @@
+{ "data": { "product": { "id": "gid://shopify/Product/8800000002", "title": "Logo T-Shirt", "status": "DRAFT", "resourcePublicationsV2": { "nodes": [{ "isPublished": false, "publishDate": null, "publication": { "id": "gid://shopify/Publication/1100000001", "name": "Online Store", "catalog": { "title": "Online Store" } } }] } } } }

@@ -1,0 +1,4 @@
+{ "data": { "collections": { "nodes": [
+  { "id": "gid://shopify/Collection/4400000001", "title": "Merch", "handle": "merch", "updatedAt": "2026-11-01T00:00:00Z", "sortOrder": "MANUAL", "productsCount": { "count": 4 }, "ruleSet": null },
+  { "id": "gid://shopify/Collection/4400000002", "title": "On sale", "handle": "on-sale", "updatedAt": "2026-11-02T00:00:00Z", "sortOrder": "BEST_SELLING", "productsCount": { "count": 9 }, "ruleSet": { "appliedDisjunctively": true, "rules": [{ "column": "TAG", "relation": "EQUALS", "condition": "sale" }, { "column": "IS_PRICE_REDUCED", "relation": "IS_SET", "condition": "" }] } }
+], "pageInfo": { "hasNextPage": false, "endCursor": "x" } } } }

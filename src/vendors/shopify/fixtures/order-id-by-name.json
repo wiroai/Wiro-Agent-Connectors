@@ -1,0 +1,7 @@
+{
+  "data": { "orders": { "nodes": [
+    { "id": "gid://shopify/Order/9900000001", "name": "#1001" },
+    { "id": "gid://shopify/Order/9900000010", "name": "#10010" }
+  ] } },
+  "extensions": { "cost": { "requestedQueryCost": 7, "actualQueryCost": 4, "throttleStatus": { "maximumAvailable": 2000.0, "currentlyAvailable": 1996, "restoreRate": 100.0 } } }
+}
