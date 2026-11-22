@@ -1,0 +1,16 @@
+{
+  "meta": { "status": 200, "msg": "OK" },
+  "response": {
+    "user": {
+      "name": "acme",
+      "likes": 12,
+      "following": 40,
+      "default_post_format": "html",
+      "blogs": [
+        { "admin": true, "ask": false, "followers": 1200, "name": "acme", "primary": true, "title": "Acme Prints", "type": "public", "url": "https://acme.tumblr.com/", "uuid": "t:0aY0xL2Fi1OFJg4YxpmegQ" },
+        { "admin": false, "ask": false, "followers": 80, "name": "acme-team", "primary": false, "title": "Acme Team", "type": "public", "url": "https://acme-team.tumblr.com/", "uuid": "t:Hq3sdGeR5FWtBc9Kmv2rXw" },
+        { "admin": true, "followers": 3, "name": "oldblog", "primary": false, "title": "Old blog", "type": "private", "url": "https://oldblog.tumblr.com/" }
+      ]
+    }
+  }
+}
