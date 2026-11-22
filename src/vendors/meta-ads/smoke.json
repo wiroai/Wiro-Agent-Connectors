@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "list_ad_accounts", "args": { "limit": 10 } },
+  "write": {
+    "tool": "create_campaign",
+    "args": { "name": "Connector smoke test {{timestamp}}", "objective": "OUTCOME_TRAFFIC" },
+    "note": "Creates a paused campaign with no ad sets (it cannot spend) in the only ad account chosen in CONNECTOR_ACCOUNTS (or set ad_account_id). Remove it with delete_object and the returned campaign_id."
+  }
+}
