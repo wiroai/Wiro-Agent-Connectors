@@ -35,6 +35,9 @@ const SEARCH_ORIGIN = 'https://google.serper.dev';
 const LOCATIONS_ORIGIN = 'https://api.serper.dev';
 /** The last result page a cursor goes on to. */
 const MAX_PAGE = 10;
+/** A map position, "@latitude,longitude,zoomz" (Serper takes it without the zoom too). */
+const LL_PATTERN = '^@-?\\d{1,3}(\\.\\d+)?,-?\\d{1,3}(\\.\\d+)?(,\\d{1,2}(\\.\\d+)?z)?$';
+const LL = new RegExp(LL_PATTERN);
 
 const ERRORS = {
   400: 'Serper could not run this search: check the query and the options.',
@@ -63,8 +66,10 @@ const PAGE: JsonSchema = {
   maximum: MAX_PAGE,
   description: `The result page to start at, 1 to ${MAX_PAGE} (default 1). nextCursor goes on from there.`,
 };
+/** Results per page: Google shows at most 10 web, news, video or patent results a page. */
+const NUM_10: JsonSchema = { type: 'integer', minimum: 1, maximum: 10, default: 10, description: 'Results per page, 1 to 10 (default 10): Google shows at most 10 a page.' };
 const OPTIONS: Record<Option, JsonSchema> = {
-  num: { type: 'integer', minimum: 1, maximum: 20, default: 10, description: 'Results per page, 1 to 20 (default 10). Serper counts more than 10 as two searches.' },
+  num: NUM_10,
   gl: { type: 'string', pattern: '^[A-Za-z]{2}$', description: 'Two-letter country code to search from, e.g. "us" or "de".' },
   hl: { type: 'string', pattern: '^[A-Za-z]{2,3}(-[A-Za-z]{2,4})?$', description: 'Interface language code, e.g. "en" or "pt-br".' },
   location: {
@@ -126,6 +131,8 @@ interface ListSearch {
   resultKey: string;
   trim(item: Item): Record<string, unknown>;
   options: Option[];
+  /** The num option when this search's pages hold another number of results than 10. */
+  num?: JsonSchema;
   /** How many results a full page has when the tool takes no num. */
   pageSize: number;
 }
@@ -133,7 +140,7 @@ interface ListSearch {
 /** A search that returns one list of results, paged by Serper's page number. */
 function listSearch(spec: ListSearch): ToolDefinition {
   const properties: Record<string, JsonSchema> = { q: QUERY };
-  if (spec.options.includes('num')) properties['num'] = OPTIONS.num;
+  if (spec.options.includes('num')) properties['num'] = spec.num ?? OPTIONS.num;
   properties['page'] = PAGE;
   for (const option of spec.options) if (option !== 'num') properties[option] = OPTIONS[option];
   properties['cursor'] = CURSOR;
@@ -167,7 +174,7 @@ const webSearch: ToolDefinition = {
     'Searches Google through Serper and returns the organic results (title, link, snippet, position, date), '
     + 'plus the answer box, knowledge graph, related questions and related searches when Google shows them. '
     + 'Options for country, language, location, freshness and the page. Read the pages themselves with a fetch tool. '
-    + 'Each call uses one Serper search credit, two when num is over 10. Pass nextCursor back as cursor for the next page.',
+    + 'Each call uses one Serper credit. Pass nextCursor back as cursor for the next page.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -217,15 +224,17 @@ const mapsSearch: ToolDefinition = {
   description:
     'Searches Google Maps through Serper: places with address, coordinates, rating and review count, price level, type, '
     + 'opening hours, phone, website, and the cid, fid and placeId that place_reviews takes. Search around a point with ll, '
-    + 'or look up one place by place_id or cid. Each call uses Serper credits. Pass nextCursor back as cursor for the next page.',
+    + 'or look up one place by place_id or cid. Each call uses three Serper credits. Pass nextCursor back as cursor for the '
+    + 'next page: it keeps the map position (ll) that pages after the first need.',
   inputSchema: {
     type: 'object',
     properties: {
       q: QUERY,
       ll: {
         type: 'string',
-        pattern: '^@-?\\d{1,3}(\\.\\d+)?,-?\\d{1,3}(\\.\\d+)?,\\d{1,2}(\\.\\d+)?z$',
-        description: 'The map position and zoom to search around, as "@latitude,longitude,zoomz", e.g. "@40.7128,-74.0060,14z".',
+        pattern: LL_PATTERN,
+        description: 'The map position and zoom to search around, as "@latitude,longitude,zoomz" (zoom 3 to 21, optional), e.g. "@40.7128,-74.0060,14z". '
+          + 'Needed for a page after the first (each result gives the ll it used); not used by a place_id or cid lookup.',
       },
       place_id: { type: 'string', minLength: 1, maxLength: 200, description: 'Look up one place by its Google place ID.' },
       cid: { type: 'string', pattern: '^[0-9]{1,25}$', description: 'Look up one place by its Google cid (a number).' },
@@ -238,10 +247,22 @@ const mapsSearch: ToolDefinition = {
     additionalProperties: false,
   },
   async run(args: { q: string; ll?: string; place_id?: string; cid?: string; page?: number; gl?: string; hl?: string; cursor?: string }, h) {
-    const { page, skip } = position(h, args);
+    const state = h.cursor(args.cursor);
+    const page = typeof state?.['p'] === 'number' ? state['p'] : args.page ?? 1;
+    const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+    // Serper needs the map position for every page after the first; a cursor carries the one the search used.
+    const ll = typeof state?.['l'] === 'string' ? state['l'] : args.ll;
+    const lookup = args.place_id !== undefined || args.cid !== undefined;
+    if (lookup && page > 1) throw new ToolFailure('A lookup by place_id or cid has one page only. Nothing was sent to Serper.');
+    if (page > 1 && !ll) {
+      throw new ToolFailure(
+        'Google Maps pages after the first need ll, the map position: give the ll of the first page\'s result, or pass its nextCursor, '
+          + 'which carries it. Nothing was sent to Serper.',
+      );
+    }
     const data = await search(h, '/maps', compact({
       q: args.q,
-      ll: args.ll,
+      ll,
       placeId: args.place_id,
       cid: args.cid,
       page,
@@ -249,12 +270,15 @@ const mapsSearch: ToolDefinition = {
       hl: args.hl?.toLowerCase(),
     }));
     const places = listOf(data, 'places');
+    // The position the next page searches around: the one given, else the one Serper chose for the query.
+    const replyLl = text(data?.ll, 60);
+    const nextLl = ll ?? (replyLl && LL.test(replyLl) ? replyLl : undefined);
     return h.page({
       key: 'places',
       items: places.map(trimPlace).filter(notEmpty).slice(skip),
-      extra: compact({ query: args.q, page, ll: text(data?.ll, 60), creditsUsed: num(data?.credits) }),
-      resumeAt: (index) => h.makeCursor({ p: page, o: skip + index }),
-      ...(places.length >= 10 && page < MAX_PAGE ? { nextPage: h.makeCursor({ p: page + 1, o: 0 }) } : {}),
+      extra: compact({ query: args.q, page, ll: replyLl, creditsUsed: num(data?.credits) }),
+      resumeAt: (index) => h.makeCursor({ p: page, o: skip + index, ...(ll ? { l: ll } : {}) }),
+      ...(!lookup && nextLl && places.length >= 10 && page < MAX_PAGE ? { nextPage: h.makeCursor({ p: page + 1, o: 0, l: nextLl }) } : {}),
     });
   },
 };
@@ -266,7 +290,7 @@ const placeReviews: ToolDefinition = {
   description:
     'The Google reviews of one place, found by the cid, fid or place_id that maps_search and places_search return: rating, date, '
     + 'text, likes, the reviewer\'s name and the owner\'s reply, newest or most relevant first, plus the topics Google groups them by '
-    + '(pass a topic id as topic_id to read only those). Each call uses Serper credits. Pass nextCursor back as cursor for more.',
+    + '(pass a topic id as topic_id to read only those). Each call uses one Serper credit. Pass nextCursor back as cursor for more.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -321,7 +345,7 @@ const autocomplete: ToolDefinition = {
   title: 'Get Google autocomplete suggestions via Serper',
   description:
     'The searches Google suggests as someone types a query, in Google\'s order: what people look for around a topic, for keyword '
-    + 'and content research. Each call uses Serper credits.',
+    + 'and content research. Each call uses one Serper credit.',
   inputSchema: {
     type: 'object',
     properties: { q: { ...QUERY, description: 'The start of a query, e.g. "best running shoes for".' }, gl: OPTIONS.gl, hl: OPTIONS.hl, location: OPTIONS.location },
@@ -341,7 +365,7 @@ const lensSearch: ToolDefinition = {
   title: 'Find an image on the web (Google Lens via Serper)',
   description:
     'Searches the web for an image by its public URL, as Google Lens does: pages and products that show it or look like it, with '
-    + 'title, source, link, price and stock when Google has them. Serper downloads the image itself. Each call uses Serper credits. '
+    + 'title, source, link, price and stock when Google has them. Serper downloads the image itself. Each call uses three Serper credits. '
     + 'Pass nextCursor back as cursor when the result was cut.',
   inputSchema: {
     type: 'object',
@@ -406,7 +430,7 @@ const connector = defineConnector({
       title: 'Search the news (Google News via Serper)',
       description:
         'Searches Google News through Serper: articles with title, link, snippet, source, date and image link, newest stories first '
-        + 'when you set tbs. Each call uses one Serper search credit, two when num is over 10. Pass nextCursor back as cursor for the next page.',
+        + 'when you set tbs. Each call uses one Serper credit. Pass nextCursor back as cursor for the next page.',
       path: '/news',
       listKey: 'news',
       resultKey: 'news',
@@ -418,13 +442,14 @@ const connector = defineConnector({
       name: 'image_search',
       title: 'Search images (Google Images via Serper)',
       description:
-        'Searches Google Images through Serper: each image with its URL, size, thumbnail, title and the page it is on. '
-        + 'Each call uses one Serper search credit, two when num is over 10. Pass nextCursor back as cursor for the next page.',
+        'Searches Google Images through Serper: each image with its URL, size, thumbnail, title and the page it is on, up to 100 a page. '
+        + 'Each call uses one Serper credit, two when num is over 10. Pass nextCursor back as cursor for the next page.',
       path: '/images',
       listKey: 'images',
       resultKey: 'images',
       trim: trimImage,
       options: ['num', 'gl', 'hl', 'location', 'tbs', 'autocorrect'],
+      num: { type: 'integer', minimum: 1, maximum: 100, default: 10, description: 'Results per page, 1 to 100 (default 10). Serper counts more than 10 as two searches.' },
       pageSize: 10,
     }),
     listSearch({
@@ -432,7 +457,7 @@ const connector = defineConnector({
       title: 'Search videos (Google Videos via Serper)',
       description:
         'Searches Google Videos through Serper: each video with title, link, snippet, duration, source, channel, date and thumbnail. '
-        + 'Each call uses one Serper search credit, two when num is over 10. Pass nextCursor back as cursor for the next page.',
+        + 'Each call uses one Serper credit. Pass nextCursor back as cursor for the next page.',
       path: '/videos',
       listKey: 'videos',
       resultKey: 'videos',
@@ -445,7 +470,7 @@ const connector = defineConnector({
       title: 'Search local places (Google Places via Serper)',
       description:
         'Searches Google\'s local results through Serper, such as "coffee shops in Austin": each place with address, coordinates, '
-        + 'rating and review count, category, phone, website and the cid that place_reviews takes. Each call uses Serper credits. '
+        + 'rating and review count, category, phone, website and the cid that place_reviews takes. Each call uses one Serper credit. '
         + 'Pass nextCursor back as cursor for the next page.',
       path: '/places',
       listKey: 'places',
@@ -460,21 +485,22 @@ const connector = defineConnector({
       name: 'shopping_search',
       title: 'Search products (Google Shopping via Serper)',
       description:
-        'Searches Google Shopping through Serper: products with price, shop, delivery, rating and review count, offers and link. '
-        + 'Each call uses one Serper search credit, two when num is over 10. Pass nextCursor back as cursor for the next page.',
+        'Searches Google Shopping through Serper: products with price, shop, delivery, rating and review count, offers and link, '
+        + 'up to 40 a page. Each call uses two Serper credits. Pass nextCursor back as cursor for the next page.',
       path: '/shopping',
       listKey: 'shopping',
       resultKey: 'products',
       trim: trimShopping,
       options: ['num', 'gl', 'hl', 'location', 'autocorrect'],
-      pageSize: 10,
+      num: { type: 'integer', minimum: 1, maximum: 40, default: 40, description: 'Results per page, 1 to 40 (default 40): a Google Shopping page holds up to 40.' },
+      pageSize: 40,
     }),
     listSearch({
       name: 'scholar_search',
       title: 'Search papers (Google Scholar via Serper)',
       description:
         'Searches Google Scholar through Serper: papers with title, link, publication, snippet, year, citation count and PDF link. '
-        + 'Each call uses Serper credits. Pass nextCursor back as cursor for the next page.',
+        + 'Each call uses one Serper credit. Pass nextCursor back as cursor for the next page.',
       path: '/scholar',
       listKey: 'organic',
       resultKey: 'papers',
@@ -487,7 +513,7 @@ const connector = defineConnector({
       title: 'Search patents (Google Patents via Serper)',
       description:
         'Searches Google Patents through Serper: patents with title, snippet, publication number, priority, filing, grant and '
-        + 'publication dates, inventor, assignee and PDF link. Each call uses Serper credits, two when num is over 10. '
+        + 'publication dates, inventor, assignee and PDF link. Each call uses one Serper credit. '
         + 'Pass nextCursor back as cursor for the next page.',
       path: '/patents',
       listKey: 'organic',

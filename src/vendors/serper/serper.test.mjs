@@ -104,13 +104,13 @@ test('a result over 32 KB is cut, and the cursor continues on the same page afte
     snippet: 's'.repeat(600),
   }));
   const { module, fetch, ctx } = setup(() => jsonResponse(200, { organic }));
-  const first = await callTool(module, 'web_search', { q: 'long', num: 20 }, ctx);
+  const first = await callTool(module, 'web_search', { q: 'long', num: 10 }, ctx);
   assert.ok(textBytes(first.result) <= 32 * 1024, `result is ${textBytes(first.result)} bytes`);
   assert.equal(first.payload.truncated, true);
   const shown = first.payload.results.length;
   assert.ok(shown > 0 && shown < 20);
 
-  const second = await callTool(module, 'web_search', { q: 'long', num: 20, cursor: first.payload.nextCursor }, ctx);
+  const second = await callTool(module, 'web_search', { q: 'long', num: 10, cursor: first.payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].json.page, 1, 'same Serper page');
   assert.equal(second.payload.results[0].position, shown + 1);
 });
@@ -199,6 +199,7 @@ const tabs = [
     body: { q: 'trail running shoes', num: 2, page: 1, autocorrect: false },
     file: 'shopping.json',
     key: 'products',
+    credits: 2,
     first: {
       position: 1,
       title: 'Example Trail Runner 3',
@@ -270,7 +271,7 @@ for (const tab of tabs) {
     assert.deepEqual(fetch.calls[0].json, tab.body);
     assert.deepEqual(payload[tab.key][0], tab.first);
     assert.equal(payload.query, tab.args.q);
-    assert.equal(payload.creditsUsed, 1);
+    assert.equal(payload.creditsUsed, tab.credits ?? 1);
   });
 }
 
@@ -323,6 +324,80 @@ test('maps_search sends ll, place_id as placeId and cid, and returns the ids pla
   const bad = await callTool(module, 'maps_search', { q: 'bookstore', ll: '40.7,-74.0' }, ctx);
   assert.match(bad.payload.error, /`ll` does not have the expected format/);
   assert.equal(fetch.calls.length, 1);
+});
+
+test('maps_search pages with ll: the cursor keeps the position Serper used, and a later page without one is refused', async () => {
+  const maps = fixture(import.meta.url, 'maps.json');
+  const { ll: _recorded, ...withoutLl } = maps;
+  const tenPlaces = (ll) => ({ ...withoutLl, ...(ll ? { ll } : {}), places: Array.from({ length: 10 }, (_, index) => ({ ...maps.places[0], position: index + 1, cid: String(1122334455667788990n + BigInt(index)) })) });
+
+  // A search by q alone: Serper picks the position, and the next page goes on around it.
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, tenPlaces('@40.7128,-74.006,14z')));
+  const first = await callTool(module, 'maps_search', { q: 'bookstore near me' }, ctx);
+  assert.deepEqual(fetch.calls[0].json, { q: 'bookstore near me', page: 1 });
+  assert.equal(first.payload.ll, '@40.7128,-74.006,14z');
+  const second = await callTool(module, 'maps_search', { q: 'bookstore near me', cursor: first.payload.nextCursor }, ctx);
+  assert.deepEqual(fetch.calls[1].json, { q: 'bookstore near me', ll: '@40.7128,-74.006,14z', page: 2 });
+  await callTool(module, 'maps_search', { q: 'bookstore near me', cursor: second.payload.nextCursor }, ctx);
+  assert.deepEqual(fetch.calls[2].json, { q: 'bookstore near me', ll: '@40.7128,-74.006,14z', page: 3 });
+
+  // An ll given by the caller goes on unchanged, also when Serper answers with another.
+  const given = setup(() => jsonResponse(200, tenPlaces('@40.71,-74.01,13z')));
+  const around = await callTool(given.module, 'maps_search', { q: 'bookstore', ll: '@40.7128,-74.0060,14z' }, given.ctx);
+  await callTool(given.module, 'maps_search', { q: 'bookstore', cursor: around.payload.nextCursor }, given.ctx);
+  assert.deepEqual(given.fetch.calls[1].json, { q: 'bookstore', ll: '@40.7128,-74.0060,14z', page: 2 });
+  // A page after the first with ll goes out; Serper takes ll without the zoom too.
+  await callTool(given.module, 'maps_search', { q: 'bookstore', ll: '@40.7128,-74.0060', page: 3 }, given.ctx);
+  assert.deepEqual(given.fetch.calls[2].json, { q: 'bookstore', ll: '@40.7128,-74.0060', page: 3 });
+
+  // Without any position there is no next page to offer, and a later page is refused before it is sent.
+  const nowhere = setup(() => jsonResponse(200, tenPlaces(undefined)));
+  const unplaced = await callTool(nowhere.module, 'maps_search', { q: 'bookstore' }, nowhere.ctx);
+  assert.equal(unplaced.payload.nextCursor, undefined);
+  const refused = await callTool(nowhere.module, 'maps_search', { q: 'bookstore', page: 2 }, nowhere.ctx);
+  assert.equal(refused.isError, true);
+  assert.match(refused.payload.error, /^Google Maps pages after the first need ll, the map position: .*Nothing was sent to Serper\.$/);
+  assert.equal(nowhere.fetch.calls.length, 1);
+
+  // A lookup by place_id or cid has one page: no cursor, and no page 2.
+  const lookup = setup(() => jsonResponse(200, tenPlaces('@40.7128,-74.006,14z')));
+  const one = await callTool(lookup.module, 'maps_search', { q: 'Example Books', place_id: 'ChIJExampleBooks0001' }, lookup.ctx);
+  assert.equal(one.payload.nextCursor, undefined);
+  const byCid = await callTool(lookup.module, 'maps_search', { q: 'Example Books', cid: '1122334455667788990', ll: '@40.7128,-74.006,14z', page: 2 }, lookup.ctx);
+  assert.match(byCid.payload.error, /^A lookup by place_id or cid has one page only\. Nothing was sent to Serper\.$/);
+  assert.equal(lookup.fetch.calls.length, 1);
+});
+
+test('a maps result cut to fit 32 KB goes on with the same page and position', async () => {
+  const maps = fixture(import.meta.url, 'maps.json');
+  const long = { ...maps.places[0], description: 'd'.repeat(2000), address: 'a'.repeat(400) };
+  const places = Array.from({ length: 30 }, (_, index) => ({ ...long, position: index + 1, title: `Place ${index + 1} `.padEnd(300, 't') }));
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, { ...maps, places }));
+  const first = await callTool(module, 'maps_search', { q: 'bookstore', ll: '@40.7128,-74.006,14z', page: 2 }, ctx);
+  assert.equal(first.payload.truncated, true);
+  const shown = first.payload.places.length;
+  const rest = await callTool(module, 'maps_search', { q: 'bookstore', cursor: first.payload.nextCursor }, ctx);
+  assert.deepEqual(fetch.calls[1].json, { q: 'bookstore', ll: '@40.7128,-74.006,14z', page: 2 });
+  assert.equal(rest.payload.places[0].position, shown + 1);
+});
+
+test('num follows what Google shows a page: 10 for the web, news, videos and patents, 100 for images, 40 for shopping', async () => {
+  const { module, fetch, ctx } = setup((request) => jsonResponse(200, fixture(import.meta.url, request.path === '/shopping' ? 'shopping.json' : 'images.json')));
+  await callTool(module, 'image_search', { q: 'red panda', num: 100 }, ctx);
+  assert.equal(fetch.calls[0].json.num, 100);
+  await callTool(module, 'shopping_search', { q: 'trail running shoes' }, ctx);
+  assert.equal(fetch.calls[1].json.num, 40, 'a whole Google Shopping page by default');
+  for (const [tool, num, most] of [['web_search', 11, 10], ['news_search', 20, 10], ['video_search', 11, 10], ['patent_search', 11, 10], ['image_search', 101, 100], ['shopping_search', 41, 40]]) {
+    const { payload, isError } = await callTool(module, tool, { q: 'x', num }, ctx);
+    assert.equal(isError, true, tool);
+    assert.match(payload.error, new RegExp(`\`num\` must be at most ${most}`), tool);
+  }
+  assert.equal(fetch.calls.length, 2);
+
+  // A page of 10 web results is full whatever num was, so it offers the next page.
+  const web = setup(() => jsonResponse(200, { organic: Array.from({ length: 10 }, (_, index) => ({ ...search.organic[0], position: index + 1 })) }));
+  const full = await callTool(web.module, 'web_search', { q: 'x' }, web.ctx);
+  assert.equal(typeof full.payload.nextCursor, 'string');
 });
 
 test('place_reviews needs a place id, pages with Serper\'s token, and gives the topics with the first page only', async () => {
@@ -441,8 +516,8 @@ test('bad arguments and a missing key are refused before any request', async () 
   assert.match(missing.payload.error, /`q` is required\. Nothing was sent to Serper\./);
   const unknown = await callTool(module, 'web_search', { query: 'x' }, ctx);
   assert.match(unknown.payload.error, /unknown argument "query" \(expected: q, num, page, gl, hl, location, tbs, autocorrect, cursor\)/);
-  const range = await callTool(module, 'web_search', { q: 'x', num: 50 }, ctx);
-  assert.match(range.payload.error, /`num` must be at most 20/);
+  const range = await callTool(module, 'web_search', { q: 'x', num: 11 }, ctx);
+  assert.match(range.payload.error, /`num` must be at most 10/);
   const page = await callTool(module, 'news_search', { q: 'x', page: 11 }, ctx);
   assert.match(page.payload.error, /`page` must be at most 10/);
   const tbs = await callTool(module, 'scholar_search', { q: 'x', tbs: 'qdr:d' }, ctx);
