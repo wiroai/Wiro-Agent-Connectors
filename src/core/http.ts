@@ -292,6 +292,8 @@ export function createHttp(env: HttpEnvironment) {
       if (request.write) {
         throw new OutcomeUnknown(`${label} did not answer (${describe(error)}), so it is not known whether the change was made.`);
       }
+      // A size limit of the host, not an outage: trying again gets the same reply.
+      if (errorCode(error) === 'TOO_LARGE') throw new ToolFailure(`The reply from ${label} is larger than this host can read.${nothingChanged}`);
       throw new ToolFailure(`${label} could not be reached (${describe(error)}). Try again later.${nothingChanged}`);
     }
     env.log(`${env.vendor} ${env.tool} ${method} ${response.status} ${Date.now() - started}ms`);

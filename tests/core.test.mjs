@@ -365,6 +365,25 @@ test('a binary request returns the reply\'s bytes unparsed, and an error reply i
   assert.equal(big.payload.error, 'Acme answered HTTP 200, but the reply could not be read (the reply is larger than 64 bytes).');
 });
 
+test('a reply the host refuses as too large is its size limit, not an outage: no "try again later"', async () => {
+  const tooLarge = () => fakeFetch(() => { throw Object.assign(new Error('the reply is larger than 5242880 bytes'), { code: 'TOO_LARGE' }); });
+  const read = connector((args, h) => h.api({ path: '/files/1', binary: true }));
+  const refused = await callTool(read, 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: tooLarge() }).ctx);
+  assert.equal(refused.payload.error, 'The reply from Acme is larger than this host can read.');
+
+  // A read before a write changes nothing; the write itself was sent, so its outcome stays unknown.
+  const before = connector((args, h) => h.api({ path: '/things/1' }), 'create');
+  const stopped = await callTool(before, 'write_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: tooLarge() }).ctx);
+  assert.equal(stopped.payload.error, 'The reply from Acme is larger than this host can read. Nothing was changed.');
+  const write = connector((args, h) => h.api({ method: 'POST', path: '/things', json: {}, write: true }), 'create');
+  const unknown = await callTool(write, 'write_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: tooLarge() }).ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+
+  // Any other failure to reach the vendor still says to try again later.
+  const unreachable = await callTool(read, 'read_x', {}, makeContext({ credentials: { api_key: 'k' }, fetch: fakeFetch(() => { throw new TypeError('fetch failed'); }) }).ctx);
+  assert.equal(unreachable.payload.error, 'Acme could not be reached (fetch failed). Try again later.');
+});
+
 const READ_SCHEMA = { type: 'object', properties: {}, additionalProperties: false };
 
 /** A connector whose API is on the site the user names in site_url (and, with `origins`, on fixed origins too). */
