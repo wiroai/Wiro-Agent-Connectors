@@ -1,0 +1,15 @@
+{
+  "timestamp": 1795262400000,
+  "tokensLeft": 285,
+  "refillIn": 41000,
+  "refillRate": 5,
+  "tokenFlowReduction": 0,
+  "tokensConsumed": 11,
+  "processingTimeInMs": 120,
+  "asinList": [
+    "B0FIND0001",
+    "B0FIND0002",
+    "B0FIND0003"
+  ],
+  "totalResults": 1234
+}

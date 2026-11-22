@@ -1,0 +1,4 @@
+{
+  "read": { "tool": "get_token_status", "args": {} },
+  "write": null
+}
