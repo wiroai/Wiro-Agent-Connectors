@@ -20,7 +20,9 @@ export interface ConnectorServerOptions {
   /**
    * The most bytes of files one call may hand back (default 25 MiB), given to
    * each call as ctx.files. They reach the MCP client unchanged, as embedded
-   * resources after the JSON text. null takes no files.
+   * resources after the JSON text. null takes no files. A file may be a whole
+   * API reply, so the guarded fetch the server builds reads API replies up to
+   * this size when it is above 25 MiB; a fetch passed in must allow it itself.
    */
   maxFileBytes?: number | null;
 }
@@ -43,6 +45,8 @@ export function createConnectorServer(module: ConnectorModule, options: Connecto
     credentialOrigins: originsFromCredentials(module, options.credentials),
     // A module built before uploadHosts existed sends no uploads.
     uploadHosts: module.uploadHosts ?? [],
+    // A stored file's download is one API reply: let it be as large as the files a call may hand back.
+    ...(maxFileBytes && maxFileBytes > DEFAULT_MAX_FILE_BYTES ? { maxResponseBytes: maxFileBytes } : {}),
   });
   const server = new Server(
     { name: module.vendor, version: options.version ?? '0.0.0' },

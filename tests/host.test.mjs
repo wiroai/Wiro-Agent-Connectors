@@ -178,3 +178,44 @@ test('the CLI server gives each call a 25 MiB file limit and passes the files a 
     await none.close();
   }
 });
+
+test('a server that takes more than 25 MiB of files reads API replies that large too; by default an API reply stops at 25 MiB', async () => {
+  const size = DEFAULT_MAX_FILE_BYTES + 1024;
+  const module = defineConnector({
+    ...plainDefinition(),
+    tools: [{
+      name: 'download',
+      kind: 'read',
+      title: 'Download',
+      description: 'Downloads the stored file.',
+      inputSchema: READ,
+      run: async (args, h) => {
+        const { data } = await h.api({ path: '/files/big', binary: true, maxBytes: h.fileLimit() });
+        return { size: data.byteLength };
+      },
+    }],
+  });
+  // The server builds its own guarded fetch, whose API requests go through the global fetch.
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(new Uint8Array(size), { headers: { 'content-length': String(size) } });
+  try {
+    const roomy = await connected(createConnectorServer(module, { credentials: { api_key: 'k' }, accounts: null, log: () => {}, maxFileBytes: 32 * 1024 * 1024 }));
+    try {
+      const result = await roomy.callTool({ name: 'download', arguments: {} });
+      assert.notEqual(result.isError, true, result.content[0].text);
+      assert.deepEqual(JSON.parse(result.content[0].text), { size });
+    } finally {
+      await roomy.close();
+    }
+    const standard = await connected(createConnectorServer(module, { credentials: { api_key: 'k' }, accounts: null, log: () => {} }));
+    try {
+      const refused = await standard.callTool({ name: 'download', arguments: {} });
+      assert.equal(refused.isError, true);
+      assert.deepEqual(JSON.parse(refused.content[0].text), { error: 'The reply from Acme is larger than this host can read.' });
+    } finally {
+      await standard.close();
+    }
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
