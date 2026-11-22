@@ -1,6 +1,7 @@
 import { OutcomeUnknown, ToolFailure, type ApiRequest, type ApiResponse, type ToolHelpers } from '../../core/index.js';
 
-// Small helpers for Google's JSON APIs.
+// Small helpers for Google's JSON APIs. Each Google connector keeps its own
+// copy of this file, since a module imports only from src/core and its folder.
 
 /** Google wraps some words of its error messages in HTML (a link to its docs): keep the words. */
 function plain(text: string): string {
