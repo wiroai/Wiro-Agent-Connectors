@@ -1,0 +1,24 @@
+{
+  "kind": "blogger#blogList",
+  "items": [
+    {
+      "id": "4967929378133675647",
+      "name": "Travel Notes",
+      "description": "Short trips and long walks.",
+      "published": "2021-03-14T10:12:00-07:00",
+      "updated": "2026-11-20T08:41:17-08:00",
+      "url": "http://travelnotes.example.blogspot.com/",
+      "posts": { "totalItems": "42" },
+      "pages": { "totalItems": "3" }
+    },
+    {
+      "id": "1234567890123456789",
+      "name": "Kitchen Diary",
+      "published": "2023-01-02T09:00:00-08:00",
+      "updated": "2026-10-01T12:00:00-07:00",
+      "url": "http://kitchendiary.example.blogspot.com/",
+      "posts": { "totalItems": "7" },
+      "pages": { "totalItems": "0" }
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "items": [
+    { "labels": ["travel", "lisbon"] },
+    { "labels": ["travel", "porto"] },
+    { "labels": ["travel"] },
+    {},
+    { "labels": ["food", "lisbon"] }
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "items": [
+    {
+      "id": "UCabcdefghijklmnopqrstuv",
+      "snippet": {
+        "title": "Example Studio",
+        "description": "Short films and how-tos.",
+        "customUrl": "@examplestudio",
+        "publishedAt": "2019-04-02T10:00:00Z",
+        "country": "TR",
+        "defaultLanguage": "tr",
+        "thumbnails": {
+          "high": {
+            "url": "https://yt3.ggpht.com/example=s800"
+          }
+        }
+      },
+      "contentDetails": {
+        "relatedPlaylists": {
+          "uploads": "UUabcdefghijklmnopqrstuv"
+        }
+      },
+      "statistics": {
+        "viewCount": "1234567",
+        "subscriberCount": "8900",
+        "hiddenSubscriberCount": false,
+        "videoCount": "142"
+      },
+      "brandingSettings": {
+        "channel": {
+          "title": "Example Studio",
+          "keywords": "films \"how to\" animation"
+        }
+      },
+      "status": {
+        "privacyStatus": "public",
+        "isLinked": true,
+        "longUploadsStatus": "allowed",
+        "madeForKids": false
+      }
+    }
+  ]
+}

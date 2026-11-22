@@ -1,0 +1,14 @@
+{
+  "kind": "blogger#post",
+  "id": "7706273476706534553",
+  "blog": { "id": "4967929378133675647" },
+  "published": "2026-11-22T11:02:41-08:00",
+  "updated": "2026-11-22T11:02:41-08:00",
+  "url": "http://travelnotes.example.blogspot.com/2026/11/three-days-in-lisbon.html",
+  "title": "Three days in Lisbon",
+  "content": "<p>Day one.</p>",
+  "author": { "id": "08123456789012345678", "displayName": "Alice Example" },
+  "replies": { "totalItems": "0" },
+  "labels": ["travel", "lisbon"],
+  "status": "LIVE"
+}

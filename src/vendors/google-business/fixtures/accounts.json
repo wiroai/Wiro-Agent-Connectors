@@ -1,0 +1,26 @@
+{
+  "accounts": [
+    {
+      "name": "accounts/111",
+      "accountName": "Ayşe Example",
+      "type": "PERSONAL",
+      "role": "PRIMARY_OWNER",
+      "verificationState": "UNVERIFIED",
+      "vettedState": "NOT_VETTED"
+    },
+    {
+      "name": "accounts/222",
+      "accountName": "Coffee Stops Group",
+      "type": "LOCATION_GROUP",
+      "role": "OWNER",
+      "verificationState": "VERIFIED",
+      "vettedState": "NOT_VETTED"
+    },
+    {
+      "name": "accounts/333",
+      "accountName": "Bakery Group",
+      "type": "LOCATION_GROUP",
+      "role": "MANAGER"
+    }
+  ]
+}

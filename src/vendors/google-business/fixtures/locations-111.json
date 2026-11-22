@@ -1,0 +1,48 @@
+{
+  "locations": [
+    {
+      "name": "locations/9001",
+      "title": "Coffee Stop Moda",
+      "storeCode": "MODA-1",
+      "storefrontAddress": {
+        "regionCode": "TR",
+        "languageCode": "tr",
+        "postalCode": "34710",
+        "administrativeArea": "İstanbul",
+        "locality": "Kadıköy",
+        "addressLines": [
+          "Moda Cd. No: 1"
+        ]
+      },
+      "phoneNumbers": {
+        "primaryPhone": "+90 216 000 00 00"
+      },
+      "websiteUri": "https://coffee.example.com/moda",
+      "categories": {
+        "primaryCategory": {
+          "name": "categories/gcid:coffee_shop",
+          "displayName": "Coffee shop"
+        }
+      },
+      "openInfo": {
+        "status": "OPEN"
+      },
+      "metadata": {
+        "mapsUri": "https://maps.google.com/maps?cid=1234567890",
+        "newReviewUri": "https://search.google.com/local/writereview?placeid=ChIJexample1",
+        "placeId": "ChIJexample1",
+        "hasVoiceOfMerchant": true
+      }
+    },
+    {
+      "name": "locations/9002",
+      "title": "Coffee Stop Kadıköy",
+      "openInfo": {
+        "status": "CLOSED_TEMPORARILY"
+      },
+      "metadata": {
+        "placeId": "ChIJexample2"
+      }
+    }
+  ]
+}

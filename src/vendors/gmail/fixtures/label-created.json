@@ -1,0 +1,7 @@
+{
+  "id": "Label_31",
+  "name": "Clients/Acme",
+  "messageListVisibility": "show",
+  "labelListVisibility": "labelShow",
+  "type": "user"
+}

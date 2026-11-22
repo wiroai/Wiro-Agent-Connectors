@@ -1,0 +1,17 @@
+{
+  "kind": "blogger#post",
+  "id": "3342298867103948312",
+  "blog": { "id": "4967929378133675647" },
+  "published": "2026-10-05T07:15:00-07:00",
+  "updated": "2026-10-05T07:15:00-07:00",
+  "url": "http://travelnotes.example.blogspot.com/2026/10/a-morning-in-sintra.html",
+  "selfLink": "https://www.googleapis.com/blogger/v3/blogs/4967929378133675647/posts/3342298867103948312",
+  "title": "A morning in Sintra",
+  "content": "<p>We took the first train out of Rossio.</p><h2>The palace</h2><p>Fog on the hills, then sun.</p>",
+  "images": [{ "url": "https://images.example.com/sintra.jpg" }],
+  "author": { "id": "08123456789012345678", "displayName": "Alice Example", "url": "https://www.blogger.com/profile/08123456789012345678" },
+  "replies": { "totalItems": "5", "selfLink": "https://www.googleapis.com/blogger/v3/blogs/4967929378133675647/posts/3342298867103948312/comments" },
+  "labels": ["travel"],
+  "status": "LIVE",
+  "etag": "\"dGltZXN0YW1wOiAxNzkxMjY1NzAwMDAwCm9mZnNldDogLTI1MjAwMDAwCg\""
+}

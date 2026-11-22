@@ -1,0 +1,121 @@
+{
+  "id": "18c3f2a9d4e5b601",
+  "threadId": "18c3f2a9d4e5b601",
+  "labelIds": [
+    "UNREAD",
+    "IMPORTANT",
+    "INBOX"
+  ],
+  "snippet": "Hi, could you write a post about the new image model?",
+  "sizeEstimate": 48211,
+  "internalDate": "1795540443000",
+  "payload": {
+    "partId": "",
+    "mimeType": "multipart/mixed",
+    "filename": "",
+    "headers": [
+      {
+        "name": "Delivered-To",
+        "value": "inbox@example.com"
+      },
+      {
+        "name": "From",
+        "value": "Alice Example <alice@example.com>"
+      },
+      {
+        "name": "To",
+        "value": "inbox@example.com"
+      },
+      {
+        "name": "Cc",
+        "value": "carol@example.com"
+      },
+      {
+        "name": "Subject",
+        "value": "Post idea: our new image model"
+      },
+      {
+        "name": "Date",
+        "value": "Sat, 21 Nov 2026 09:14:03 -0800"
+      },
+      {
+        "name": "Message-ID",
+        "value": "<CAF1example123@mail.example.com>"
+      },
+      {
+        "name": "Content-Type",
+        "value": "multipart/mixed; boundary=\"000000000000abc\""
+      }
+    ],
+    "body": {
+      "size": 0
+    },
+    "parts": [
+      {
+        "partId": "0",
+        "mimeType": "multipart/alternative",
+        "filename": "",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "multipart/alternative; boundary=\"000000000000def\""
+          }
+        ],
+        "body": {
+          "size": 0
+        },
+        "parts": [
+          {
+            "partId": "0.0",
+            "mimeType": "text/plain",
+            "filename": "",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "text/plain; charset=\"UTF-8\""
+              }
+            ],
+            "body": {
+              "size": 100,
+              "data": "SGksCgpDb3VsZCB5b3Ugd3JpdGUgYSBwb3N0IGFib3V0IHRoZSBuZXcgaW1hZ2UgbW9kZWw_ClRoZSBsYXVuY2ggbm90ZXMgYXJlIGF0dGFjaGVkLgoKVGhhbmtzLApBbGljZQ=="
+            }
+          },
+          {
+            "partId": "0.1",
+            "mimeType": "text/html",
+            "filename": "",
+            "headers": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=\"UTF-8\""
+              }
+            ],
+            "body": {
+              "size": 227,
+              "data": "PGh0bWw-PGhlYWQ-PHN0eWxlPnB7Y29sb3I6cmVkfTwvc3R5bGU-PC9oZWFkPjxib2R5PjxwPkhpLDwvcD48cD5Db3VsZCB5b3Ugd3JpdGUgYSBwb3N0IGFib3V0IHRoZSA8Yj5uZXcgaW1hZ2UgbW9kZWw8L2I-Pzxicj5TZWUgPGEgaHJlZj0iaHR0cHM6Ly9leGFtcGxlLmNvbS9sYXVuY2giPnRoZSBsYXVuY2ggcGFnZTwvYT4uPC9wPjxwPlRoYW5rcyw8YnI-QWxpY2U8L3A-PC9ib2R5PjwvaHRtbD4"
+            }
+          }
+        ]
+      },
+      {
+        "partId": "1",
+        "mimeType": "application/pdf",
+        "filename": "launch-notes.pdf",
+        "headers": [
+          {
+            "name": "Content-Type",
+            "value": "application/pdf; name=\"launch-notes.pdf\""
+          },
+          {
+            "name": "Content-Disposition",
+            "value": "attachment; filename=\"launch-notes.pdf\""
+          }
+        ],
+        "body": {
+          "attachmentId": "ANGjdJ8exampleAttachmentId0123456789",
+          "size": 40213
+        }
+      }
+    ]
+  }
+}

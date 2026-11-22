@@ -1,0 +1,22 @@
+{
+  "kind": "blogger#pageList",
+  "items": [
+    {
+      "id": "5512345678901234567",
+      "title": "About",
+      "status": "LIVE",
+      "published": "2021-03-14T10:20:00-07:00",
+      "updated": "2025-06-01T09:00:00-07:00",
+      "url": "http://travelnotes.example.blogspot.com/p/about.html",
+      "author": { "displayName": "Alice Example" }
+    },
+    {
+      "id": "5512345678901234568",
+      "title": "Contact",
+      "status": "DRAFT",
+      "updated": "2026-11-21T09:00:00-08:00",
+      "url": "http://travelnotes.example.blogspot.com/p/contact.html",
+      "author": { "displayName": "Alice Example" }
+    }
+  ]
+}

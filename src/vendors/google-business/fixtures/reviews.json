@@ -1,0 +1,53 @@
+{
+  "reviews": [
+    {
+      "name": "accounts/111/locations/9001/reviews/AbFvOqm4xReviewOne",
+      "reviewId": "AbFvOqm4xReviewOne",
+      "reviewer": {
+        "profilePhotoUrl": "https://lh3.googleusercontent.com/a/example",
+        "displayName": "Mehmet Y.",
+        "isAnonymous": false
+      },
+      "starRating": "TWO",
+      "comment": "(Translated by Google) The coffee was cold, we waited 20 minutes.\n\n(Original)\nKahve soğuktu, 20 dakika bekledik.",
+      "createTime": "2026-10-17T08:51:00Z",
+      "updateTime": "2026-10-17T08:51:00Z"
+    },
+    {
+      "name": "accounts/111/locations/9001/reviews/AbFvOqm4xReviewTwo",
+      "reviewId": "AbFvOqm4xReviewTwo",
+      "reviewer": {
+        "displayName": "A Google user",
+        "isAnonymous": true
+      },
+      "starRating": "FIVE",
+      "createTime": "2026-10-15T10:00:00Z",
+      "updateTime": "2026-10-16T09:30:00Z",
+      "reviewReply": {
+        "comment": "Thank you!",
+        "updateTime": "2026-10-16T12:00:00Z",
+        "reviewReplyState": "APPROVED"
+      }
+    },
+    {
+      "name": "accounts/111/locations/9001/reviews/AbFvOqm4xReviewThree",
+      "reviewId": "AbFvOqm4xReviewThree",
+      "reviewer": {
+        "displayName": "Anna",
+        "isAnonymous": false
+      },
+      "starRating": "FOUR",
+      "comment": "Best flat white in town!",
+      "createTime": "2026-10-01T07:00:00Z",
+      "updateTime": "2026-10-01T07:00:00Z",
+      "reviewMediaItems": [
+        {
+          "googleUrl": "https://lh3.googleusercontent.com/p/example"
+        }
+      ]
+    }
+  ],
+  "averageRating": 4.4,
+  "totalReviewCount": 87,
+  "nextPageToken": "ACc6IdExampleNextPage"
+}

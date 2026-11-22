@@ -1,0 +1,19 @@
+{
+  "kind": "youtube#thumbnailSetResponse",
+  "items": [
+    {
+      "default": {
+        "url": "https://i.ytimg.com/vi/vid0000001a/default.jpg"
+      },
+      "medium": {
+        "url": "https://i.ytimg.com/vi/vid0000001a/mqdefault.jpg"
+      },
+      "high": {
+        "url": "https://i.ytimg.com/vi/vid0000001a/hqdefault.jpg"
+      },
+      "maxres": {
+        "url": "https://i.ytimg.com/vi/vid0000001a/maxresdefault.jpg"
+      }
+    }
+  ]
+}

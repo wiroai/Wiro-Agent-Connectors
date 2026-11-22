@@ -1,0 +1,29 @@
+{
+  "nextPageToken": "EAAaBlBUOkNESQ",
+  "pageInfo": {
+    "totalResults": 142,
+    "resultsPerPage": 3
+  },
+  "items": [
+    {
+      "id": "VVVhYmNkZWZn1",
+      "contentDetails": {
+        "videoId": "vid0000001a",
+        "videoPublishedAt": "2026-11-20T09:00:00Z"
+      }
+    },
+    {
+      "id": "VVVhYmNkZWZn2",
+      "contentDetails": {
+        "videoId": "vid0000002b"
+      }
+    },
+    {
+      "id": "VVVhYmNkZWZn3",
+      "contentDetails": {
+        "videoId": "vid0000003c",
+        "videoPublishedAt": "2026-09-01T09:00:00Z"
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "list_blogs", "args": {} },
+  "write": {
+    "tool": "create_draft_post",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "content": "<p>An unpublished draft from the connector smoke test.</p>",
+      "labels": ["test"]
+    },
+    "note": "Saves an unpublished draft on the account's only blog (set CONNECTOR_ACCOUNTS to {\"blogs\":[\"<blog id>\"]} for an account with several). Delete the draft in Blogger, or with delete_post."
+  }
+}

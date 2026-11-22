@@ -1,0 +1,32 @@
+{
+  "id": "18c3f0c1d2e3f405",
+  "threadId": "18c3f0c1d2e3f405",
+  "labelIds": [
+    "INBOX"
+  ],
+  "snippet": "Caf\u00e9 cr\u00e8me",
+  "internalDate": "1795400000000",
+  "payload": {
+    "partId": "",
+    "mimeType": "text/html",
+    "filename": "",
+    "headers": [
+      {
+        "name": "From",
+        "value": "news@example.net"
+      },
+      {
+        "name": "Subject",
+        "value": "Menu"
+      },
+      {
+        "name": "Content-Type",
+        "value": "text/html; charset=ISO-8859-1"
+      }
+    ],
+    "body": {
+      "size": 62,
+      "data": "PHA-Q2Fm6SBjcuhtZSAmYW1wOyB0YXJ0ZTwvcD48dWw-PGxpPm9uZTwvbGk-PGxpPnR3bzwvbGk-PC91bD4"
+    }
+  }
+}
