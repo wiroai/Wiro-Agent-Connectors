@@ -1202,8 +1202,13 @@ const credentials = { apikey: process.env.DEVTO_APIKEY };
 const result = await devto.call('list_my_articles', { per_page: 5 }, {
   credentials,
   accounts: null, // no account lock
-  // The module's origins, plus the sites its originFields credentials name (none for dev.to).
-  fetch: createGuardedFetch({ origins: devto.origins, credentialOrigins: originsFromCredentials(devto, credentials) }),
+  // The module's origins, plus the sites its originFields credentials name and its upload hosts (none for dev.to).
+  fetch: createGuardedFetch({
+    origins: devto.origins,
+    credentialOrigins: originsFromCredentials(devto, credentials),
+    uploadHosts: devto.uploadHosts,
+  }),
+  files: { maxBytes: 25 * 1024 * 1024 }, // the files a call may hand back; leave it out to take none
   log: (line) => console.error(line),
 });
 ```
