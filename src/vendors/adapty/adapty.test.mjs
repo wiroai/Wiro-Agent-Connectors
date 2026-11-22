@@ -105,11 +105,13 @@ test('get_conversion sends the period pair, a numeric starting period as a numbe
   const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'conversion.json')));
   const { payload } = await callTool(module, 'get_conversion', { from_period: '1', to_period: '6+', date_from: '2026-01-01', date_to: '2026-10-31', period_unit: 'month' }, ctx);
   assert.equal(fetch.calls[0].url, `${BASE}/conversion/`);
-  assert.deepEqual(fetch.calls[0].json, { filters: { date: ['2026-01-01', '2026-10-31'] }, from_period: 1, to_period: '6+', period_unit: 'month', format: 'json' });
+  assert.deepEqual(fetch.calls[0].json, { filters: { date: ['2026-01-01', '2026-10-31'] }, to_period: '6+', period_unit: 'month', from_period: 1, format: 'json' });
   assert.equal(payload.title, 'Conversion rate from Paid to more than 6 months');
   assert.equal(payload.value, 20.6);
   assert.equal(payload.unit, 'percent');
   assert.equal(payload.points.length, 2);
+  await callTool(module, 'get_conversion', { to_period: 'trial' }, ctx);
+  assert.equal(fetch.calls[1].json.from_period, null, 'no starting period is sent as null');
 });
 
 test('get_funnel, get_retention, get_ltv and get_cohorts call their endpoints with their own fields', async () => {

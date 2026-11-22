@@ -520,6 +520,12 @@ test('api_get and api_request sign their requests and keep to the chosen apps', 
   assert.match(otherApp.payload.error, /The app 999 is not among the apps chosen/);
   const noApp = await callTool(module, 'api_request', { method: 'PATCH', path: `/v1/appEvents/${EVENT_1}`, json: { data: { relationships: { app: { data: { id: APP } } } } } }, ctx);
   assert.match(noApp.payload.error, /names none of the apps chosen for this connection/);
+  const smuggled = await callTool(module, 'api_request', {
+    method: 'POST',
+    path: '/v1/customerReviewResponses',
+    json: { data: { type: 'customerReviewResponses', attributes: { responseBody: 'x' }, relationships: { app: { data: { type: 'apps', id: APP } }, review: { data: { type: 'customerReviews', id: 'elsewhere' } } } } },
+  }, ctx);
+  assert.match(smuggled.payload.error, /names none of the apps chosen for this connection/, 'a body may name only the app');
   const outside = await callTool(module, 'api_get', { path: '/admin/users' }, setup(() => jsonResponse(200, {}), { accounts: null }).ctx);
   assert.match(outside.payload.error, /must start with \/v1\/, \/v2\/ or \/v3\//);
   assert.equal(fetch.calls.length, 3);

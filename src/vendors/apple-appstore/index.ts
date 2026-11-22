@@ -189,15 +189,19 @@ function requireApp(h: ToolHelpers, appId: string): void {
 
 /**
  * The app ids a generic request acts on, for the account lock: an app in the
- * path (/v1/apps/<id>/...), the app a new resource is created for (POST to a
- * collection with relationships.app), or filter[app] on a collection read.
+ * path (/v1/apps/<id>/...), the app a new resource is created for (a POST to a
+ * collection whose only relationship is the app), or filter[app] on a
+ * collection read.
  */
 function requestApps(request: ApiToolRequest): string[] {
   const [, collection, id] = request.segments;
   if (collection === 'apps' && id) return [id];
   if (request.segments.length !== 2) return [];
   if (request.method === 'POST') {
-    const app = (request.json?.['data'] as any)?.relationships?.app?.data?.id;
+    // Another relationship (a review, an event) could point outside the app, so only the app may be named.
+    const relationships = (request.json?.['data'] as any)?.relationships;
+    if (typeof relationships !== 'object' || relationships === null || Object.keys(relationships).join() !== 'app') return [];
+    const app = relationships.app?.data?.id;
     return typeof app === 'string' || typeof app === 'number' ? [String(app)] : [];
   }
   if (request.method === 'GET') return (request.query['filter[app]'] ?? []).flatMap((value) => value.split(',')).filter(Boolean);

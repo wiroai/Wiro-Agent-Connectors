@@ -291,7 +291,7 @@ const connector = defineConnector({
       inputSchema: {
         type: 'object',
         properties: {
-          from_period: { type: 'string', pattern: '^[A-Za-z0-9+_-]{1,20}$', description: 'The starting period, e.g. "1".' },
+          from_period: { type: 'string', pattern: '^[A-Za-z0-9+_-]{1,20}$', description: 'The starting period, e.g. "1"; leave out to send none (null), as Adapty allows.' },
           to_period: { type: 'string', pattern: '^[A-Za-z0-9+_-]{1,20}$', description: 'The period converted to, e.g. "6+".' },
           ...COMMON,
           period_unit: { ...PERIOD_UNIT, default: 'day' },
@@ -299,20 +299,16 @@ const connector = defineConnector({
           segmentation: SEGMENTATION,
           cursor: CURSOR,
         },
-        required: ['from_period', 'to_period'],
+        required: ['to_period'],
         additionalProperties: false,
       },
-      async run(args: CommonArgs & { from_period: string; to_period: string; period_unit: string; date_type?: string; segmentation?: string }, h) {
+      async run(args: CommonArgs & { from_period?: string; to_period: string; period_unit: string; date_type?: string; segmentation?: string }, h) {
         const skip = skipOf(h, args.cursor);
-        const body = compact({
-          filters: filtersOf(args),
-          // Adapty's own example sends a number for a numeric starting period.
-          from_period: /^\d+$/.test(args.from_period) ? Number(args.from_period) : args.from_period,
-          to_period: args.to_period,
-          period_unit: args.period_unit,
-          date_type: args.date_type,
-          segmentation: args.segmentation,
-        });
+        const body = {
+          ...compact({ filters: filtersOf(args), to_period: args.to_period, period_unit: args.period_unit, date_type: args.date_type, segmentation: args.segmentation }),
+          // Adapty takes null for no starting period, and its own example sends a number for a numeric one.
+          from_period: args.from_period === undefined ? null : /^\d+$/.test(args.from_period) ? Number(args.from_period) : args.from_period,
+        };
         const data = await metrics(h, 'conversion', body, args.timezone);
         return h.page({
           key: 'points',
