@@ -293,7 +293,7 @@ const connector = defineConnector({
       title: 'Create or update a Brevo contact',
       description:
         'Creates a contact, or updates the one with the same email (update_existing, on by default): attributes, lists to add it to, and blocklist flags. '
-        + 'Lists it already belongs to are kept. Returns whether it was created and its id.',
+        + 'Lists it already belongs to are kept. Returns its id when Brevo gives one.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -326,7 +326,15 @@ const connector = defineConnector({
           write: true,
           errors: { 400: 'Brevo did not accept the contact' },
         });
-        return compact({ created: status === 201, updated: status === 204, id: data?.id, email: args.email });
+        // Brevo answers 204 when it updated an existing contact; a 201 is a new contact unless updating was allowed,
+        // when Brevo may also answer 201 for an update.
+        return compact({
+          saved: true,
+          id: data?.id,
+          email: args.email,
+          created: status === 201 && !args.update_existing ? true : undefined,
+          updated: status === 204 ? true : undefined,
+        });
       },
     },
     {
@@ -1057,7 +1065,8 @@ const connector = defineConnector({
             event: args.event,
             messageId: args.message_id,
             templateId: args.template_id,
-            tags: args.tags?.length ? args.tags.join(',') : undefined,
+            // Brevo takes the tags as a serialized array.
+            tags: args.tags?.length ? JSON.stringify(args.tags) : undefined,
             days: args.days,
             startDate: args.start_date,
             endDate: args.end_date,

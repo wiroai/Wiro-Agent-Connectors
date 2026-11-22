@@ -134,11 +134,14 @@ test('upsert_contact maps the arguments to Brevo\'s fields and tells a create fr
     emailBlacklisted: false,
     updateEnabled: true,
   });
-  assert.deepEqual(payload, { created: true, updated: false, id: 77, email: 'new@example.com' });
+  assert.deepEqual(payload, { saved: true, id: 77, email: 'new@example.com' });
+  const createOnly = await callTool(created.module, 'upsert_contact', { email: 'new@example.com', update_existing: false }, created.ctx);
+  assert.equal(created.fetch.calls[1].json.updateEnabled, false);
+  assert.deepEqual(createOnly.payload, { saved: true, id: 77, email: 'new@example.com', created: true });
 
   const updated = setup(noContent);
   const again = await callTool(updated.module, 'upsert_contact', { email: 'new@example.com' }, updated.ctx);
-  assert.deepEqual(again.payload, { created: false, updated: true, email: 'new@example.com' });
+  assert.deepEqual(again.payload, { saved: true, email: 'new@example.com', updated: true });
 
   const nothing = await callTool(updated.module, 'upsert_contact', {}, updated.ctx);
   assert.match(nothing.payload.error, /Give an email, an ext_id or attributes/);
@@ -355,7 +358,7 @@ test('transactional statistics and events', async () => {
   assert.equal(stats.payload.delivered, 118);
 
   const events = await callTool(module, 'list_transactional_events', { email: 'ann@example.com', tags: ['orders', 'vip'], limit: 2 }, ctx);
-  assert.equal(fetch.calls[1].url, 'https://api.brevo.com/v3/smtp/statistics/events?email=ann%40example.com&tags=orders%2Cvip&limit=2&offset=0');
+  assert.equal(fetch.calls[1].url, 'https://api.brevo.com/v3/smtp/statistics/events?email=ann%40example.com&tags=%5B%22orders%22%2C%22vip%22%5D&limit=2&offset=0');
   assert.deepEqual(events.payload.events[0], {
     date: '2026-11-21T10:01:00.000+01:00',
     event: 'delivered',
