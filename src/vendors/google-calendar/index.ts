@@ -54,15 +54,23 @@ const MAX_RANGE_DAYS = 62;
 const DEFAULT_HOURS: HoursRule[] = [{ days: [1, 2, 3, 4, 5], start: 9 * 60, end: 18 * 60 }];
 const BASE32HEX = '0123456789abcdefghijklmnopqrstuv';
 const MAX_BUSY_RETURNED = 100;
-const EVENT_ID_PATTERN = '^[^\\s/?#]+$';
+/**
+ * Event ids are base32hex, with "_" and a time for one occurrence of a
+ * repeating event (abc123_20260511T090000Z). Nothing else is taken: an id of
+ * "." or ".." would turn the event's path into the calendar's own.
+ */
+const EVENT_ID_PATTERN = '^[A-Za-z0-9_-]{1,1024}$';
 const NO_EVENT = { 404: 'Google Calendar found no such event on the connected calendar' };
+const NOTHING_CHANGED = ' Nothing was changed.';
 
 function compact(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
 }
 
 function calendarIdOf(h: ToolHelpers): string {
-  return h.credentials['calendarid'] as string;
+  const id = h.credentials['calendarid'] as string;
+  if (id === '.' || id === '..') throw new ToolFailure('The Google Calendar calendar ID is not a calendar ID: copy it from the calendar\'s settings, under Integrate calendar. Nothing was sent.');
+  return id;
 }
 
 function calendarPath(h: ToolHelpers, rest = ''): string {
@@ -79,16 +87,37 @@ function defaultSlotMinutes(h: ToolHelpers): number {
   return Number.isInteger(value) && value >= 5 && value <= 480 ? value : DEFAULT_SLOT_MINUTES;
 }
 
-function calendar(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
-  const who = serviceAccountWords(h);
-  return googleApi(h, SCOPES, {
-    ...request,
-    errors: {
-      403: `Google Calendar refused the request: share the calendar with ${who} (Settings and sharing -> Share with specific people, "Make changes to events") and check that the Google Calendar API is enabled for the key's project`,
-      404: `Google Calendar found nothing there: check the calendar ID and that the calendar is shared with ${who}`,
-      ...request.errors,
-    },
-  });
+/** Google's words for its usage limits (rateLimitExceeded, userRateLimitExceeded, quotaExceeded), which Google Calendar sends as 403. */
+const USAGE_LIMIT = /rate limit|usage limit|quota exceeded|too many requests/i;
+/** Google Calendar's refusal of guests from a service account (forbiddenForServiceAccounts). */
+const NO_GUESTS = /domain-wide delegation|forbiddenForServiceAccounts/i;
+
+/** Google Calendar answers 403 for missing sharing, usage limits and guests: the advice follows the reason Google gave. */
+function explainRefusal(h: ToolHelpers, error: unknown): unknown {
+  if (!(error instanceof ToolFailure) || error.details.status !== 403) return error;
+  const ending = error.message.endsWith(NOTHING_CHANGED) ? NOTHING_CHANGED : '';
+  const text = error.message.slice(0, error.message.length - ending.length);
+  const advice = NO_GUESTS.test(text)
+    ? 'Google Calendar does not let a service account invite guests: add guests in Google Calendar itself.'
+    : USAGE_LIMIT.test(text)
+      ? 'That is a Google Calendar usage limit, not a sharing problem: wait a minute and try again.'
+      : `Share the calendar with ${serviceAccountWords(h)} (Settings and sharing -> Share with specific people, "Make changes to events"), `
+        + 'and check that the Google Calendar API is enabled for the key\'s project.';
+  return new ToolFailure(`${text} ${advice}${ending}`, error.details);
+}
+
+async function calendar(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
+  try {
+    return await googleApi(h, SCOPES, {
+      ...request,
+      errors: {
+        404: `Google Calendar found nothing there: check the calendar ID and that the calendar is shared with ${serviceAccountWords(h)}`,
+        ...request.errors,
+      },
+    });
+  } catch (error) {
+    throw explainRefusal(h, error);
+  }
 }
 
 /** The time zone a call uses: the argument, the connection's setting, or the calendar's own. */
@@ -168,7 +197,6 @@ interface EventArgs {
   end?: string;
   duration_minutes?: number;
   timezone?: string;
-  attendees?: string[];
   reminder_minutes?: number[];
   recurrence?: string[];
   color_id?: string;
@@ -194,13 +222,6 @@ const EVENT_FIELDS: Record<string, JsonSchema> = {
     description: 'When it ends, in the same form as start (for an all-day event, the day after the last day).',
   },
   timezone: { type: 'string', maxLength: 64, description: 'An IANA time zone such as Europe/Istanbul for times without an offset. Default: the connection\'s time zone, else the calendar\'s.' },
-  attendees: {
-    type: 'array',
-    items: { type: 'string', pattern: '^[^\\s@]+@[^\\s@]+$' },
-    maxItems: 50,
-    uniqueItems: true,
-    description: 'Guest emails. A service account can invite guests only with domain-wide delegation, which a domain administrator sets up; without it Google Calendar refuses the event.',
-  },
   reminder_minutes: {
     type: 'array',
     items: { type: 'integer', minimum: 0, maximum: 40320 },
@@ -217,7 +238,11 @@ const EVENT_FIELDS: Record<string, JsonSchema> = {
   visibility: { type: 'string', enum: ['default', 'public', 'private', 'confidential'], description: 'Who can see the details.' },
   transparency: { type: 'string', enum: ['opaque', 'transparent'], description: 'opaque blocks the time (busy); transparent shows it as free.' },
   private_properties: { type: 'object', description: 'Up to 20 private key-value tags on the event, values as text, e.g. {"source": "phone"}.' },
-  send_updates: { type: 'string', enum: ['all', 'externalOnly', 'none'], description: 'Who gets an email about the change (only matters with guests). Default: Google Calendar\'s default, none.' },
+  send_updates: {
+    type: 'string',
+    enum: ['all', 'externalOnly', 'none'],
+    description: 'Who gets an email about the change: it only matters for an event whose guests were added in Google Calendar itself. Default: Google Calendar\'s default, none.',
+  },
 };
 
 function checkProperties(value: Record<string, unknown> | undefined): Record<string, string> | undefined {
@@ -248,7 +273,6 @@ async function eventBody(h: ToolHelpers, args: EventArgs, patch: boolean): Promi
   if (args.summary !== undefined) body['summary'] = args.summary;
   if (args.description !== undefined) body['description'] = args.description;
   if (args.location !== undefined) body['location'] = args.location;
-  if (args.attendees !== undefined) body['attendees'] = args.attendees.map((email) => ({ email }));
   if (args.reminder_minutes !== undefined) {
     body['reminders'] = { useDefault: false, overrides: args.reminder_minutes.map((minutes) => ({ method: 'popup', minutes })) };
   } else if (!patch) {
@@ -297,19 +321,36 @@ async function eventBody(h: ToolHelpers, args: EventArgs, patch: boolean): Promi
   return body;
 }
 
-/** Account and calendar management stay out of the generic tools: they work on the connection's calendar only. */
+/**
+ * The generic tools work on the connection's calendar only: a calendar path
+ * must name it, an event may not move to another calendar, a free/busy query
+ * reads it alone, and the service account's calendar list (which names other
+ * calendars) is reachable for this calendar's entry only.
+ */
 function calendarGuard(request: ApiToolRequest, h: ToolHelpers): void {
   const calendarId = calendarIdOf(h);
-  const [, , collection, id, sub, listedId] = request.segments;
+  const [, , collection, id, sub, subId, action] = request.segments;
   const refuse = (what: string): never => {
     throw new ToolFailure(`${what} This connection works on the calendar ${calendarId} only. Nothing was sent.`);
   };
   if (collection === 'calendars') {
     if (id === undefined && request.method !== 'GET') refuse('Creating calendars is not available here.');
     if (id !== undefined && id !== calendarId) refuse(`The path names the calendar ${truncate(id, 100)}.`);
+    if (sub === 'events' && subId !== undefined && action === 'move') {
+      const destination = request.query['destination'] ?? [];
+      if (destination.length !== 1 || destination[0] !== calendarId) refuse('Moving an event to another calendar is not available here.');
+    }
   }
-  if (collection === 'users' && id === 'me' && sub === 'calendarList' && listedId !== undefined && listedId !== calendarId && request.method !== 'GET') {
-    refuse(`The path names the calendar ${truncate(listedId, 100)}.`);
+  if (collection === 'users' && id === 'me' && sub === 'calendarList') {
+    if (subId === undefined) refuse('The calendar list names other calendars, so it is not available here.');
+    if (subId !== calendarId) refuse(`The path names the calendar ${truncate(subId as string, 100)}.`);
+  }
+  if (collection === 'freeBusy') {
+    // A raw body cannot be checked: the calendars go in json, and find_free_slots reads this one's.
+    const items = request.json?.['items'];
+    const onlyThis = Array.isArray(items) && items.length > 0
+      && items.every((item) => typeof item === 'object' && item !== null && (item as { id?: unknown }).id === calendarId);
+    if (!onlyThis) refuse('A free/busy query must name the connected calendar alone, in json (find_free_slots reads it).');
   }
 }
 
@@ -572,8 +613,8 @@ const connector = defineConnector({
       check: 'get_event',
       title: 'Update a Google Calendar event',
       description:
-        'Changes an event of the connected calendar: only the fields given change (attendees, reminder_minutes and recurrence replace the '
-        + 'whole list). status cancelled cancels it. Returns the updated event.',
+        'Changes an event of the connected calendar: only the fields given change (reminder_minutes and recurrence replace the whole list), '
+        + 'and guests added in Google Calendar stay. status cancelled cancels it. Returns the updated event.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -629,7 +670,8 @@ const connector = defineConnector({
       description:
         'The Google Calendar API v3 at https://www.googleapis.com/calendar/v3, as the service account: paths start with /calendar/v3/, '
         + 'such as /calendar/v3/calendars/{calendarId}/events/{eventId}/instances, /calendar/v3/calendars/{calendarId}/acl or /calendar/v3/colors, '
-        + 'and calendar paths must name the connected calendar (URL-encoded). Reference: https://developers.google.com/workspace/calendar/api/v3/reference.',
+        + 'and calendar paths must name the connected calendar (URL-encoded); other calendars are out of reach. Reference: '
+        + 'https://developers.google.com/workspace/calendar/api/v3/reference.',
       basePath: '/calendar/v3/',
       guard: calendarGuard,
       send: (request, h) => calendar(h, request),

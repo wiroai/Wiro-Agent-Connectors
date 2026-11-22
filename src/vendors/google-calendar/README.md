@@ -47,16 +47,16 @@ To revoke access: remove the service account under **Share with specific people 
 | `find_free_slots` | read | Free slots of a given length (default: the connection's slot length) inside opening hours (default Monday to Friday 09:00 to 18:00), from the calendar's busy times, with buffers, minimum notice and the busy blocks. Up to 62 days per call, with a cursor. |
 | `list_events` | read | Events from a time on, in start order, repeating events expanded, filtered by text or change time, with a cursor. |
 | `get_event` | read | One event with its guests, reminders, status and link. |
-| `create_event` | create | Books an event: title, start and end (or a duration), description, location, reminders, repeat rules, color, visibility and private tags. It picks the event's id itself, so an unclear outcome can be checked with `get_event`. |
-| `update_event` | update | Changes the fields given: times, title, description, guests, reminders, status (cancelled cancels it). |
+| `create_event` | create | Books an event: title, start and end (or a duration), description, location, reminders, repeat rules, color, visibility and private tags. It picks the event's id itself, so an unclear outcome can be checked with `get_event`. Guests are not taken (see Limits). |
+| `update_event` | update | Changes the fields given: times, title, description, location, reminders, status (cancelled cancels it). Guests added in Google Calendar stay. |
 | `delete_event` | delete | Deletes an event (a whole series for a repeating event); an event already deleted counts as deleted. |
-| `api_get` | read | Any other GET of the Calendar API under `/calendar/v3/`, such as event instances, the calendar's sharing (`acl`) or colors. Calendar paths must name the connected calendar. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE under `/calendar/v3/`, such as `events/quickAdd` or sharing changes, on the connected calendar only. Creating calendars is left out. Sent once, never retried. |
+| `api_get` | read | Any other GET of the Calendar API under `/calendar/v3/`, such as event instances, the calendar's sharing (`acl`) or colors. Calendar paths must name the connected calendar; the service account's calendar list is reachable for that calendar's entry only. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE under `/calendar/v3/`, such as `events/quickAdd` or sharing changes, on the connected calendar only: creating calendars, moving events to another calendar and free/busy queries of other calendars are left out. Sent once, never retried. |
 
 ## Limits
 
-- The connector works on the one calendar of the connection; the generic tools refuse paths that name another calendar.
-- A service account can add guests to an event only with domain-wide delegation in Google Workspace; without it, Google Calendar refuses events with `attendees`.
+- The connector works on the one calendar of the connection; the generic tools refuse paths, moves and free/busy queries that name another calendar.
+- Guests are not supported: Google Calendar refuses guests from a service account unless it acts as a Google Workspace user through domain-wide delegation, which this connection does not do. Add guests in Google Calendar itself; `send_updates` then decides who hears about a change.
 - `find_free_slots` searches at most 62 days per call and returns up to 200 slots per page.
 - The access token is kept in memory until 5 minutes before it expires; the key itself is never stored or logged.
-- Google Calendar API quotas apply per project and per user per minute; a rate limit comes back with `retryAfter`.
+- Google Calendar API quotas apply per project and per user per minute. Google Calendar reports most of them as HTTP 403 (`rateLimitExceeded`, `userRateLimitExceeded`, `quotaExceeded`): the error then says it is a usage limit; wait a minute and try again. An HTTP 429 comes with `retryAfter` when Google sends a wait time.

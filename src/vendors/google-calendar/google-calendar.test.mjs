@@ -247,10 +247,10 @@ test('create_event books an event with its own id, the connection\'s time zone a
 
 test('create_event takes instants and all-day dates, and checks its times before sending', async () => {
   const { module, fetch, ctx, apiCalls } = setup({ [`POST ${CALENDAR_PATH}/events`]: (request) => jsonResponse(200, { ...created, id: request.json.id }) });
-  await callTool(module, 'create_event', { summary: 'Call', start: '2030-01-07T08:00:00Z', end: '2030-01-07T08:30:00Z', attendees: ['guest@example.com'], reminder_minutes: [10], send_updates: 'all' }, ctx);
+  await callTool(module, 'create_event', { summary: 'Call', start: '2030-01-07T08:00:00Z', end: '2030-01-07T08:30:00Z', reminder_minutes: [10], send_updates: 'all' }, ctx);
   const [timed] = apiCalls();
   assert.deepEqual(timed.json.start, { dateTime: '2030-01-07T08:00:00Z', timeZone: 'Europe/Istanbul' });
-  assert.deepEqual(timed.json.attendees, [{ email: 'guest@example.com' }]);
+  assert.equal(timed.json.attendees, undefined);
   assert.deepEqual(timed.json.reminders, { useDefault: false, overrides: [{ method: 'popup', minutes: 10 }] });
   assert.equal(timed.query.sendUpdates, 'all');
 
@@ -264,6 +264,8 @@ test('create_event takes instants and all-day dates, and checks its times before
     [{ summary: 'x', start: '2030-01-08T10:00:00', end: '2030-01-08T09:00:00' }, /end must be after start/],
     [{ summary: 'x', start: '2030-02-30T10:00:00' }, /not a valid date/],
     [{ summary: 'x', start: '2030-01-08T10:00:00', end: '2030-01-08T11:00:00', duration_minutes: 30 }, /Give end or duration_minutes, not both/],
+    // Google Calendar refuses guests from a service account, so the tools take none.
+    [{ summary: 'x', start: '2030-01-08T10:00:00', attendees: ['guest@example.com'] }, /Invalid arguments for create_event/],
   ]) {
     const { payload, isError } = await callTool(module, 'create_event', args, ctx);
     assert.equal(isError, true);
@@ -324,11 +326,26 @@ test('delete_event deletes once; an event that is already gone counts as deleted
   assert.equal(notFound.payload.error, 'Google Calendar found no such event on the connected calendar (HTTP 404). Google Calendar said: "Not Found". Nothing was changed.');
 });
 
-test('a refusal names the service account to share with; a 429 carries retryAfter', async () => {
+test('a 403 gets the advice that fits Google\'s reason: missing sharing, a usage limit or guests; a 429 carries retryAfter', async () => {
   const refused = setup({ [`GET ${CALENDAR_PATH}/events/evt1`]: jsonResponse(403, fixture(import.meta.url, 'error-403.json')) });
   const forbidden = await callTool(refused.module, 'get_event', { event_id: 'evt1' }, refused.ctx);
   assert.equal(forbidden.payload.status, 403);
-  assert.match(forbidden.payload.error, new RegExp(`share the calendar with the service account ${KEY.client_email.replace(/\./g, '\\.')}`));
+  assert.equal(
+    forbidden.payload.error,
+    `Google Calendar refused the request (HTTP 403): Request had insufficient authentication scopes. Share the calendar with the service account ${KEY.client_email} `
+      + '(Settings and sharing -> Share with specific people, "Make changes to events"), and check that the Google Calendar API is enabled for the key\'s project.',
+  );
+
+  const usage = { error: { code: 403, message: 'Calendar usage limits exceeded.', errors: [{ domain: 'usageLimits', reason: 'quotaExceeded', message: 'Calendar usage limits exceeded.' }] } };
+  const busy = setup({ [`POST ${CALENDAR_PATH}/events`]: jsonResponse(403, usage) });
+  const limit = await callTool(busy.module, 'create_event', { summary: 'Call', start: '2030-01-07T11:00:00' }, busy.ctx);
+  assert.equal(limit.payload.status, 403);
+  assert.equal(limit.payload.error, 'Google Calendar refused the request (HTTP 403): Calendar usage limits exceeded. That is a Google Calendar usage limit, not a sharing problem: wait a minute and try again. Nothing was changed.');
+
+  const guests = { error: { code: 403, message: 'Service accounts cannot invite attendees without Domain-Wide Delegation of Authority.', errors: [{ domain: 'calendar', reason: 'forbiddenForServiceAccounts' }] } };
+  const invite = setup({ [`PATCH ${CALENDAR_PATH}/events/evt1`]: jsonResponse(403, guests) });
+  const noGuests = await callTool(invite.module, 'api_request', { method: 'PATCH', path: `${CALENDAR_PATH}/events/evt1`, json: { attendees: [{ email: 'guest@example.com' }] } }, invite.ctx);
+  assert.match(noGuests.payload.error, /Google Calendar does not let a service account invite guests: add guests in Google Calendar itself\. Nothing was changed\.$/);
 
   const limited = setup({ [`GET ${CALENDAR_PATH}/events`]: jsonResponse(429, fixture(import.meta.url, 'error-429.json'), { 'retry-after': '17' }) });
   const rate = await callTool(limited.module, 'list_events', {}, limited.ctx);
@@ -362,6 +379,58 @@ test('api_get and api_request reach the rest of the Calendar API, on the connect
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(broken.apiCalls().length, 1);
+});
+
+test('the generic tools reach no other calendar: no moves out, no free/busy of others, no other calendar list entry', async () => {
+  const OTHER = 'someone@example.com';
+  const { module, fetch, ctx, apiCalls } = setup({
+    [`POST ${CALENDAR_PATH}/events/evt1/move`]: jsonResponse(200, created),
+    'POST /calendar/v3/freeBusy': jsonResponse(200, freeBusy),
+    [`GET /calendar/v3/users/me/calendarList/${encodeURIComponent(CALENDAR)}`]: jsonResponse(200, { id: CALENDAR, accessRole: 'writer' }),
+  });
+  for (const [tool, args, message] of [
+    ['api_request', { method: 'POST', path: `${CALENDAR_PATH}/events/evt1/move`, query: { destination: OTHER } }, /Moving an event to another calendar is not available here/],
+    ['api_request', { method: 'POST', path: `${CALENDAR_PATH}/events/evt1/move` }, /Moving an event to another calendar/],
+    ['api_request', { method: 'POST', path: '/calendar/v3/freeBusy', json: { timeMin: '2030-01-07T00:00:00Z', timeMax: '2030-01-08T00:00:00Z', items: [{ id: CALENDAR }, { id: OTHER }] } }, /A free\/busy query must name the connected calendar alone/],
+    ['api_request', { method: 'POST', path: '/calendar/v3/freeBusy', body: `{"items":[{"id":"${OTHER}"}]}`, content_type: 'application/json' }, /must name the connected calendar alone, in json/],
+    ['api_get', { path: `/calendar/v3/users/me/calendarList/${encodeURIComponent(OTHER)}` }, /The path names the calendar someone@example\.com/],
+    ['api_get', { path: '/calendar/v3/users/me/calendarList' }, /The calendar list names other calendars/],
+    ['api_request', { method: 'POST', path: '/calendar/v3/users/me/calendarList', json: { id: OTHER } }, /The calendar list names other calendars/],
+  ]) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, message);
+    assert.ok(payload.error.endsWith(`This connection works on the calendar ${CALENDAR} only. Nothing was sent.`), payload.error);
+  }
+  assert.equal(fetch.calls.length, 0, 'nothing was sent');
+
+  const stays = await callTool(module, 'api_request', { method: 'POST', path: `${CALENDAR_PATH}/events/evt1/move`, query: { destination: CALENDAR } }, ctx);
+  assert.equal(stays.payload.status, 200);
+  const own = await callTool(module, 'api_request', { method: 'POST', path: '/calendar/v3/freeBusy', json: { timeMin: '2030-01-07T00:00:00Z', timeMax: '2030-01-08T00:00:00Z', items: [{ id: CALENDAR }] } }, ctx);
+  assert.equal(own.payload.status, 200);
+  const entry = await callTool(module, 'api_get', { path: `/calendar/v3/users/me/calendarList/${encodeURIComponent(CALENDAR)}` }, ctx);
+  assert.equal(entry.payload.data.accessRole, 'writer');
+  assert.equal(apiCalls().length, 3);
+});
+
+test('an event id is one path segment: "." and ".." are refused, so no call reaches the calendar itself', async () => {
+  const { module, fetch, ctx } = setup({});
+  for (const [tool, args] of [
+    ['delete_event', { event_id: '..' }],
+    ['delete_event', { event_id: '.' }],
+    ['update_event', { event_id: '..', summary: 'Renamed' }],
+    ['get_event', { event_id: '..' }],
+    ['delete_event', { event_id: 'abc/../..' }],
+  ]) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true, `${tool} ${args.event_id}`);
+    assert.match(payload.error, /^Invalid arguments for (delete|update|get)_event: `event_id` does not have the expected format/);
+  }
+  assert.equal(fetch.calls.length, 0, 'nothing was sent');
+
+  const instance = setup({ [`DELETE ${CALENDAR_PATH}/events/0h5q8k2l3m4n5o6p7q8r9s0t1u_20300107T070000Z`]: new Response(null, { status: 204 }) });
+  const one = await callTool(instance.module, 'delete_event', { event_id: '0h5q8k2l3m4n5o6p7q8r9s0t1u_20300107T070000Z' }, instance.ctx);
+  assert.deepEqual(one.payload, { deleted: true, eventId: '0h5q8k2l3m4n5o6p7q8r9s0t1u_20300107T070000Z' });
 });
 
 test('log lines carry no key, token or arguments', async () => {
