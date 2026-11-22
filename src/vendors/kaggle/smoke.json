@@ -1,0 +1,13 @@
+{
+  "read": { "tool": "get_quota", "args": {} },
+  "write": {
+    "tool": "push_notebook",
+    "args": {
+      "notebook": "connector-smoke-test",
+      "title": "Connector smoke test",
+      "code": "print('connector smoke test')",
+      "run": false
+    },
+    "note": "Saves a private notebook (a new version on each run) without running it. The connector never deletes: delete the notebook on kaggle.com (its ref is in the result)."
+  }
+}

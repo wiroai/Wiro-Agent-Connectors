@@ -1,0 +1,1 @@
+{ "kernels": [ { "id": 101, "ref": "janedoe/sales-forecast", "title": "Sales Forecast", "lastRunTime": "2026-11-20T10:11:12.130Z", "language": "python", "kernelType": "script", "isPrivate": false, "enableGpu": true, "machineShape": "NvidiaTeslaT4", "enableInternet": true, "totalVotes": 3, "currentVersionNumber": 4 } ], "nextPageToken": "CgwI2ZqTxQYQ" }
