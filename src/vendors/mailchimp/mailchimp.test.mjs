@@ -435,6 +435,26 @@ test('api_get and api_request go to the connection\'s data center under /3.0/', 
   assert.equal(outside.payload.error, 'The path must start with /3.0/. Nothing was sent.');
   assert.equal(fetch.calls.length, 2);
 
+  // Mailchimp ignores case and decodes escapes, and a batch runs the paths it lists.
+  for (const path of ['/3.0/Authorized-Apps', '/3.0/authorized-app%73', '/3.0/lists%2F..%2Fauthorized-apps/123']) {
+    const refused = await callTool(module, 'api_get', { path }, ctx);
+    assert.equal(refused.payload.error, 'Mailchimp\'s authorized apps are not available here. Nothing was sent.', path);
+  }
+  for (const operationPath of ['/authorized-apps', '/Authorized-Apps/123', '/3.0/authorized-app%73', 'lists/../authorized-apps']) {
+    const batch = await callTool(module, 'api_request', { method: 'POST', path: '/3.0/batches', json: { operations: [{ method: 'GET', path: `/lists/${LIST}` }, { method: 'GET', path: operationPath }] } }, ctx);
+    assert.equal(batch.payload.error, 'Mailchimp\'s authorized apps are not available here. Nothing was sent.', operationPath);
+  }
+  const undecodable = await callTool(module, 'api_request', { method: 'POST', path: '/3.0/batches', json: { operations: [{ method: 'GET', path: '/bad%zzpath' }] } }, ctx);
+  assert.match(undecodable.payload.error, /^A batch operation's path has a broken percent-escape/);
+  const raw = await callTool(module, 'api_request', { method: 'POST', path: '/3.0/batches', body: '{"operations":[]}', content_type: 'text/plain' }, ctx);
+  assert.equal(raw.payload.error, 'Send a Mailchimp batch as json, with its operations. Nothing was sent.');
+  const escaped = await callTool(module, 'api_get', { path: '/3.0/..%2Fexport/1.0/list' }, ctx);
+  assert.equal(escaped.payload.error, 'The path must stay under /3.0/. Nothing was sent.');
+  assert.equal(fetch.calls.length, 2);
+  const batch = await callTool(module, 'api_request', { method: 'POST', path: '/3.0/batches', json: { operations: [{ method: 'GET', path: `/lists/${LIST}/members`, params: { count: 10 } }] } }, ctx);
+  assert.equal(batch.isError, false, batch.payload.error);
+  assert.equal(fetch.calls.length, 3);
+
   const broken = setup(() => jsonResponse(200, {}), { apikey: 'no-data-center' });
   const refused = await callTool(broken.module, 'api_get', { path: '/3.0/lists' }, broken.ctx);
   assert.match(refused.payload.error, /Mailchimp is not connected correctly/);

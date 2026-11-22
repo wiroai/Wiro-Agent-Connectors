@@ -151,6 +151,36 @@ const REPORT_DETAILS: Record<string, string> = {
   advice: 'advice',
 };
 
+/**
+ * A path as Mailchimp routes it (it decodes percent-escapes and ignores case): the decoded segments split again at
+ * "/" and "\", each cut at ";" (a path parameter), lower-cased, with empty and "." parts dropped and ".." resolved.
+ * The guard decides on these parts, so an escape (authorized-app%73) or a capital letter cannot get past it.
+ */
+function routedParts(segments: readonly string[]): string[] {
+  const parts: string[] = [];
+  for (const piece of segments.join('/').split(/[\\/]/)) {
+    const part = (piece.split(';')[0] ?? '').toLowerCase();
+    if (part === '' || part === '.') continue;
+    if (part === '..') parts.pop();
+    else parts.push(part);
+  }
+  return parts;
+}
+
+const NO_AUTHORIZED_APPS = 'Mailchimp\'s authorized apps are not available here. Nothing was sent.';
+
+/** Whether a batch operation's path (relative to /3.0, as Mailchimp's batches take it) names the authorized apps. */
+function namesAuthorizedApps(path: unknown): boolean {
+  if (typeof path !== 'string') return false;
+  let segments: string[];
+  try {
+    segments = (path.split(/[?#]/)[0] ?? '').split('/').map((segment) => decodeURIComponent(segment));
+  } catch {
+    throw new ToolFailure('A batch operation\'s path has a broken percent-escape (a % not followed by two hex digits). Nothing was sent.');
+  }
+  return routedParts(segments).includes('authorized-apps');
+}
+
 const connector = defineConnector({
   vendor: 'mailchimp',
   label: LABEL,
@@ -1082,8 +1112,14 @@ const connector = defineConnector({
       basePath: '/3.0/',
       send: (request, h) => h.api({ ...request, origin: originFor(h) }),
       guard(request) {
-        if (/^\/3\.0\/authorized-apps(\/|$)/.test(request.path)) {
-          throw new ToolFailure('Mailchimp\'s authorized apps are not available here. Nothing was sent.');
+        const parts = routedParts(request.segments);
+        if (parts[0] !== '3.0') throw new ToolFailure('The path must stay under /3.0/. Nothing was sent.');
+        if (parts.includes('authorized-apps')) throw new ToolFailure(NO_AUTHORIZED_APPS);
+        // A batch runs the operations it lists: none of them may name the authorized apps either.
+        if (request.method === 'POST' && parts[1] === 'batches' && parts.length === 2) {
+          if (!request.json) throw new ToolFailure('Send a Mailchimp batch as json, with its operations. Nothing was sent.');
+          const operations: unknown[] = Array.isArray(request.json['operations']) ? request.json['operations'] : [];
+          if (operations.some((operation) => namesAuthorizedApps((operation as { path?: unknown } | null)?.path))) throw new ToolFailure(NO_AUTHORIZED_APPS);
         }
       },
     }),

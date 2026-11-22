@@ -53,7 +53,7 @@ Members are named by email; the connector computes Mailchimp's subscriber hash (
 | `list_automations` | read | Classic automations with status and results. |
 | `set_automation_state` | update | Pauses or starts all emails of a classic automation. |
 | `api_get` | read | Any other GET under `/3.0/` at the account's data center, such as merge fields or interest categories. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE under `/3.0/`, such as replicating a campaign. Sent once, never retried. Authorized apps are left out. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE under `/3.0/`, such as replicating a campaign. Sent once, never retried. Authorized apps are left out, in batches too. |
 
 Connection check: `get_account` with no arguments.
 
