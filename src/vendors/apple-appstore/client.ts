@@ -1,6 +1,6 @@
 // The App Store Connect side of the module: the signed token, one request
-// helper per call, Apple's cursors, the account checks that need a lookup, and
-// the trimmed shapes the tools return.
+// helper per call, Apple's cursors, the account checks that need a lookup, an
+// event localization's media, and the trimmed shapes the tools return.
 
 import {
   appStoreConnectToken,
@@ -106,22 +106,32 @@ export function text(value: unknown, max: number): string | undefined {
 /**
  * One page of an App Store Connect list: Apple's cursor continues the list,
  * and the size limit may cut a page, which then continues after the last item
- * returned.
+ * returned. `enrich` may add to the items of the page before it is cut, with
+ * more requests (one per item at most).
  */
-export async function applePage(
+export async function applePage<T>(
   h: ToolHelpers,
   api: Asc,
-  options: { key: string; path: string; query: Query; cursor?: string; map(item: any, data: any): unknown; extra?(data: any): Record<string, unknown> },
+  options: {
+    key: string;
+    path: string;
+    query: Query;
+    cursor?: string;
+    map(item: any, data: any): T;
+    enrich?(items: T[]): Promise<void>;
+    extra?(data: any): Record<string, unknown>;
+  },
 ): Promise<Record<string, unknown>> {
   const state = h.cursor(options.cursor);
   const appleCursor = typeof state?.['c'] === 'string' ? state['c'] : undefined;
   const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
   const data = await api.get(options.path, { ...options.query, ...(appleCursor ? { cursor: appleCursor } : {}) });
-  const items: unknown[] = (Array.isArray(data?.data) ? data.data : []).map((item: any) => options.map(item, data));
+  const items: T[] = (Array.isArray(data?.data) ? data.data : []).map((item: any) => options.map(item, data)).slice(skip);
+  if (options.enrich) await options.enrich(items);
   const next = nextAppleCursor(data);
   return h.page({
     key: options.key,
-    items: items.slice(skip),
+    items,
     ...(options.extra ? { extra: options.extra(data) } : {}),
     resumeAt: (index) => h.makeCursor({ ...(appleCursor ? { c: appleCursor } : {}), o: skip + index }),
     ...(next ? { nextPage: h.makeCursor({ c: next, o: 0 }) } : {}),
@@ -133,14 +143,123 @@ export function locked(h: ToolHelpers): boolean {
   return h.ctx.accounts !== null;
 }
 
+/** Waits, unless the call is cancelled first. */
+export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new ToolFailure('The call was cancelled while waiting for App Store Connect.'));
+      return;
+    }
+    const stop = (): void => {
+      clearTimeout(timer);
+      reject(new ToolFailure('The call was cancelled while waiting for App Store Connect.'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', stop);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', stop, { once: true });
+  });
+}
+
 /**
- * Refuses an in-app event that is not one of the app's. App Store Connect
- * does not say which app an event belongs to, so the app's own list is asked.
+ * The app's in-app event with the given fields, or a refusal when the app has
+ * no such event. App Store Connect does not say which app an event belongs
+ * to, so the app's own list is asked.
  */
+export async function appEventOf(api: Asc, appId: string, eventId: string, fields = 'referenceName'): Promise<any> {
+  const data = await api.get(`/v1/apps/${appId}/appEvents`, { 'filter[id]': eventId, 'fields[appEvents]': fields, limit: 1 });
+  const event = (Array.isArray(data?.data) ? data.data : []).find((item: any) => item?.id === eventId);
+  if (!event) throw new ToolFailure(`App ${appId} has no in-app event ${eventId}. Use list_app_events to find the event's id. Nothing was sent.`);
+  return event;
+}
+
+/** Refuses an in-app event that is not one of the app's. */
 export async function assertEventInApp(api: Asc, appId: string, eventId: string): Promise<void> {
-  const data = await api.get(`/v1/apps/${appId}/appEvents`, { 'filter[id]': eventId, 'fields[appEvents]': 'referenceName', limit: 1 });
-  const found = (Array.isArray(data?.data) ? data.data : []).some((event: any) => event?.id === eventId);
-  if (!found) throw new ToolFailure(`App ${appId} has no in-app event ${eventId}. Use list_app_events to find the event's id. Nothing was sent.`);
+  await appEventOf(api, appId, eventId);
+}
+
+/** An in-app event localization with what it shows: its event, images, videos and asset library placements. */
+export interface EventLocalization {
+  id: string;
+  eventId: string;
+  locale?: string;
+  images: any[];
+  videos: any[];
+  placements: any[];
+}
+
+/** Reads a localization with its media in one request. */
+export async function eventLocalizationMedia(api: Asc, localizationId: string): Promise<EventLocalization> {
+  const data = await api.get(
+    `/v1/appEventLocalizations/${encodeURIComponent(localizationId)}`,
+    {
+      include: 'appEvent,appEventScreenshots,appEventVideoClips,placements',
+      'fields[appEventLocalizations]': 'locale,appEvent,appEventScreenshots,appEventVideoClips,placements',
+      'fields[appEventScreenshots]': 'fileName,fileSize,appEventAssetType,assetDeliveryState,imageAsset',
+      'fields[appEventVideoClips]': 'fileName,fileSize,appEventAssetType,assetDeliveryState,videoDeliveryState',
+      'fields[appAssetLibraryPlacements]': 'placementType,mediaType,state',
+      'limit[appEventScreenshots]': 10,
+      'limit[appEventVideoClips]': 10,
+      'limit[placements]': 10,
+    },
+    { 404: 'App Store Connect has no in-app event localization with that id' },
+  );
+  const eventId = data?.data?.relationships?.appEvent?.data?.id;
+  if (typeof eventId !== 'string' || !eventId) throw new ToolFailure('App Store Connect did not say which event the localization belongs to. Nothing was sent.');
+  const related = (name: string, type: string): any[] => {
+    const included = includedMap(data, type);
+    const refs: any[] = Array.isArray(data?.data?.relationships?.[name]?.data) ? data.data.relationships[name].data : [];
+    return refs.map((ref) => included.get(ref?.id) ?? { type, id: ref?.id }).filter((item) => typeof item?.id === 'string');
+  };
+  return {
+    id: localizationId,
+    eventId,
+    locale: data?.data?.attributes?.locale,
+    images: related('appEventScreenshots', 'appEventScreenshots'),
+    videos: related('appEventVideoClips', 'appEventVideoClips'),
+    placements: related('placements', 'appAssetLibraryPlacements'),
+  };
+}
+
+/** The errors and warnings of an asset's delivery state, as short texts. */
+function deliveryNotes(list: unknown): string[] | undefined {
+  if (!Array.isArray(list) || !list.length) return undefined;
+  return list.slice(0, 10).map((item: any) => text([item?.code, item?.description].filter(Boolean).join(': '), 300)).filter((item): item is string => Boolean(item));
+}
+
+export function trimEventImage(item: any): Record<string, unknown> {
+  const a = item?.attributes ?? {};
+  const asset = a.imageAsset ?? {};
+  return compact({
+    id: item?.id,
+    assetType: a.appEventAssetType,
+    fileName: a.fileName,
+    fileSize: a.fileSize,
+    state: a.assetDeliveryState?.state,
+    errors: deliveryNotes(a.assetDeliveryState?.errors),
+    warnings: deliveryNotes(a.assetDeliveryState?.warnings),
+    width: asset.width,
+    height: asset.height,
+    templateUrl: text(asset.templateUrl, 1000),
+  });
+}
+
+export function trimEventVideo(item: any): Record<string, unknown> {
+  const a = item?.attributes ?? {};
+  return compact({
+    id: item?.id,
+    assetType: a.appEventAssetType,
+    fileName: a.fileName,
+    fileSize: a.fileSize,
+    state: a.assetDeliveryState?.state,
+    videoState: a.videoDeliveryState?.state,
+  });
+}
+
+export function trimPlacement(item: any): Record<string, unknown> {
+  const a = item?.attributes ?? {};
+  return compact({ id: item?.id, placementType: a.placementType, mediaType: a.mediaType, state: a.state });
 }
 
 /** The id of the event a localization belongs to. */

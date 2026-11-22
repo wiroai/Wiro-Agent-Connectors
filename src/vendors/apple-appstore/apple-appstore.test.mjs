@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import test from 'node:test';
-import { callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, textBytes, textResponse } from '../../../tests/helpers.mjs';
+import { callTool, controlClock, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, refusal, textBytes, textResponse } from '../../../tests/helpers.mjs';
 
 // The key is made here, for this run: no key is ever stored in the repository.
 const ec = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -25,10 +25,10 @@ function routes(table) {
 }
 
 function setup(handler, { accounts = { apps: [APP] }, creds = credentials } = {}) {
-  const { module } = loadModuleFor(import.meta.url);
+  const { module, context } = loadModuleFor(import.meta.url);
   const fetch = fakeFetch(handler);
   const { ctx, logs } = makeContext({ credentials: creds, accounts, fetch });
-  return { module, fetch, ctx, logs };
+  return { module, context, fetch, ctx, logs };
 }
 
 function decodeJwt(header) {
@@ -450,22 +450,26 @@ test('get_app_metadata says when the app is not on the App Store in the country,
   assert.equal(skip.fetch.calls.length, 3);
 });
 
-test('list_subscriptions reads each group with its introductory offers and current prices, and says whether there is a free trial', async () => {
+test('list_subscriptions lists each subscription with its group, introductory offers and current price, and says whether there is a free trial', async () => {
   const table = {
     [`GET /v1/apps/${APP}/subscriptionGroups`]: () => jsonResponse(200, fixture(import.meta.url, 'subscription-groups.json')),
     'GET /v1/subscriptionGroups/21000001/subscriptions': () => jsonResponse(200, fixture(import.meta.url, 'subscriptions.json')),
     'GET /v1/subscriptions/6400000001/prices': () => jsonResponse(200, fixture(import.meta.url, 'subscription-prices.json')),
-    'GET /v1/subscriptions/6400000002/prices': () => jsonResponse(200, { data: [] }),
+    'GET /v1/subscriptions/6400000002/prices': () => jsonResponse(404, { errors: [{ status: '404', code: 'NOT_FOUND' }] }),
   };
   const { module, fetch, ctx } = setup(routes(table));
-  const { payload } = await callTool(module, 'list_subscriptions', { app_id: APP }, ctx);
+  const { payload, isError } = await callTool(module, 'list_subscriptions', { app_id: APP }, ctx);
+  assert.equal(isError, false);
   assert.equal(fetch.calls[1].query.include, 'introductoryOffers');
+  assert.equal(fetch.calls[1].query.limit, '50');
   assert.equal(fetch.calls[2].query['filter[territory]'], 'USA');
   assert.equal(fetch.calls[2].query.include, 'subscriptionPricePoint,territory');
   assert.equal(fetch.calls.length, 4);
   assert.equal(payload.hasFreeTrial, true);
   assert.equal(payload.priceTerritory, 'USA');
-  assert.deepEqual(payload.groups[0].subscriptions[0], {
+  assert.deepEqual(payload.groups, [{ id: '21000001', referenceName: 'Acme Pro' }]);
+  assert.deepEqual(payload.subscriptions[0], {
+    groupId: '21000001',
     id: '6400000001',
     name: 'Pro Weekly',
     productId: 'com.example.photo.pro.weekly',
@@ -485,23 +489,459 @@ test('list_subscriptions reads each group with its introductory offers and curre
       { offerMode: 'PAY_AS_YOU_GO', duration: 'ONE_WEEK', numberOfPeriods: 1, territories: 1 },
     ],
   });
-  assert.deepEqual(payload.groups[0].subscriptions[1].introductoryOffers, []);
-  assert.equal(payload.groups[0].subscriptions[1].price, undefined);
+  assert.deepEqual(payload.subscriptions[1].introductoryOffers, []);
+  assert.equal(payload.subscriptions[1].price, undefined, 'no price schedule (404) is no price, not an error');
+  assert.equal(payload.nextCursor, undefined);
 
   const noPrices = setup(routes(table));
   await callTool(noPrices.module, 'list_subscriptions', { app_id: APP, include_prices: false }, noPrices.ctx);
   assert.equal(noPrices.fetch.calls.length, 2);
 });
 
-test('list_in_app_purchases trims each purchase', async () => {
-  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'in-app-purchases.json')));
+test('list_subscriptions continues with a cursor across Apple pages and groups, and takes one group', async () => {
+  const sub = (id) => ({ type: 'subscriptions', id, attributes: { name: `Plan ${id}`, productId: `com.example.${id}`, state: 'APPROVED' }, relationships: { introductoryOffers: { data: [] } } });
+  const table = {
+    [`GET /v1/apps/${APP}/subscriptionGroups`]: () => jsonResponse(200, { data: [
+      { type: 'subscriptionGroups', id: 'g1', attributes: { referenceName: 'First' } },
+      { type: 'subscriptionGroups', id: 'g2', attributes: { referenceName: 'Second' } },
+    ] }),
+    'GET /v1/subscriptionGroups/g1/subscriptions': (request) => (request.query.cursor === 'P2'
+      ? jsonResponse(200, { data: [sub('s3')] })
+      : jsonResponse(200, { data: [sub('s1'), sub('s2')], links: { next: `${API}/v1/subscriptionGroups/g1/subscriptions?cursor=P2&limit=50` } })),
+    'GET /v1/subscriptionGroups/g2/subscriptions': () => jsonResponse(200, { data: [sub('s4'), sub('s5')] }),
+  };
+  const { module, fetch, ctx } = setup(routes(table));
+  const ids = [];
+  let cursor;
+  for (let page = 0; page < 5; page++) {
+    const { payload } = await callTool(module, 'list_subscriptions', { app_id: APP, include_prices: false, limit: 2, ...(cursor ? { cursor } : {}) }, ctx);
+    ids.push(...payload.subscriptions.map((item) => `${item.groupId}/${item.id}`));
+    cursor = payload.nextCursor;
+    if (!cursor) break;
+  }
+  assert.deepEqual(ids, ['g1/s1', 'g1/s2', 'g1/s3', 'g2/s4', 'g2/s5']);
+  assert.ok(fetch.calls.some((call) => call.query.cursor === 'P2'), 'Apple\'s cursor is followed inside a group');
+
+  const one = setup(routes(table));
+  const { payload } = await callTool(one.module, 'list_subscriptions', { app_id: APP, group_id: 'g2', include_prices: false }, one.ctx);
+  assert.deepEqual(payload.subscriptions.map((item) => item.id), ['s4', 's5']);
+  assert.deepEqual(payload.groups, [{ id: 'g2', referenceName: 'Second' }]);
+  const missing = await callTool(one.module, 'list_subscriptions', { app_id: APP, group_id: 'g9' }, one.ctx);
+  assert.match(missing.payload.error, /^App 1234567890 has no subscription group g9\./);
+  assert.ok(!one.fetch.calls.some((call) => call.path.includes('/g9/')), 'a group the app does not have is never read');
+});
+
+test('list_in_app_purchases trims each purchase and adds its price, falling back to the automatic (equalized) prices', async () => {
+  const purchases = {
+    data: [
+      fixture(import.meta.url, 'in-app-purchases.json').data[0],
+      { type: 'inAppPurchases', id: '6500000002', attributes: { name: 'Remove Ads', productId: 'com.example.photo.noads', inAppPurchaseType: 'NON_CONSUMABLE', state: 'APPROVED', familySharable: true } },
+    ],
+  };
+  const table = {
+    [`GET /v1/apps/${APP}/inAppPurchasesV2`]: () => jsonResponse(200, purchases),
+    'GET /v1/inAppPurchasePriceSchedules/6500000001/manualPrices': () => jsonResponse(200, fixture(import.meta.url, 'iap-manual-prices.json')),
+    'GET /v1/inAppPurchasePriceSchedules/6500000002/manualPrices': () => jsonResponse(200, { data: [] }),
+    'GET /v1/inAppPurchasePriceSchedules/6500000002/automaticPrices': () => jsonResponse(200, fixture(import.meta.url, 'iap-automatic-prices.json')),
+  };
+  const { module, fetch, ctx } = setup(routes(table));
   const { payload } = await callTool(module, 'list_in_app_purchases', { app_id: APP, type: 'CONSUMABLE' }, ctx);
   assert.equal(fetch.calls[0].query['filter[inAppPurchaseType]'], 'CONSUMABLE');
-  assert.deepEqual(payload.inAppPurchases, [{ id: '6500000001', name: '50 Credits', productId: 'com.example.photo.credits50', type: 'CONSUMABLE', state: 'APPROVED', familySharable: false }]);
+  assert.equal(fetch.calls[0].query.limit, '20', 'with prices, at most 20 a page');
+  assert.equal(fetch.calls[1].query['filter[territory]'], 'USA');
+  assert.equal(fetch.calls[1].query.include, 'inAppPurchasePricePoint,territory');
+  assert.equal(fetch.calls[1].query['fields[inAppPurchasePricePoints]'], 'customerPrice,proceeds');
+  assert.deepEqual(fetch.calls.map((call) => call.path), [
+    `/v1/apps/${APP}/inAppPurchasesV2`,
+    '/v1/inAppPurchasePriceSchedules/6500000001/manualPrices',
+    '/v1/inAppPurchasePriceSchedules/6500000002/manualPrices',
+    '/v1/inAppPurchasePriceSchedules/6500000002/automaticPrices',
+  ]);
+  assert.equal(payload.priceTerritory, 'USA');
+  assert.deepEqual(payload.inAppPurchases[0], {
+    id: '6500000001',
+    name: '50 Credits',
+    productId: 'com.example.photo.credits50',
+    type: 'CONSUMABLE',
+    state: 'APPROVED',
+    familySharable: false,
+    price: {
+      customerPrice: '1.99',
+      proceeds: '1.69',
+      currency: 'USD',
+      territory: 'USA',
+      endDate: '2099-01-01',
+      scheduled: [{ customerPrice: '2.99', proceeds: '2.54', currency: 'USD', territory: 'USA', startDate: '2099-01-01' }],
+    },
+  });
+  assert.deepEqual(payload.inAppPurchases[1].price, { customerPrice: '79.99', proceeds: '56.61', currency: 'TRY', territory: 'TUR', startDate: '2026-01-01', automatic: true });
+
+  const plain = setup(routes(table));
+  const without = await callTool(plain.module, 'list_in_app_purchases', { app_id: APP, include_prices: false, limit: 150 }, plain.ctx);
+  assert.equal(plain.fetch.calls.length, 1);
+  assert.equal(plain.fetch.calls[0].query.limit, '150');
+  assert.equal(without.payload.inAppPurchases[0].price, undefined);
+  assert.equal(without.payload.priceTerritory, undefined);
+});
+
+const IMAGE_ID = '8c3f4d5e-3333-4eee-8fff-000000000002';
+const UPLOAD_HOST = 'https://store-030.blobstore.apple.com';
+
+/** A PNG file of the given size: its signature and IHDR chunk, then a few bytes, 40 in all. */
+function png(width, height) {
+  const bytes = Buffer.alloc(40);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(bytes, 0);
+  bytes.writeUInt32BE(13, 8);
+  bytes.write('IHDR', 12, 'latin1');
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  return bytes;
+}
+
+/** A JPEG file of the given size: SOI, an APP0 segment, then a baseline frame header. */
+function jpeg(width, height) {
+  const app0 = Buffer.from([0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00]);
+  const sof = Buffer.from([0xff, 0xc0, 0x00, 0x11, 0x08, height >> 8, height & 0xff, width >> 8, width & 0xff, 0x03]);
+  return Buffer.concat([Buffer.from([0xff, 0xd8]), app0, sof, Buffer.alloc(16)]);
+}
+
+function imageRoutes(extra = {}, image = png(1080, 1920)) {
+  return routes({
+    [`GET /v1/appEventLocalizations/${LOCALIZATION_1}`]: () => jsonResponse(200, fixture(import.meta.url, 'event-localization-media.json')),
+    [`GET /v1/apps/${APP}/appEvents`]: () => jsonResponse(200, { data: [{ type: 'appEvents', id: EVENT_1 }] }),
+    'GET /images/details.png': () => new Response(image, { status: 200, headers: { 'content-type': 'image/png' } }),
+    'POST /v1/appEventScreenshots': () => jsonResponse(201, fixture(import.meta.url, 'event-image-reserved.json')),
+    'PUT /assets-example-030001/PurpleSource%2Fv4%2Fpart1': () => new Response(null, { status: 200 }),
+    'PUT /assets-example-030001/PurpleSource%2Fv4%2Fpart2': () => new Response(null, { status: 200 }),
+    [`PATCH /v1/appEventScreenshots/${IMAGE_ID}`]: () => jsonResponse(200, fixture(import.meta.url, 'event-image-reserved.json')),
+    [`GET /v1/appEventScreenshots/${IMAGE_ID}`]: () => jsonResponse(200, fixture(import.meta.url, 'event-image-complete.json')),
+    [`DELETE /v1/appEventScreenshots/${IMAGE_ID}`]: () => new Response(null, { status: 204 }),
+    ...extra,
+  });
+}
+
+const UPLOAD_ARGS = { app_id: APP, localization_id: LOCALIZATION_1, asset_type: 'EVENT_DETAILS_PAGE', image_url: 'https://cdn.example.com/images/details.png' };
+
+test('list_app_event_images shows a localization\'s images, videos and placements after checking its event is the app\'s', async () => {
+  const { module, fetch, ctx } = setup(imageRoutes());
+  const { payload, isError } = await callTool(module, 'list_app_event_images', { app_id: APP, localization_id: LOCALIZATION_1 }, ctx);
+  assert.equal(isError, false);
+  assert.equal(fetch.calls[0].query.include, 'appEvent,appEventScreenshots,appEventVideoClips,placements');
+  assert.equal(fetch.calls[1].query['filter[id]'], EVENT_1);
+  assert.deepEqual(payload, {
+    appId: APP,
+    eventId: EVENT_1,
+    localizationId: LOCALIZATION_1,
+    locale: 'en-US',
+    images: [{
+      id: '8c3f4d5e-3333-4eee-8fff-000000000001',
+      assetType: 'EVENT_CARD',
+      fileName: 'event-card.png',
+      fileSize: 2483112,
+      state: 'COMPLETE',
+      width: 1920,
+      height: 1080,
+      templateUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Purple/v4/aa/bb/cc/event-card.png/{w}x{h}bb.{f}',
+    }],
+    placements: [{ id: '2e000005-e036-8f0b-8f25-6dbc2baa784a', placementType: 'EVENT_DETAILS_PAGE_ASSET', mediaType: 'IMAGE', state: 'PARENT_PREPARE_FOR_SUBMISSION' }],
+  });
+
+  const elsewhere = setup(imageRoutes({ [`GET /v1/apps/${APP}/appEvents`]: () => jsonResponse(200, { data: [] }) }));
+  const refused = await callTool(elsewhere.module, 'list_app_event_images', { app_id: APP, localization_id: LOCALIZATION_1 }, elsewhere.ctx);
+  assert.match(refused.payload.error, /^App 1234567890 has no in-app event /);
+});
+
+test('upload_app_event_image checks the image, reserves it, uploads each part to Apple\'s upload address, commits it and waits for processing', async () => {
+  const { module, fetch, ctx, logs } = setup(imageRoutes());
+  const { payload, isError } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
+  assert.equal(isError, false, JSON.stringify(payload));
+  assert.deepEqual(fetch.calls.map((call) => `${call.method} ${call.origin}`), [
+    `GET ${API}`,
+    `GET ${API}`,
+    'GET https://cdn.example.com',
+    `POST ${API}`,
+    `PUT ${UPLOAD_HOST}`,
+    `PUT ${UPLOAD_HOST}`,
+    `PATCH ${API}`,
+    `GET ${API}`,
+  ]);
+  const download = fetch.calls[2];
+  assert.equal(download.headers.authorization, undefined, 'the image download gets no token');
+  assert.deepEqual(fetch.calls[3].json, {
+    data: {
+      type: 'appEventScreenshots',
+      attributes: { fileName: 'event-details-page.png', fileSize: 40, appEventAssetType: 'EVENT_DETAILS_PAGE' },
+      relationships: { appEventLocalization: { data: { type: 'appEventLocalizations', id: LOCALIZATION_1 } } },
+    },
+  });
+  const [part1, part2] = [fetch.calls[4], fetch.calls[5]];
+  assert.equal(part1.headers['content-type'], 'image/png');
+  assert.equal(part1.headers.authorization, undefined, 'the upload address gets no token');
+  assert.deepEqual([...part1.body], [...png(1080, 1920).subarray(0, 24)]);
+  assert.deepEqual([...part2.body], [...png(1080, 1920).subarray(24, 40)]);
+  assert.deepEqual(fetch.calls[6].json, { data: { type: 'appEventScreenshots', id: IMAGE_ID, attributes: { uploaded: true } } }, 'committed with uploaded alone, no checksum');
+  assert.deepEqual(payload, {
+    appId: APP,
+    eventId: EVENT_1,
+    localizationId: LOCALIZATION_1,
+    image: {
+      id: IMAGE_ID,
+      assetType: 'EVENT_DETAILS_PAGE',
+      fileName: 'event-details-page.png',
+      fileSize: 40,
+      state: 'COMPLETE',
+      width: 1080,
+      height: 1920,
+      templateUrl: 'https://is1-ssl.mzstatic.com/image/thumb/Purple/v4/00/11/22/event-details-page.png/{w}x{h}bb.{f}',
+    },
+  });
+  assert.ok(logs.includes(logs.find((line) => /^apple-appstore upload_app_event_image PUT 200 \d+ms$/.test(line))));
+  for (const line of logs) assert.equal(line.includes('Signature'), false, 'the signed upload address is never logged');
+});
+
+test('upload_app_event_image refuses a wrong image, or a kind the localization already has, before anything is written', async () => {
+  const cases = [
+    [png(1920, 1080), /^The image is 1920x1080 pixels\. The event details page image must be a portrait JPEG or PNG with a 9:16 aspect ratio, from 1080x1920 to 2160x3840 pixels, such as 1080x1920/],
+    [png(1000, 1778), /^The image is 1000x1778 pixels/],
+    [jpeg(1080, 1921), /^The image is 1080x1921 pixels/],
+    [Buffer.from('GIF89a this is not a png or a jpeg'), /^The file at image_url is not a JPEG or PNG image\./],
+  ];
+  for (const [image, message] of cases) {
+    const { module, fetch, ctx } = setup(imageRoutes({}, image));
+    const { payload } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
+    assert.match(payload.error, message);
+    assert.match(payload.error, /Nothing was changed\.$/);
+    assert.ok(fetch.calls.every((call) => call.method === 'GET'), 'nothing but reads');
+  }
+  const big = setup(imageRoutes({}, jpeg(1080, 1920)));
+  const ok = await callTool(big.module, 'upload_app_event_image', UPLOAD_ARGS, big.ctx);
+  assert.equal(ok.isError, false, 'a JPEG of the right size is taken');
+  assert.equal(big.fetch.calls[3].json.data.attributes.fileName, 'event-details-page.jpg');
+
+  const card = setup(imageRoutes());
+  const existing = await callTool(card.module, 'upload_app_event_image', { ...UPLOAD_ARGS, asset_type: 'EVENT_CARD' }, card.ctx);
+  assert.match(existing.payload.error, /^The localization already has an EVENT_CARD image \(8c3f4d5e-3333-4eee-8fff-000000000001, state COMPLETE\)\. Delete it with delete_app_event_image first/);
+  assert.equal(card.fetch.calls.length, 2, 'no download and no reservation');
+});
+
+test('upload_app_event_image removes the reservation when the host refuses the upload address, or Apple\'s upload server fails', async () => {
+  const refused = setup(imageRoutes({
+    'PUT /assets-example-030001/PurpleSource%2Fv4%2Fpart1': () => { throw refusal('only GET and HEAD go to an address that is not one of this connector\'s'); },
+  }));
+  const { payload, isError } = await callTool(refused.module, 'upload_app_event_image', UPLOAD_ARGS, refused.ctx);
+  assert.equal(isError, true);
+  assert.equal(payload.outcome, undefined, 'a clear failure, not an unknown outcome');
+  assert.match(payload.error, /^The host running this connector does not allow uploads to App Store Connect's upload server .* The reserved image 8c3f4d5e-3333-4eee-8fff-000000000002 was removed again, so nothing was left behind\. Or add the image in App Store Connect/);
+  assert.deepEqual(refused.fetch.calls.slice(3).map((call) => call.method), ['POST', 'PUT', 'DELETE']);
+
+  const failing = setup(imageRoutes({
+    'PUT /assets-example-030001/PurpleSource%2Fv4%2Fpart2': () => new Response('denied', { status: 403 }),
+    [`DELETE /v1/appEventScreenshots/${IMAGE_ID}`]: () => jsonResponse(500, { errors: [{ status: '500' }] }),
+  }));
+  const failed = await callTool(failing.module, 'upload_app_event_image', UPLOAD_ARGS, failing.ctx);
+  assert.match(failed.payload.error, /^App Store Connect's upload server answered HTTP 403 for part 2 of 2\. The reserved image .* could not be removed: delete it with delete_app_event_image before trying again\./);
+
+  const offsite = setup(imageRoutes({
+    'POST /v1/appEventScreenshots': () => {
+      const reserved = fixture(import.meta.url, 'event-image-reserved.json');
+      reserved.data.attributes.uploadOperations[0].url = 'https://uploads.example.com/part1';
+      return jsonResponse(201, reserved);
+    },
+  }));
+  const elsewhere = await callTool(offsite.module, 'upload_app_event_image', UPLOAD_ARGS, offsite.ctx);
+  assert.match(elsewhere.payload.error, /^App Store Connect returned an upload address for part 1 of 2 that is not an https address on apple\.com\./);
+  assert.ok(!offsite.fetch.calls.some((call) => call.method === 'PUT'), 'nothing is uploaded anywhere else');
+  assert.equal(offsite.fetch.calls.at(-1).method, 'DELETE');
+});
+
+test('upload_app_event_image: an unclear reservation is an unknown outcome with one POST, and a failed processing is reported and removed', async () => {
+  const broken = setup(imageRoutes({ 'POST /v1/appEventScreenshots': () => jsonResponse(503, { errors: [{ status: '503' }] }) }));
+  const unknown = await callTool(broken.module, 'upload_app_event_image', UPLOAD_ARGS, broken.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'list_app_event_images');
+  assert.equal(broken.fetch.calls.filter((call) => call.method === 'POST').length, 1);
+
+  const failedProcessing = setup(imageRoutes({
+    [`GET /v1/appEventScreenshots/${IMAGE_ID}`]: () => {
+      const image = fixture(import.meta.url, 'event-image-complete.json');
+      image.data.attributes.assetDeliveryState = { state: 'FAILED', errors: [{ code: 'IMAGE_INCORRECT_DIMENSIONS', description: 'The dimensions of the image are not correct.' }] };
+      return jsonResponse(200, image);
+    },
+  }));
+  const failed = await callTool(failedProcessing.module, 'upload_app_event_image', UPLOAD_ARGS, failedProcessing.ctx);
+  assert.match(failed.payload.error, /^App Store Connect could not process the image: IMAGE_INCORRECT_DIMENSIONS: The dimensions of the image are not correct\. The reserved image .* was removed again/);
+  assert.equal(failedProcessing.fetch.calls.at(-1).method, 'DELETE');
+});
+
+test('upload_app_event_image returns while Apple is still processing, without waiting past its limit', async () => {
+  let advance;
+  const { module, context, fetch, ctx } = setup(imageRoutes({
+    [`GET /v1/appEventScreenshots/${IMAGE_ID}`]: () => {
+      advance(60_000); // the module's clock passes its waiting limit while Apple processes
+      const image = fixture(import.meta.url, 'event-image-complete.json');
+      image.data.attributes.assetDeliveryState = { state: 'UPLOAD_COMPLETE', errors: [] };
+      return jsonResponse(200, image);
+    },
+  }));
+  advance = controlClock(context);
+  const { payload, isError } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
+  assert.equal(isError, false);
+  assert.equal(payload.image.state, 'UPLOAD_COMPLETE');
+  assert.match(payload.note, /still processing the image/);
+  assert.equal(fetch.calls.filter((call) => call.method === 'GET' && call.path === `/v1/appEventScreenshots/${IMAGE_ID}`).length, 1);
+});
+
+test('upload_app_event_image stops waiting when the call is cancelled, and says the image was uploaded', async () => {
+  const controller = new AbortController();
+  const { module } = loadModuleFor(import.meta.url);
+  const fetch = fakeFetch(imageRoutes({
+    [`GET /v1/appEventScreenshots/${IMAGE_ID}`]: () => {
+      controller.abort();
+      const image = fixture(import.meta.url, 'event-image-complete.json');
+      image.data.attributes.assetDeliveryState = { state: 'UPLOAD_COMPLETE', errors: [] };
+      return jsonResponse(200, image);
+    },
+  }));
+  const { ctx } = makeContext({ credentials, accounts: { apps: [APP] }, fetch, signal: controller.signal });
+  const started = Date.now();
+  const { payload, isError } = await callTool(module, 'upload_app_event_image', UPLOAD_ARGS, ctx);
+  assert.ok(Date.now() - started < 2000, 'no wait after the cancel');
+  assert.equal(isError, false);
+  assert.match(payload.note, /^The image was uploaded, but its processing could not be followed \(The call was cancelled while waiting for App Store Connect\)\. Check it with list_app_event_images\.$/);
+});
+
+test('delete_app_event_image checks which event the image belongs to, then deletes it', async () => {
+  const { module, fetch, ctx } = setup(routes({
+    [`GET /v1/appEventScreenshots/${IMAGE_ID}`]: () => jsonResponse(200, { data: { type: 'appEventScreenshots', id: IMAGE_ID, relationships: { appEventLocalization: { data: { type: 'appEventLocalizations', id: LOCALIZATION_1 } } } } }),
+    [`GET /v1/appEventLocalizations/${LOCALIZATION_1}`]: () => jsonResponse(200, fixture(import.meta.url, 'event-localization-detail.json')),
+    [`GET /v1/apps/${APP}/appEvents`]: () => jsonResponse(200, { data: [{ type: 'appEvents', id: EVENT_1 }] }),
+    [`DELETE /v1/appEventScreenshots/${IMAGE_ID}`]: () => new Response(null, { status: 204 }),
+  }));
+  const { payload } = await callTool(module, 'delete_app_event_image', { app_id: APP, image_id: IMAGE_ID }, ctx);
+  assert.deepEqual(payload, { deleted: true, appId: APP, imageId: IMAGE_ID });
+  assert.deepEqual(fetch.calls.map((call) => call.method), ['GET', 'GET', 'GET', 'DELETE']);
+  assert.equal(fetch.calls[0].query.include, 'appEventLocalization');
+
+  const open = setup(() => new Response(null, { status: 204 }), { accounts: null });
+  await callTool(open.module, 'delete_app_event_image', { app_id: APP, image_id: IMAGE_ID }, open.ctx);
+  assert.deepEqual(open.fetch.calls.map((call) => call.method), ['DELETE'], 'without a lock nothing is looked up');
+});
+
+const SUBMISSION_OPEN = '9d4a5b6c-4444-4aaa-8bbb-000000000001';
+const SUBMISSION_NEW = '9d4a5b6c-4444-4aaa-8bbb-000000000002';
+
+function reviewRoutes(extra = {}) {
+  return routes({
+    [`GET /v1/apps/${APP}/appEvents`]: () => jsonResponse(200, { data: [{ type: 'appEvents', id: EVENT_1, attributes: { referenceName: 'lunar-new-year-2027', eventState: 'DRAFT' } }] }),
+    'GET /v1/reviewSubmissions': () => jsonResponse(200, { data: [] }),
+    'POST /v1/reviewSubmissions': () => jsonResponse(201, fixture(import.meta.url, 'review-submission-created.json')),
+    'POST /v1/reviewSubmissionItems': () => jsonResponse(201, { data: { type: 'reviewSubmissionItems', id: 'SUBMISSION_ITEM_EVENT_1', attributes: { state: 'READY_FOR_REVIEW' } } }),
+    [`PATCH /v1/reviewSubmissions/${SUBMISSION_NEW}`]: () => jsonResponse(200, fixture(import.meta.url, 'review-submission-sent.json')),
+    ...extra,
+  });
+}
+
+test('submit_app_event_for_review starts a submission for the app, adds the event and sends it', async () => {
+  const { module, fetch, ctx } = setup(reviewRoutes());
+  const { payload, isError } = await callTool(module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, ctx);
+  assert.equal(isError, false, JSON.stringify(payload));
+  assert.deepEqual(fetch.calls.map((call) => `${call.method} ${call.path}`), [
+    `GET /v1/apps/${APP}/appEvents`,
+    'GET /v1/reviewSubmissions',
+    'POST /v1/reviewSubmissions',
+    'POST /v1/reviewSubmissionItems',
+    `PATCH /v1/reviewSubmissions/${SUBMISSION_NEW}`,
+  ]);
+  assert.equal(fetch.calls[0].query['fields[appEvents]'], 'referenceName,eventState');
+  assert.deepEqual(fetch.calls[1].query, {
+    'filter[app]': APP,
+    'filter[platform]': 'IOS',
+    'filter[state]': 'READY_FOR_REVIEW,UNRESOLVED_ISSUES',
+    'fields[reviewSubmissions]': 'platform,state',
+    limit: '10',
+  });
+  assert.deepEqual(fetch.calls[2].json, { data: { type: 'reviewSubmissions', attributes: { platform: 'IOS' }, relationships: { app: { data: { type: 'apps', id: APP } } } } });
+  assert.deepEqual(fetch.calls[3].json, {
+    data: {
+      type: 'reviewSubmissionItems',
+      relationships: {
+        reviewSubmission: { data: { type: 'reviewSubmissions', id: SUBMISSION_NEW } },
+        appEvent: { data: { type: 'appEvents', id: EVENT_1 } },
+      },
+    },
+  });
+  assert.deepEqual(fetch.calls[4].json, { data: { type: 'reviewSubmissions', id: SUBMISSION_NEW, attributes: { submitted: true } } });
+  assert.deepEqual(payload.submission, { id: SUBMISSION_NEW, platform: 'IOS', state: 'WAITING_FOR_REVIEW', submittedDate: '2026-11-22T03:10:00-08:00' });
+  assert.equal(payload.referenceName, 'lunar-new-year-2027');
+  assert.equal(payload.reusedSubmission, undefined);
+});
+
+test('submit_app_event_for_review reuses an open submission that holds only the event, and leaves one with other items alone', async () => {
+  const holdsEvent = setup(reviewRoutes({
+    'GET /v1/reviewSubmissions': () => jsonResponse(200, fixture(import.meta.url, 'review-submissions.json')),
+    [`GET /v1/reviewSubmissions/${SUBMISSION_OPEN}/items`]: () => jsonResponse(200, { data: [{ type: 'reviewSubmissionItems', id: 'SUBMISSION_ITEM_EVENT_1', attributes: { state: 'READY_FOR_REVIEW' }, relationships: { appEvent: { data: { type: 'appEvents', id: EVENT_1 } } } }] }),
+    [`PATCH /v1/reviewSubmissions/${SUBMISSION_OPEN}`]: () => jsonResponse(200, fixture(import.meta.url, 'review-submission-sent.json')),
+  }));
+  const resent = await callTool(holdsEvent.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, holdsEvent.ctx);
+  assert.equal(resent.isError, false, JSON.stringify(resent.payload));
+  assert.deepEqual(holdsEvent.fetch.calls.map((call) => call.method), ['GET', 'GET', 'GET', 'PATCH'], 'the event is in it already: no new submission, no new item');
+  assert.equal(holdsEvent.fetch.calls[2].query.include, 'appEvent,appStoreVersion');
+  assert.equal(resent.payload.reusedSubmission, true);
+
+  const empty = setup(reviewRoutes({
+    'GET /v1/reviewSubmissions': () => jsonResponse(200, fixture(import.meta.url, 'review-submissions.json')),
+    [`GET /v1/reviewSubmissions/${SUBMISSION_OPEN}/items`]: () => jsonResponse(200, { data: [] }),
+    [`PATCH /v1/reviewSubmissions/${SUBMISSION_OPEN}`]: () => jsonResponse(200, fixture(import.meta.url, 'review-submission-sent.json')),
+  }));
+  await callTool(empty.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, empty.ctx);
+  assert.deepEqual(empty.fetch.calls.map((call) => `${call.method} ${call.path}`).slice(3), ['POST /v1/reviewSubmissionItems', `PATCH /v1/reviewSubmissions/${SUBMISSION_OPEN}`]);
+  assert.equal(empty.fetch.calls[3].json.data.relationships.reviewSubmission.data.id, SUBMISSION_OPEN);
+
+  const busy = setup(reviewRoutes({
+    'GET /v1/reviewSubmissions': () => jsonResponse(200, fixture(import.meta.url, 'review-submissions.json')),
+    [`GET /v1/reviewSubmissions/${SUBMISSION_OPEN}/items`]: () => jsonResponse(200, fixture(import.meta.url, 'review-submission-items-version.json')),
+  }));
+  const refused = await callTool(busy.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, busy.ctx);
+  assert.match(refused.payload.error, /^App 1234567890 has an open review submission \(9d4a5b6c-4444-4aaa-8bbb-000000000001\) that also holds app version 4\.3: sending it would send those to App Review too\. .*Nothing was sent\.$/);
+  assert.ok(busy.fetch.calls.every((call) => call.method === 'GET'), 'nothing is written');
+});
+
+test('submit_app_event_for_review refuses an event that is not the app\'s or already in review, and reports a refused step accurately', async () => {
+  const inReview = setup(reviewRoutes({
+    [`GET /v1/apps/${APP}/appEvents`]: () => jsonResponse(200, { data: [{ type: 'appEvents', id: EVENT_1, attributes: { eventState: 'WAITING_FOR_REVIEW' } }] }),
+  }));
+  const waiting = await callTool(inReview.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, inReview.ctx);
+  assert.match(waiting.payload.error, /^The in-app event .* is WAITING_FOR_REVIEW: only a draft, a rejected event or one ready for review can be sent to App Review\. Nothing was sent\.$/);
+  assert.equal(inReview.fetch.calls.length, 1);
+
+  const otherApp = setup(reviewRoutes());
+  const outside = await callTool(otherApp.module, 'submit_app_event_for_review', { app_id: '999', event_id: EVENT_1 }, otherApp.ctx);
+  assert.match(outside.payload.error, /The app 999 is not among the apps chosen/);
+  assert.equal(otherApp.fetch.calls.length, 0);
+
+  const incomplete = setup(reviewRoutes({ 'POST /v1/reviewSubmissionItems': () => jsonResponse(409, { errors: [{ status: '409', code: 'STATE_ERROR' }] }) }));
+  const notAdded = await callTool(incomplete.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, incomplete.ctx);
+  assert.match(notAdded.payload.error, /^App Store Connect refused to add the event: .*\(HTTP 409\)\. The review submission 9d4a5b6c-4444-4aaa-8bbb-000000000002 started for it stays open and empty; the next call reuses it\.$/);
+  assert.equal(notAdded.payload.status, 409);
+  assert.equal(incomplete.fetch.calls.filter((call) => call.method === 'PATCH').length, 0);
+
+  const unsent = setup(reviewRoutes({ [`PATCH /v1/reviewSubmissions/${SUBMISSION_NEW}`]: () => jsonResponse(409, { errors: [{ status: '409' }] }) }));
+  const notSent = await callTool(unsent.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, unsent.ctx);
+  assert.match(notSent.payload.error, /\(HTTP 409\)\. The event is in review submission 9d4a5b6c-4444-4aaa-8bbb-000000000002, which was not sent: .*submit_app_event_for_review again/);
+  assert.doesNotMatch(notSent.payload.error, /Nothing was changed/);
+
+  const broken = setup(reviewRoutes({ [`PATCH /v1/reviewSubmissions/${SUBMISSION_NEW}`]: () => jsonResponse(502, { errors: [{ status: '502' }] }) }));
+  const unknown = await callTool(broken.module, 'submit_app_event_for_review', { app_id: APP, event_id: EVENT_1 }, broken.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'list_app_events');
+  assert.equal(broken.fetch.calls.filter((call) => call.method === 'PATCH').length, 1, 'never sent twice');
 });
 
 test('api_get and api_request sign their requests and keep to the chosen apps', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(200, { data: [] }));
+  const description = module.tools.find((tool) => tool.name === 'api_get').description;
+  assert.match(description, /a resource read or changed by its own id, such as \/v1\/appStoreVersions\/<id>, is refused then/);
+  for (const tool of module.tools) assert.doesNotMatch(tool.description, /api_get \/v1\/(inAppPurchasePriceSchedules|subscriptions)\//, `${tool.name} sends nothing to an unreachable path`);
   const read = await callTool(module, 'api_get', { path: `/v1/apps/${APP}/appStoreVersions`, query: { limit: 1 } }, ctx);
   assert.deepEqual(read.payload, { status: 200, data: { data: [] } });
   assert.equal(decodeJwt(fetch.calls[0].headers.authorization).valid, true);

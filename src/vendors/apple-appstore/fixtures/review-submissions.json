@@ -1,0 +1,12 @@
+{
+  "data": [
+    {
+      "type": "reviewSubmissions",
+      "id": "9d4a5b6c-4444-4aaa-8bbb-000000000001",
+      "attributes": { "platform": "IOS", "state": "READY_FOR_REVIEW" },
+      "links": { "self": "https://api.appstoreconnect.apple.com/v1/reviewSubmissions/9d4a5b6c-4444-4aaa-8bbb-000000000001" }
+    }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/reviewSubmissions?filter%5Bapp%5D=1234567890" },
+  "meta": { "paging": { "total": 1, "limit": 10 } }
+}

@@ -8,10 +8,10 @@
 // - issuerid: the issuer ID shown above the keys;
 // - privatekey: the text of the key's .p8 file (its base64 works too).
 // Each call signs a 20-minute ES256 token with WebCrypto and sends it to
-// https://api.appstoreconnect.apple.com only; the public lookup gets no
-// credentials. The key's role decides what it may do: in-app events need
-// Admin, App Manager or Marketing, review responses Admin, App Manager or
-// Customer Support.
+// https://api.appstoreconnect.apple.com only; the public lookup and the image
+// upload addresses Apple returns get no credentials. The key's role decides
+// what it may do: in-app events need Admin, App Manager or Marketing, review
+// responses Admin, App Manager or Customer Support.
 //
 // The apps picker (key "apps") limits the tools to the apps chosen for the
 // connection. App Store Connect does not say which app an event or a review
@@ -24,6 +24,7 @@ import {
   assertEventInApp,
   assertReviewInApp,
   compact,
+  eventLocalizationMedia,
   eventOfLocalization,
   includedMap,
   LOOKUP_ORIGIN,
@@ -32,11 +33,16 @@ import {
   privateKeyPem,
   trimApp,
   trimEvent,
+  trimEventImage,
   trimEventLocalization,
+  trimEventVideo,
+  trimPlacement,
   trimResponse,
   trimReview,
 } from './client.js';
-import { appMetadata, subscriptions } from './metadata.js';
+import { checkEventImage, EVENT_ASSET_TYPES, imageInfo, MAX_IMAGE_BYTES, uploadEventImage, type EventAssetType } from './media.js';
+import { appMetadata, purchasePrice, subscriptions } from './metadata.js';
+import { PLATFORMS, submitEventForReview } from './review.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const BADGES = ['LIVE_EVENT', 'PREMIERE', 'CHALLENGE', 'COMPETITION', 'NEW_SEASON', 'MAJOR_UPDATE', 'SPECIAL_EVENT'];
@@ -53,6 +59,9 @@ const APP_ID = {
 };
 const RESOURCE_ID = { type: 'string' as const, pattern: '^[A-Za-z0-9_-]{1,128}$' };
 const CURSOR = { type: 'string' as const, description: 'nextCursor from the previous result, with the same other arguments.' };
+const PRICE_TERRITORY = { type: 'string' as const, pattern: '^[A-Z]{3}$', default: 'USA', description: 'The territory of the prices, an ISO alpha-3 code (default USA).' };
+/** How many one-time purchases a page lists when their prices are read (one or two requests each). */
+const MAX_PRICED_PURCHASES = 20;
 const DATE_TIME = {
   type: 'string' as const,
   pattern: '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,3})?)?(Z|[+-]\\d{2}:\\d{2})$',
@@ -289,23 +298,27 @@ const connector = defineConnector({
       kind: 'read',
       title: 'List App Store subscriptions',
       description:
-        "An app's auto-renewable subscriptions by subscription group: name, product ID, period, state and level of each, its current price in one "
-        + 'territory (customer price, proceeds, currency, and any price change already scheduled), its introductory offers (free trial, pay as you go '
-        + 'or pay up front, with the duration and the number of territories), and whether any subscription has a free trial. One request per group '
-        + '(at most 10) and one per priced subscription (at most 30).',
+        "An app's auto-renewable subscriptions, group by group: group, name, product ID, period, state and level of each, its current price in one "
+        + 'territory (customer price, proceeds, currency, any price change already scheduled, and a monthly plan\'s price where there is one), its '
+        + 'introductory offers (free trial, pay as you go or pay up front, with the duration and the number of territories), and whether a '
+        + 'subscription on the page has a free trial. groups names the app\'s subscription groups. One request per subscription for its price. '
+        + 'Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           app_id: APP_ID,
-          price_territory: { type: 'string', pattern: '^[A-Z]{3}$', default: 'USA', description: 'The territory of the prices, an ISO alpha-3 code (default USA).' },
+          group_id: { ...RESOURCE_ID, description: 'Only this subscription group, from groups in an earlier result.' },
+          price_territory: PRICE_TERRITORY,
           include_prices: { type: 'boolean', default: true, description: 'false skips the prices (one request less per subscription).' },
+          limit: { type: 'integer', minimum: 1, maximum: 50, default: 20, description: 'Subscriptions per page, 1 to 50 (default 20).' },
+          cursor: CURSOR,
         },
         required: ['app_id'],
         additionalProperties: false,
       },
-      async run(args: { app_id: string; price_territory: string; include_prices: boolean }, h) {
+      async run(args: { app_id: string; group_id?: string; price_territory: string; include_prices: boolean; limit: number; cursor?: string }, h) {
         requireApp(h, args.app_id);
-        return subscriptions(asc(h), args.app_id, args.include_prices ? args.price_territory : undefined);
+        return subscriptions(h, asc(h), args);
       },
     },
     {
@@ -313,32 +326,36 @@ const connector = defineConnector({
       kind: 'read',
       title: 'List App Store in-app purchases',
       description:
-        "An app's in-app purchases (consumable, non-consumable and non-renewing subscriptions): name, product ID, type, state and family sharing. "
-        + 'Auto-renewable subscriptions are in list_subscriptions. A purchase\'s price: api_get /v1/inAppPurchasePriceSchedules/<id>/manualPrices with '
-        + 'include=inAppPurchasePricePoint and filter[territory]. Pass nextCursor back as cursor for more.',
+        "An app's in-app purchases (consumable, non-consumable and non-renewing subscriptions): name, product ID, type, state and family sharing, "
+        + 'and the current price of each in one territory (customer price, proceeds, currency, any price change already scheduled; automatic '
+        + `true when App Store Connect derived it from the base territory). With prices, at most ${MAX_PRICED_PURCHASES} a page, one or two requests `
+        + 'each. Auto-renewable subscriptions are in list_subscriptions. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           app_id: APP_ID,
           type: { type: 'string', enum: ['CONSUMABLE', 'NON_CONSUMABLE', 'NON_RENEWING_SUBSCRIPTION'], description: 'Only this type.' },
-          limit: { type: 'integer', minimum: 1, maximum: 200, default: 100, description: 'Items per page, 1 to 200 (default 100).' },
+          price_territory: PRICE_TERRITORY,
+          include_prices: { type: 'boolean', default: true, description: 'false skips the prices: then up to 200 a page.' },
+          limit: { type: 'integer', minimum: 1, maximum: 200, default: 100, description: `Items per page, 1 to 200 (default 100; at most ${MAX_PRICED_PURCHASES} with prices).` },
           cursor: CURSOR,
         },
         required: ['app_id'],
         additionalProperties: false,
       },
-      async run(args: { app_id: string; type?: string; limit: number; cursor?: string }, h) {
+      async run(args: { app_id: string; type?: string; price_territory: string; include_prices: boolean; limit: number; cursor?: string }, h) {
         requireApp(h, args.app_id);
-        return applePage(h, asc(h), {
+        const api = asc(h);
+        return applePage(h, api, {
           key: 'inAppPurchases',
           path: `/v1/apps/${args.app_id}/inAppPurchasesV2`,
           query: {
             'fields[inAppPurchases]': 'name,productId,inAppPurchaseType,state,familySharable',
             'filter[inAppPurchaseType]': args.type,
-            limit: args.limit,
+            limit: args.include_prices ? Math.min(args.limit, MAX_PRICED_PURCHASES) : args.limit,
           },
           ...(args.cursor ? { cursor: args.cursor } : {}),
-          map: (item: any) => compact({
+          map: (item: any): Record<string, unknown> => compact({
             id: item?.id,
             name: item?.attributes?.name,
             productId: item?.attributes?.productId,
@@ -346,6 +363,18 @@ const connector = defineConnector({
             state: item?.attributes?.state,
             familySharable: item?.attributes?.familySharable,
           }),
+          ...(args.include_prices
+            ? {
+              async enrich(items: Array<Record<string, unknown>>) {
+                for (const item of items) {
+                  // The ids come from the app's own list, so the account lock holds.
+                  const price = typeof item['id'] === 'string' ? await purchasePrice(api, item['id'], args.price_territory) : undefined;
+                  if (price) item['price'] = price;
+                }
+              },
+            }
+            : {}),
+          extra: () => compact({ appId: args.app_id, priceTerritory: args.include_prices ? args.price_territory : undefined }),
         });
       },
     },
@@ -690,15 +719,152 @@ const connector = defineConnector({
         return { appId: args.app_id, localization: trimEventLocalization(data?.data) };
       },
     },
-    // The rest of the App Store Connect API: version localizations, screenshots
-    // sets, prices, analytics report requests, review submissions and more.
+    {
+      name: 'list_app_event_images',
+      kind: 'read',
+      title: 'List the images of an App Store in-app event',
+      description:
+        "What one in-app event localization shows: its images (event card and event details page) with their processing state (COMPLETE when "
+        + 'ready, FAILED with Apple\'s reasons), size and image URL template, its videos, and any asset library placements. The localization id is '
+        + 'in list_app_events (localizations[].id).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app_id: APP_ID,
+          localization_id: { ...RESOURCE_ID, description: 'The localization id, from list_app_events (localizations[].id).' },
+        },
+        required: ['app_id', 'localization_id'],
+        additionalProperties: false,
+      },
+      async run(args: { app_id: string; localization_id: string }, h) {
+        requireApp(h, args.app_id);
+        const api = asc(h);
+        const localization = await eventLocalizationMedia(api, args.localization_id);
+        if (locked(h)) await assertEventInApp(api, args.app_id, localization.eventId);
+        return compact({
+          appId: args.app_id,
+          eventId: localization.eventId,
+          localizationId: localization.id,
+          locale: localization.locale,
+          images: localization.images.map(trimEventImage),
+          videos: localization.videos.length ? localization.videos.map(trimEventVideo) : undefined,
+          placements: localization.placements.length ? localization.placements.map(trimPlacement) : undefined,
+        });
+      },
+    },
+    {
+      name: 'upload_app_event_image',
+      kind: 'create',
+      check: 'list_app_event_images',
+      title: 'Add an image to an App Store in-app event',
+      description:
+        "Adds an in-app event's image in one locale from a public https URL: the event card (EVENT_CARD, landscape 16:9, 1920x1080 to 3840x2160) "
+        + 'or the event details page (EVENT_DETAILS_PAGE, portrait 9:16, 1080x1920 to 2160x3840), JPEG or PNG, checked before anything is written. '
+        + 'No text, logos, borders or gradients in the image. It reserves the image, uploads it to the address App Store Connect gives, commits it '
+        + 'and waits up to 45 seconds for Apple to process it. A localization that already has an image of that kind: delete_app_event_image first.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app_id: APP_ID,
+          localization_id: { ...RESOURCE_ID, description: 'The localization id, from list_app_events (localizations[].id).' },
+          asset_type: { type: 'string', enum: [...EVENT_ASSET_TYPES], description: 'EVENT_CARD (the card in Today, Search and the product page) or EVENT_DETAILS_PAGE.' },
+          image_url: { type: 'string', format: 'uri', pattern: '^https://', maxLength: 2000, description: 'A public https URL of the JPEG or PNG image.' },
+        },
+        required: ['app_id', 'localization_id', 'asset_type', 'image_url'],
+        additionalProperties: false,
+      },
+      async run(args: { app_id: string; localization_id: string; asset_type: EventAssetType; image_url: string }, h) {
+        requireApp(h, args.app_id);
+        const api = asc(h);
+        const localization = await eventLocalizationMedia(api, args.localization_id);
+        if (locked(h)) await assertEventInApp(api, args.app_id, localization.eventId);
+        const existing = localization.images.find((image) => image?.attributes?.appEventAssetType === args.asset_type);
+        if (existing) {
+          throw new ToolFailure(
+            `The localization already has an ${args.asset_type} image (${existing.id}, state ${existing.attributes?.assetDeliveryState?.state ?? 'unknown'}). `
+              + 'Delete it with delete_app_event_image first to replace it. Nothing was changed.',
+          );
+        }
+        const { bytes } = await h.media(args.image_url, { what: 'image', maxBytes: MAX_IMAGE_BYTES, accept: 'image/png,image/jpeg' });
+        const info = checkEventImage(imageInfo(bytes), args.asset_type);
+        const result = await uploadEventImage(h, api, { localizationId: localization.id, assetType: args.asset_type, bytes, info });
+        return { appId: args.app_id, eventId: localization.eventId, ...result };
+      },
+    },
+    {
+      name: 'delete_app_event_image',
+      kind: 'delete',
+      check: 'list_app_event_images',
+      title: 'Delete an image of an App Store in-app event',
+      description:
+        "Deletes one image of an in-app event localization, such as one to replace or one whose processing FAILED. The image id is in "
+        + 'list_app_event_images (images[].id). Apple refuses this for an event in review or on the App Store.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app_id: APP_ID,
+          image_id: { ...RESOURCE_ID, description: 'The image id, from list_app_event_images (images[].id).' },
+        },
+        required: ['app_id', 'image_id'],
+        additionalProperties: false,
+      },
+      async run(args: { app_id: string; image_id: string }, h) {
+        requireApp(h, args.app_id);
+        const api = asc(h);
+        if (locked(h)) {
+          const reply = await api.get(
+            `/v1/appEventScreenshots/${encodeURIComponent(args.image_id)}`,
+            { include: 'appEventLocalization', 'fields[appEventScreenshots]': 'appEventAssetType,appEventLocalization' },
+            { 404: 'App Store Connect has no in-app event image with that id' },
+          );
+          const localizationId = reply?.data?.relationships?.appEventLocalization?.data?.id;
+          if (typeof localizationId !== 'string') throw new ToolFailure('App Store Connect did not say which event localization the image belongs to. Nothing was sent.');
+          await assertEventInApp(api, args.app_id, await eventOfLocalization(api, localizationId));
+        }
+        await api.send({
+          method: 'DELETE',
+          path: `/v1/appEventScreenshots/${encodeURIComponent(args.image_id)}`,
+          write: true,
+          errors: { ...EVENT_WRITE_ERRORS, 404: 'App Store Connect has no in-app event image with that id' },
+        });
+        return { deleted: true, appId: args.app_id, imageId: args.image_id };
+      },
+    },
+    {
+      name: 'submit_app_event_for_review',
+      kind: 'create',
+      check: 'list_app_events',
+      title: 'Send an App Store in-app event to App Review',
+      description:
+        "Sends an in-app event to App Review, as App Store Connect's Add for Review does: the event needs its texts and both images first. It reuses "
+        + "the app's open review submission when that holds nothing else (or already holds the event), else starts one, adds the event and sends it. "
+        + 'An open submission holding other items (an app version, another event) is left alone and the tool says what it holds. Only a draft, a '
+        + 'rejected event or one ready for review can be sent. Never sent twice: check list_app_events after an unclear outcome.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          app_id: APP_ID,
+          event_id: { ...RESOURCE_ID, description: 'The event id, from list_app_events.' },
+          platform: { type: 'string', enum: PLATFORMS, default: 'IOS', description: 'The platform of the review submission: IOS (default), MAC_OS, TV_OS or VISION_OS.' },
+        },
+        required: ['app_id', 'event_id'],
+        additionalProperties: false,
+      },
+      async run(args: { app_id: string; event_id: string; platform: string }, h) {
+        requireApp(h, args.app_id);
+        return submitEventForReview(asc(h), args);
+      },
+    },
+    // The rest of the App Store Connect API: app versions and their texts,
+    // app info, prices, analytics report requests and more.
     ...apiTools({
       label: 'App Store Connect',
       description:
         'The App Store Connect API at https://api.appstoreconnect.apple.com, with a token signed from the connected key: paths start with /v1/ (some '
-        + 'with /v2/ or /v3/), such as /v1/apps/1234567890/appStoreVersions or /v1/appStoreVersionLocalizations/<id>, and JSON:API bodies '
+        + 'with /v2/ or /v3/), such as /v1/apps/1234567890/appStoreVersions or /v1/apps/1234567890/appInfos, and JSON:API bodies '
         + '({"data": {"type": ..., "attributes": ...}}). Under an account lock a request must name a chosen app: in the path (/v1/apps/<id>/...), '
-        + 'in relationships.app of a POST, or in filter[app]. Reference: https://developer.apple.com/documentation/appstoreconnectapi.',
+        + 'in relationships.app of a POST that names nothing else, or in filter[app]; a resource read or changed by its own id, such as '
+        + '/v1/appStoreVersions/<id>, is refused then. Reference: https://developer.apple.com/documentation/appstoreconnectapi.',
       accounts: { key: 'apps', label: 'app', ids: requestApps },
       guard(request) {
         if (!/^\/v[1-9]\//.test(request.path)) throw new ToolFailure('The path must start with /v1/, /v2/ or /v3/. Nothing was sent.');

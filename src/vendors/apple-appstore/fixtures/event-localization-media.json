@@ -1,0 +1,34 @@
+{
+  "data": {
+    "type": "appEventLocalizations",
+    "id": "7b2e3c4d-2222-4ccc-8ddd-000000000001",
+    "attributes": { "locale": "en-US" },
+    "relationships": {
+      "appEvent": { "data": { "type": "appEvents", "id": "6a1d2b3c-1111-4aaa-8bbb-000000000001" } },
+      "appEventScreenshots": { "data": [ { "type": "appEventScreenshots", "id": "8c3f4d5e-3333-4eee-8fff-000000000001" } ] },
+      "appEventVideoClips": { "data": [] },
+      "placements": { "data": [ { "type": "appAssetLibraryPlacements", "id": "2e000005-e036-8f0b-8f25-6dbc2baa784a" } ] }
+    },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations/7b2e3c4d-2222-4ccc-8ddd-000000000001" }
+  },
+  "included": [
+    { "type": "appEvents", "id": "6a1d2b3c-1111-4aaa-8bbb-000000000001", "attributes": {} },
+    {
+      "type": "appEventScreenshots",
+      "id": "8c3f4d5e-3333-4eee-8fff-000000000001",
+      "attributes": {
+        "fileName": "event-card.png",
+        "fileSize": 2483112,
+        "appEventAssetType": "EVENT_CARD",
+        "assetDeliveryState": { "state": "COMPLETE", "errors": [], "warnings": [] },
+        "imageAsset": { "templateUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple/v4/aa/bb/cc/event-card.png/{w}x{h}bb.{f}", "width": 1920, "height": 1080 }
+      }
+    },
+    {
+      "type": "appAssetLibraryPlacements",
+      "id": "2e000005-e036-8f0b-8f25-6dbc2baa784a",
+      "attributes": { "placementType": "EVENT_DETAILS_PAGE_ASSET", "mediaType": "IMAGE", "state": "PARENT_PREPARE_FOR_SUBMISSION" }
+    }
+  ],
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventLocalizations/7b2e3c4d-2222-4ccc-8ddd-000000000001" }
+}

@@ -1,0 +1,15 @@
+{
+  "data": {
+    "type": "appEventScreenshots",
+    "id": "8c3f4d5e-3333-4eee-8fff-000000000002",
+    "attributes": {
+      "fileSize": 40,
+      "fileName": "event-details-page.png",
+      "appEventAssetType": "EVENT_DETAILS_PAGE",
+      "assetDeliveryState": { "errors": [], "warnings": [], "state": "COMPLETE" },
+      "imageAsset": { "templateUrl": "https://is1-ssl.mzstatic.com/image/thumb/Purple/v4/00/11/22/event-details-page.png/{w}x{h}bb.{f}", "width": 1080, "height": 1920 }
+    },
+    "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventScreenshots/8c3f4d5e-3333-4eee-8fff-000000000002" }
+  },
+  "links": { "self": "https://api.appstoreconnect.apple.com/v1/appEventScreenshots/8c3f4d5e-3333-4eee-8fff-000000000002" }
+}

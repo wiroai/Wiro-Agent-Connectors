@@ -1,15 +1,12 @@
 // What an app is and sells: its App Store Connect record, app info and version
-// texts, its live listing from the public lookup, and its subscriptions with
-// their introductory offers.
+// texts, its live listing from the public lookup, its subscriptions with their
+// prices and introductory offers, and the prices of its one-time purchases.
 
 import { ToolFailure, type ToolHelpers } from '../../core/index.js';
 import { compact, includedMap, LOOKUP_ORIGIN, nextAppleCursor, text, type Asc } from './client.js';
 
 /** Version states that mean the version is the one on the App Store. */
 const LIVE_STATES = new Set(['READY_FOR_SALE', 'READY_FOR_DISTRIBUTION']);
-const MAX_GROUPS = 10;
-/** How many subscriptions get their price read, one request each. */
-const MAX_PRICED = 30;
 
 function trimAppInfo(item: any, localizations: Map<string, any>, locale: string): Record<string, unknown> {
   const a = item?.attributes ?? {};
@@ -166,20 +163,50 @@ function summarizeOffers(refs: any[], offers: Map<string, any>): Array<Record<st
   return [...groups.values()];
 }
 
-/** The price in effect now in one territory, and any later one already scheduled. */
+/** A price list read, or undefined when App Store Connect has no price schedule there (404). */
+async function priceList(api: Asc, path: string, query: Record<string, string | number>): Promise<any | undefined> {
+  try {
+    return await api.get(path, query);
+  } catch (error) {
+    if (error instanceof ToolFailure && error.details.status === 404) return undefined;
+    throw error;
+  }
+}
+
+interface PriceRow extends Record<string, unknown> {
+  startDate?: string;
+  endDate?: string;
+}
+
+/** The price in effect today and the later ones already scheduled, from rows with start and end dates. */
+function currentAndScheduled(rows: PriceRow[]): Record<string, unknown> | undefined {
+  const today = new Date().toISOString().slice(0, 10);
+  const started = rows
+    .filter((row) => (typeof row.startDate !== 'string' || row.startDate <= today) && (typeof row.endDate !== 'string' || row.endDate > today))
+    .sort((a, b) => String(b.startDate ?? '').localeCompare(String(a.startDate ?? '')));
+  const later = rows.filter((row) => typeof row.startDate === 'string' && row.startDate > today);
+  if (!started.length && !later.length) return undefined;
+  return compact({ ...(started[0] ?? {}), scheduled: later.length ? later : undefined });
+}
+
+/**
+ * A subscription's price in one territory: the one in effect now and any
+ * later one already scheduled. A subscription with plans billed differently
+ * (planType UPFRONT and MONTHLY) gets the monthly plan's price beside it.
+ */
 async function subscriptionPrice(api: Asc, subscriptionId: string, territory: string): Promise<Record<string, unknown> | undefined> {
-  const reply = await api.get(`/v1/subscriptions/${encodeURIComponent(subscriptionId)}/prices`, {
+  const reply = await priceList(api, `/v1/subscriptions/${encodeURIComponent(subscriptionId)}/prices`, {
     'filter[territory]': territory,
     include: 'subscriptionPricePoint,territory',
-    'fields[subscriptionPrices]': 'startDate,subscriptionPricePoint,territory',
+    'fields[subscriptionPrices]': 'startDate,planType,subscriptionPricePoint,territory',
     'fields[subscriptionPricePoints]': 'customerPrice,proceeds',
     'fields[territories]': 'currency',
-    limit: 10,
+    limit: 20,
   });
+  if (!reply) return undefined;
   const points = includedMap(reply, 'subscriptionPricePoints');
   const territories = includedMap(reply, 'territories');
-  const today = new Date().toISOString().slice(0, 10);
-  const prices = (Array.isArray(reply?.data) ? reply.data : []).map((item: any) => {
+  const rows: PriceRow[] = (Array.isArray(reply?.data) ? reply.data : []).map((item: any) => {
     const point = points.get(item?.relationships?.subscriptionPricePoint?.data?.id);
     const place = territories.get(item?.relationships?.territory?.data?.id);
     return compact({
@@ -187,49 +214,124 @@ async function subscriptionPrice(api: Asc, subscriptionId: string, territory: st
       proceeds: point?.attributes?.proceeds,
       currency: place?.attributes?.currency,
       territory: item?.relationships?.territory?.data?.id ?? territory,
-      startDate: item?.attributes?.startDate,
-    });
+      planType: item?.attributes?.planType,
+      startDate: item?.attributes?.startDate ?? undefined,
+    }) as PriceRow;
   });
-  const started = prices
-    .filter((price: Record<string, unknown>) => typeof price['startDate'] !== 'string' || (price['startDate'] as string) <= today)
-    .sort((a: Record<string, unknown>, b: Record<string, unknown>) => String(b['startDate'] ?? '').localeCompare(String(a['startDate'] ?? '')));
-  const later = prices.filter((price: Record<string, unknown>) => typeof price['startDate'] === 'string' && (price['startDate'] as string) > today);
-  if (!started.length && !later.length) return undefined;
-  return compact({ ...(started[0] ?? {}), scheduled: later.length ? later : undefined });
+  const monthly = rows.filter((row) => row['planType'] === 'MONTHLY');
+  const price = currentAndScheduled(rows.filter((row) => row['planType'] !== 'MONTHLY'));
+  const monthlyPrice = monthly.length ? currentAndScheduled(monthly) : undefined;
+  if (!price && !monthlyPrice) return undefined;
+  return compact({ ...(price ?? {}), monthlyPlan: monthlyPrice });
 }
 
-export async function subscriptions(api: Asc, appId: string, territory?: string): Promise<Record<string, unknown>> {
-  const groupsReply = await api.get(`/v1/apps/${appId}/subscriptionGroups`, { 'fields[subscriptionGroups]': 'referenceName', limit: 50 });
-  const groupItems: any[] = Array.isArray(groupsReply?.data) ? groupsReply.data : [];
-  const groups: Array<Record<string, unknown>> = [];
+/**
+ * A one-time purchase's price in one territory. A price set by hand is in the
+ * purchase's manual prices; one App Store Connect derived from the base
+ * territory (equalized) is in its automatic prices, read when there is none.
+ */
+export async function purchasePrice(api: Asc, purchaseId: string, territory: string): Promise<Record<string, unknown> | undefined> {
+  for (const kind of ['manualPrices', 'automaticPrices'] as const) {
+    const reply = await priceList(api, `/v1/inAppPurchasePriceSchedules/${encodeURIComponent(purchaseId)}/${kind}`, {
+      'filter[territory]': territory,
+      include: 'inAppPurchasePricePoint,territory',
+      'fields[inAppPurchasePrices]': 'startDate,endDate,inAppPurchasePricePoint,territory',
+      'fields[inAppPurchasePricePoints]': 'customerPrice,proceeds',
+      'fields[territories]': 'currency',
+      limit: 20,
+    });
+    if (!reply) return undefined;
+    const points = includedMap(reply, 'inAppPurchasePricePoints');
+    const territories = includedMap(reply, 'territories');
+    const rows: PriceRow[] = (Array.isArray(reply?.data) ? reply.data : []).map((item: any) => {
+      const point = points.get(item?.relationships?.inAppPurchasePricePoint?.data?.id);
+      const place = territories.get(item?.relationships?.territory?.data?.id);
+      return compact({
+        customerPrice: point?.attributes?.customerPrice,
+        proceeds: point?.attributes?.proceeds,
+        currency: place?.attributes?.currency,
+        territory: item?.relationships?.territory?.data?.id ?? territory,
+        startDate: item?.attributes?.startDate ?? undefined,
+        endDate: item?.attributes?.endDate ?? undefined,
+      }) as PriceRow;
+    });
+    const price = currentAndScheduled(rows);
+    if (price) return compact({ ...price, automatic: kind === 'automaticPrices' ? true : undefined });
+  }
+  return undefined;
+}
+
+/** How many subscriptions App Store Connect returns per page of a group. */
+const GROUP_PAGE = 50;
+/** How many groups the result names. */
+const GROUPS_SHOWN = 50;
+
+interface Position extends Record<string, string | number> {
+  /** The group's index. */
+  g: number;
+  /** The item's index on its page. */
+  o: number;
+}
+
+export interface SubscriptionArgs {
+  app_id: string;
+  group_id?: string;
+  price_territory: string;
+  include_prices: boolean;
+  limit: number;
+  cursor?: string;
+}
+
+/**
+ * An app's subscriptions, group after group, `limit` at a time with their
+ * prices and introductory offers. The cursor names the group, Apple's page in
+ * it and the place on that page, so a result cut to fit continues right after
+ * its last subscription.
+ */
+export async function subscriptions(h: ToolHelpers, api: Asc, args: SubscriptionArgs): Promise<Record<string, unknown>> {
+  const appId = args.app_id;
+  const territory = args.include_prices ? args.price_territory : undefined;
+  const groupsReply = await api.get(`/v1/apps/${appId}/subscriptionGroups`, { 'fields[subscriptionGroups]': 'referenceName', limit: 200 });
+  const allGroups: Array<{ id: string; referenceName?: string }> = (Array.isArray(groupsReply?.data) ? groupsReply.data : [])
+    .filter((group: any) => typeof group?.id === 'string')
+    .map((group: any) => ({ id: group.id, referenceName: group?.attributes?.referenceName }));
+  const moreGroups = Boolean(nextAppleCursor(groupsReply));
+  const groups = args.group_id ? allGroups.filter((group) => group.id === args.group_id) : allGroups;
+  if (args.group_id && !groups.length) {
+    throw new ToolFailure(`App ${appId} has no subscription group ${args.group_id}${moreGroups ? ' among its first 200' : ''}. list_subscriptions without group_id names its groups.`);
+  }
+
+  const state = h.cursor(args.cursor);
+  let g = typeof state?.['g'] === 'number' ? state['g'] : 0;
+  let c = typeof state?.['c'] === 'string' ? state['c'] : undefined;
+  let o = typeof state?.['o'] === 'number' ? state['o'] : 0;
+  const items: Array<Record<string, unknown>> = [];
+  const positions: Position[] = [];
+  let next: Position | undefined;
   let freeTrial = false;
-  let priced = 0;
-  let unpriced = 0;
-  for (const group of groupItems.slice(0, MAX_GROUPS)) {
+  while (g < groups.length) {
+    const group = groups[g] as { id: string; referenceName?: string };
     const reply = await api.get(`/v1/subscriptionGroups/${encodeURIComponent(group.id)}/subscriptions`, {
       'fields[subscriptions]': 'name,productId,subscriptionPeriod,state,groupLevel,familySharable,introductoryOffers',
       include: 'introductoryOffers',
       'fields[subscriptionIntroductoryOffers]': 'duration,offerMode,numberOfPeriods',
       'limit[introductoryOffers]': 50,
-      limit: 50,
+      limit: GROUP_PAGE,
+      ...(c ? { cursor: c } : {}),
     });
     const offers = includedMap(reply, 'subscriptionIntroductoryOffers');
-    const items: Array<Record<string, unknown>> = [];
-    for (const item of Array.isArray(reply?.data) ? reply.data : []) {
+    const page: any[] = Array.isArray(reply?.data) ? reply.data : [];
+    const appleNext = nextAppleCursor(reply);
+    let index = o;
+    for (; index < page.length && items.length < args.limit; index++) {
+      const item = page[index];
       const s = item?.attributes ?? {};
       const refs: any[] = Array.isArray(item?.relationships?.introductoryOffers?.data) ? item.relationships.introductoryOffers.data : [];
       const introductoryOffers = summarizeOffers(refs, offers);
       if (introductoryOffers.some((offer) => offer['offerMode'] === 'FREE_TRIAL')) freeTrial = true;
-      let price: Record<string, unknown> | undefined;
-      if (territory && typeof item?.id === 'string') {
-        if (priced < MAX_PRICED) {
-          priced += 1;
-          price = await subscriptionPrice(api, item.id, territory);
-        } else {
-          unpriced += 1;
-        }
-      }
+      positions.push({ g, ...(c ? { c } : {}), o: index });
       items.push(compact({
+        groupId: group.id,
         id: item?.id,
         name: s.name,
         productId: s.productId,
@@ -237,28 +339,41 @@ export async function subscriptions(api: Asc, appId: string, territory?: string)
         state: s.state,
         groupLevel: s.groupLevel,
         familySharable: s.familySharable,
-        price,
+        price: territory && typeof item?.id === 'string' ? await subscriptionPrice(api, item.id, territory) : undefined,
         introductoryOffers,
       }));
     }
-    groups.push(compact({
-      id: group.id,
-      referenceName: group?.attributes?.referenceName,
-      subscriptions: items,
-      ...(nextAppleCursor(reply) ? { note: 'The group has more than 50 subscriptions; the first 50 are shown.' } : {}),
-    }));
+    if (items.length >= args.limit) {
+      if (index < page.length) next = { g, ...(c ? { c } : {}), o: index };
+      else if (appleNext) next = { g, c: appleNext, o: 0 };
+      else if (g + 1 < groups.length) next = { g: g + 1, o: 0 };
+      break;
+    }
+    if (appleNext) {
+      c = appleNext;
+    } else {
+      g += 1;
+      c = undefined;
+    }
+    o = 0;
   }
+
   const notes = [
-    groupItems.length > MAX_GROUPS || nextAppleCursor(groupsReply)
-      ? `The app has more than ${MAX_GROUPS} subscription groups; the first ${MAX_GROUPS} are shown. Read the others with api_get.`
-      : undefined,
-    unpriced ? `Prices are shown for the first ${MAX_PRICED} subscriptions; read the others with api_get (/v1/subscriptions/<id>/prices).` : undefined,
+    moreGroups && !args.group_id ? 'The app has more than 200 subscription groups; the first 200 are read.' : undefined,
+    groups.length > GROUPS_SHOWN ? `The first ${GROUPS_SHOWN} of ${groups.length} groups are named in groups.` : undefined,
+    next ? 'hasFreeTrial covers the subscriptions on this page: pass nextCursor back as cursor for the rest.' : undefined,
   ].filter(Boolean);
-  return compact({
-    appId,
-    priceTerritory: territory,
-    hasFreeTrial: freeTrial,
-    groups,
-    note: notes.length ? notes.join(' ') : undefined,
+  return h.page({
+    key: 'subscriptions',
+    items,
+    extra: compact({
+      appId,
+      priceTerritory: territory,
+      hasFreeTrial: freeTrial,
+      groups: groups.slice(0, GROUPS_SHOWN).map((group) => compact({ id: group.id, referenceName: group.referenceName })),
+      note: notes.length ? notes.join(' ') : undefined,
+    }),
+    resumeAt: (index) => h.makeCursor(positions[index] ?? { g: groups.length, o: 0 }),
+    ...(next ? { nextPage: h.makeCursor(next) } : {}),
   });
 }
