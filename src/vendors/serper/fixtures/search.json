@@ -1,0 +1,60 @@
+{
+  "searchParameters": {
+    "q": "model context protocol",
+    "type": "search",
+    "engine": "google",
+    "num": 3
+  },
+  "answerBox": {
+    "title": "What is the Model Context Protocol?",
+    "snippet": "The Model Context Protocol (MCP) is an open protocol that standardizes how applications provide context to large language models.",
+    "link": "https://modelcontextprotocol.io/introduction"
+  },
+  "knowledgeGraph": {
+    "title": "Model Context Protocol",
+    "type": "Protocol",
+    "description": "An open protocol for connecting AI assistants to the systems where data lives.",
+    "website": "https://modelcontextprotocol.io/",
+    "attributes": {
+      "Initial release": "November 2024",
+      "License": "MIT"
+    }
+  },
+  "organic": [
+    {
+      "title": "Introduction - Model Context Protocol",
+      "link": "https://modelcontextprotocol.io/introduction",
+      "snippet": "MCP is an open protocol that standardizes how applications provide context to LLMs.",
+      "sitelinks": [
+        { "title": "Quickstart", "link": "https://modelcontextprotocol.io/quickstart" }
+      ],
+      "position": 1
+    },
+    {
+      "title": "Specification - Model Context Protocol",
+      "link": "https://modelcontextprotocol.io/specification",
+      "snippet": "The authoritative protocol requirements, based on the TypeScript schema.",
+      "date": "Jun 18, 2025",
+      "position": 2
+    },
+    {
+      "title": "modelcontextprotocol/servers - GitHub",
+      "link": "https://github.com/modelcontextprotocol/servers",
+      "snippet": "Reference implementations of Model Context Protocol servers.",
+      "position": 3
+    }
+  ],
+  "peopleAlsoAsk": [
+    {
+      "question": "What is MCP used for?",
+      "snippet": "MCP lets AI applications connect to data sources and tools through one protocol.",
+      "title": "Model Context Protocol",
+      "link": "https://modelcontextprotocol.io/introduction"
+    }
+  ],
+  "relatedSearches": [
+    { "query": "model context protocol server" },
+    { "query": "mcp specification" }
+  ],
+  "credits": 1
+}

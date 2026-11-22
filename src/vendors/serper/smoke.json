@@ -1,0 +1,4 @@
+{
+  "read": { "tool": "web_search", "args": { "q": "model context protocol", "num": 3 } },
+  "write": null
+}
