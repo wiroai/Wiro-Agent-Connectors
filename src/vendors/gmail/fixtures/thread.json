@@ -1,0 +1,73 @@
+{
+  "id": "18c3e0aa11bb2203",
+  "historyId": "984100",
+  "messages": [
+    {
+      "id": "18c3e0aa11bb2203",
+      "threadId": "18c3e0aa11bb2203",
+      "labelIds": [
+        "SENT"
+      ],
+      "internalDate": "1795400000000",
+      "payload": {
+        "mimeType": "text/plain",
+        "headers": [
+          {
+            "name": "From",
+            "value": "inbox@example.com"
+          },
+          {
+            "name": "To",
+            "value": "Bob Example <bob@example.org>"
+          },
+          {
+            "name": "Subject",
+            "value": "Invoice 1182"
+          },
+          {
+            "name": "Date",
+            "value": "Thu, 19 Nov 2026 10:00:00 -0800"
+          }
+        ],
+        "body": {
+          "size": 21,
+          "data": "SGVyZSBpcyBpbnZvaWNlIDExODIu"
+        }
+      }
+    },
+    {
+      "id": "18c3f1b7a2c4d902",
+      "threadId": "18c3e0aa11bb2203",
+      "labelIds": [
+        "INBOX",
+        "UNREAD"
+      ],
+      "internalDate": "1795478531000",
+      "payload": {
+        "mimeType": "text/plain",
+        "headers": [
+          {
+            "name": "From",
+            "value": "Bob Example <bob@example.org>"
+          },
+          {
+            "name": "To",
+            "value": "inbox@example.com"
+          },
+          {
+            "name": "Subject",
+            "value": "Re: Invoice 1182"
+          },
+          {
+            "name": "Date",
+            "value": "Fri, 20 Nov 2026 16:02:11 -0800"
+          }
+        ],
+        "body": {
+          "size": 61,
+          "data": "VGhhbmtzLCByZWNlaXZlZC4KCk9uIEZyaSwgQm9iIHdyb3RlOgo-IEhlcmUgaXMgaW52b2ljZSAxMTgyLg"
+        }
+      }
+    }
+  ]
+}

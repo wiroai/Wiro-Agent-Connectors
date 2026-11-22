@@ -1,0 +1,11 @@
+{
+  "read": { "tool": "list_messages", "args": { "query": "in:inbox", "max_results": 5 } },
+  "write": {
+    "tool": "create_draft",
+    "args": {
+      "subject": "Connector smoke test {{timestamp}}",
+      "body": "A draft from the connector smoke test. It was never sent."
+    },
+    "note": "Saves a draft with no recipient; nothing is sent. Delete it from Gmail's Drafts."
+  }
+}
