@@ -4,7 +4,7 @@
 // Extensions -> "DEV Community API Keys". It is sent in the api-key header to
 // https://dev.to/api/ only. dev.to's API cannot delete articles.
 
-import { defineConnector, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, ToolFailure, truncate, type ToolHelpers } from '../../core/index.js';
 
 const DISCLOSURE_LEVELS = ['fully_autonomous', 'some_ai', 'no_ai'] as const;
 const DISCLOSURE_HELP =
@@ -250,6 +250,16 @@ const connector = defineConnector({
         return trimSaved(data, args);
       },
     },
+    // The rest of the Forem API: followers, comments, reactions, reading list, organizations.
+    ...apiTools({
+      label: 'dev.to',
+      description:
+        'The dev.to (Forem) API v1 at https://dev.to/api, with the connected API key: paths start with /api/, such as '
+        + '/api/articles/me/published, /api/followers/users, /api/readinglist or /api/comments (with a_id in query). '
+        + 'Reference: https://developers.forem.com/api/v1.',
+      basePath: '/api/',
+      methods: ['POST', 'PUT', 'DELETE'],
+    }),
   ],
 });
 

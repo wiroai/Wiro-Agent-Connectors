@@ -330,3 +330,57 @@ test('logs carry no handle, password, token or text', async () => {
   for (const secret of [PASSWORD, session.accessJwt, 'alice', 'secret plans']) assert.equal(all.includes(secret), false, secret);
   assert.ok(logs.every((line) => /^bluesky create_post (POST|GET) \d{3} \d+ms$/.test(line)), logs.join('\n'));
 });
+
+test('api_get calls any XRPC query with the session token, signing in once', async () => {
+  const timeline = { feed: [{ post: { uri: `at://${DID}/app.bsky.feed.post/1` } }], cursor: 'c2' };
+  const { module, fetch, ctx } = setup({ 'app.bsky.feed.getTimeline': () => jsonResponse(200, timeline) });
+  const { payload, isError } = await callTool(module, 'api_get', { path: '/xrpc/app.bsky.feed.getTimeline', query: { limit: 5 } }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(payload, { status: 200, data: timeline });
+  const [read] = callsTo(fetch, 'app.bsky.feed.getTimeline');
+  assert.equal(read.method, 'GET');
+  assert.equal(read.url, 'https://bsky.social/xrpc/app.bsky.feed.getTimeline?limit=5');
+  assert.equal(read.headers.authorization, BEARER);
+  await callTool(module, 'api_get', { path: '/xrpc/app.bsky.feed.getTimeline' }, ctx);
+  assert.equal(sessionCalls(fetch).length, 1, 'the session is shared with the other tools');
+});
+
+test('api_request posts a procedure once, and never runs it again after an expired session', async () => {
+  const deleted = { commit: { cid: 'bafyreiccc', rev: '3lbm' } };
+  const { module, fetch, ctx } = setup({ 'com.atproto.repo.deleteRecord': () => jsonResponse(200, deleted) });
+  const args = { method: 'POST', path: '/xrpc/com.atproto.repo.deleteRecord', json: { repo: DID, collection: 'app.bsky.feed.post', rkey: '3lbk2nuxa7c2x' } };
+  const { payload } = await callTool(module, 'api_request', args, ctx);
+  assert.deepEqual(payload, { status: 200, data: deleted });
+  const [sent] = callsTo(fetch, 'com.atproto.repo.deleteRecord');
+  assert.equal(sent.headers.authorization, BEARER);
+  assert.deepEqual(sent.json, args.json);
+
+  const expired = setup({ 'com.atproto.repo.deleteRecord': () => jsonResponse(400, fixture(import.meta.url, 'error-expired.json')) });
+  const refused = await callTool(expired.module, 'api_request', args, expired.ctx);
+  assert.match(refused.payload.error, /session expired before the request was accepted, so nothing was changed/);
+  assert.equal(callsTo(expired.fetch, 'com.atproto.repo.deleteRecord').length, 1);
+
+  const broken = setup({ 'com.atproto.repo.deleteRecord': () => jsonResponse(500, { error: 'InternalServerError' }) });
+  const unknown = await callTool(broken.module, 'api_request', args, broken.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'api_get');
+  assert.equal(callsTo(broken.fetch, 'com.atproto.repo.deleteRecord').length, 1);
+});
+
+test('account, session and identity methods stay out of the generic tools, before any sign-in', async () => {
+  const { module, fetch, ctx } = setup();
+  const cases = [
+    ['api_request', { method: 'POST', path: '/xrpc/com.atproto.server.createAppPassword', json: { name: 'x' } }],
+    ['api_request', { method: 'POST', path: '/xrpc/com.atproto.server.deleteSession' }],
+    ['api_request', { method: 'POST', path: '/xrpc/com.atproto.identity.updateHandle', json: { handle: 'x.example' } }],
+    ['api_get', { path: '/xrpc/com.atproto.server.getServiceAuth', query: { aud: 'did:web:example.com' } }],
+  ];
+  for (const [tool, args] of cases) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true);
+    assert.match(payload.error, /account, session and identity methods .* are not available here: manage the account in the Bluesky app\. Nothing was sent\./);
+  }
+  const put = await callTool(module, 'api_request', { method: 'PUT', path: '/xrpc/com.atproto.repo.putRecord', json: {} }, ctx);
+  assert.match(put.payload.error, /`method` must be one of "POST"/);
+  assert.equal(fetch.calls.length, 0, 'not even a sign-in was sent');
+});

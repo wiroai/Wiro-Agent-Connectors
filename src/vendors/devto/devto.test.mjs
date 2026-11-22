@@ -228,3 +228,39 @@ test('logs never carry the key or the article', async () => {
   assert.deepEqual(logs.map((line) => line.replace(/\d+ms$/, 'Nms')), ['devto create_draft_article POST 201 Nms']);
   assert.equal(logs.join('\n').includes(KEY), false);
 });
+
+test('api_get reaches the rest of the Forem API with the key, under /api/ only', async () => {
+  const followers = [{ type_of: 'user_follower', id: 7, name: 'Bob', username: 'bob' }];
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, followers));
+  const { payload, isError } = await callTool(module, 'api_get', { path: '/api/followers/users', query: { page: 2, per_page: 10 } }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(payload, { status: 200, data: followers });
+  const [request] = fetch.calls;
+  assert.equal(request.method, 'GET');
+  assert.equal(request.url, 'https://dev.to/api/followers/users?page=2&per_page=10');
+  assert.equal(request.headers['api-key'], KEY);
+  assert.equal(request.headers.accept, 'application/vnd.forem.api-v1+json');
+
+  const site = await callTool(module, 'api_get', { path: '/alice/some-post' }, ctx);
+  assert.equal(site.payload.error, 'The path must start with /api/. Nothing was sent.');
+  assert.equal(fetch.calls.length, 1);
+});
+
+test('api_request sends POST, PUT or DELETE once, and an unclear outcome is unknown', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, { result: 'create', category: 'like', id: 99 }));
+  const { payload } = await callTool(module, 'api_request', { method: 'POST', path: '/api/reactions/toggle', query: { category: 'like', reactable_id: 2211234, reactable_type: 'Article' } }, ctx);
+  assert.deepEqual(payload, { status: 200, data: { result: 'create', category: 'like', id: 99 } });
+  assert.equal(fetch.calls[0].method, 'POST');
+  assert.equal(fetch.calls[0].url, 'https://dev.to/api/reactions/toggle?category=like&reactable_id=2211234&reactable_type=Article');
+  assert.equal(fetch.calls[0].headers['api-key'], KEY);
+
+  const patch = await callTool(module, 'api_request', { method: 'PATCH', path: '/api/articles/1', json: {} }, ctx);
+  assert.match(patch.payload.error, /`method` must be one of "POST", "PUT", "DELETE"/);
+  assert.equal(fetch.calls.length, 1);
+
+  const down = setup(() => jsonResponse(502, { error: 'Bad gateway' }));
+  const unknown = await callTool(down.module, 'api_request', { method: 'PUT', path: '/api/articles/5', json: { article: { title: 'New' } } }, down.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'api_get');
+  assert.equal(down.fetch.calls.length, 1);
+});

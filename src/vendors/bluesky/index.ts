@@ -6,7 +6,7 @@
 // and security -> App passwords (never the account password). They open a
 // session through com.atproto.server.createSession; see session.ts.
 
-import { defineConnector, formatNumber, ToolFailure, truncate, utf8Length, type ToolHelpers } from '../../core/index.js';
+import { apiTools, defineConnector, formatNumber, ToolFailure, truncate, utf8Length, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
 import { imageSize, sniffImage } from './image.js';
 import { buildFacets, graphemeLength, MAX_GRAPHEMES, MAX_TEXT_BYTES } from './richtext.js';
 import { withSession, xrpc, type Session } from './session.js';
@@ -80,6 +80,20 @@ async function resolver(h: ToolHelpers, handle: string): Promise<string | undefi
   } catch (error) {
     if (error instanceof ToolFailure) return undefined;
     throw error;
+  }
+}
+
+/**
+ * Account, session and identity methods stay in the Bluesky app: the generic
+ * tools never sign in, mint tokens, or change the handle or the account.
+ */
+function accountMethodGuard(request: ApiToolRequest): void {
+  const method = (request.segments[1] ?? '').toLowerCase();
+  if (method.startsWith('com.atproto.server.') || (request.method !== 'GET' && method.startsWith('com.atproto.identity.'))) {
+    throw new ToolFailure(
+      'Bluesky account, session and identity methods (com.atproto.server.* and com.atproto.identity.*) are not available here: '
+        + 'manage the account in the Bluesky app. Nothing was sent.',
+    );
   }
 }
 
@@ -260,6 +274,19 @@ const connector = defineConnector({
         });
       },
     },
+    // Any other XRPC method, with the account's session: a read may sign in
+    // again once after the session expired, a procedure never runs twice.
+    ...apiTools({
+      label: 'Bluesky',
+      description:
+        "The Bluesky (AT Protocol) XRPC API on https://bsky.social, with the connected account's session: a path is /xrpc/ and a method id. "
+        + 'Queries are GET with their parameters in query, such as /xrpc/app.bsky.feed.getTimeline or /xrpc/app.bsky.notification.listNotifications; '
+        + 'procedures are POST with a JSON body, such as /xrpc/com.atproto.repo.deleteRecord. Reference: https://docs.bsky.app.',
+      basePath: '/xrpc/',
+      methods: ['POST'],
+      guard: accountMethodGuard,
+      send: (request, h) => withSession(h, !request.write, (session) => xrpc(h, session, request)),
+    }),
   ],
 });
 

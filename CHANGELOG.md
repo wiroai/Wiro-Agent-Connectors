@@ -8,6 +8,7 @@
 - Generic API tools: `apiTools()` builds `api_get` (read, GET only) and `api_request` (POST, PUT, PATCH or DELETE, never retried, `check: "api_get"`) for a connector, with its auth headers, its origins and base path, an optional account lock (`accounts`), a `guard` and a `send` hook for session tokens. Replies come back as the status and the JSON or text, cut to fit 32 KB.
 - A fifth tool kind, `write`, for a tool whose effect depends on its arguments: destructive and not idempotent, MCP's own defaults. `api_request` uses it.
 - `h.api` takes lists as query values and repeats the parameter.
+- `devto` and `bluesky` gain `api_get` and `api_request` for the rest of their APIs: dev.to under `/api/` (POST, PUT, DELETE), Bluesky any XRPC query or procedure with the account's session, its account, session and identity methods left out. `serper` has none: its one endpoint is `web_search`.
 
 ## 0.1.0
 

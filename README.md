@@ -21,8 +21,8 @@ Many services an AI agent should work with, such as a blog platform, a social ne
 | Connector | What it can do | Auth | Status |
 | --- | --- | --- | --- |
 | `serper` | Google search results through [Serper](https://serper.dev): organic results, answer box, knowledge graph, related questions | Serper API key | Available |
-| `devto` | [dev.to](https://dev.to) articles: list your articles with their stats, save drafts, publish and edit | dev.to API key | Available |
-| `bluesky` | [Bluesky](https://bsky.app): read profiles, list your recent posts, post text with clickable links, mentions and hashtags, and an optional image | Handle and app password | Available |
+| `devto` | [dev.to](https://dev.to) articles: list your articles with their stats, save drafts, publish and edit, and call the rest of the dev.to API | dev.to API key | Available |
+| `bluesky` | [Bluesky](https://bsky.app): read profiles, list your recent posts, post text with clickable links, mentions and hashtags and an optional image, and call any other XRPC method | Handle and app password | Available |
 
 Missing a service? [Add your connector](#add-your-connector) or [ask for one](https://github.com/wiroai/Wiro-Agent-Connectors/issues/new?template=new_connector.yml).
 
@@ -109,6 +109,8 @@ Every tool carries honest MCP annotations, derived from what it does: a read too
 | `list_my_articles` | read | Your drafts and published articles, newest first, with URLs, edit links, tags, page views, reactions and comments. |
 | `create_draft_article` | create | Saves an unpublished draft: title, Markdown body, up to 4 tags, cover image, canonical URL, series, organization, and the AI disclosure dev.to asks for. Nothing becomes public. |
 | `update_article` | update | Publishes a draft, turns an article back into a draft, or changes its fields. Only the fields given change. |
+| `api_get` | read | Any other GET of the dev.to API under `/api/`: followers, comments, reading list, organizations and more. |
+| `api_request` | write | A POST, PUT or DELETE to the dev.to API under `/api/`, such as a reaction. Sent once, never retried. |
 
 ### bluesky
 
@@ -117,6 +119,8 @@ Every tool carries honest MCP annotations, derived from what it does: a read too
 | `get_profile` | read | A profile with its counts; the connected account by default. |
 | `list_my_posts` | read | Your recent posts with likes, reposts, replies and quotes. |
 | `create_post` | create | Posts right away: up to 300 characters, with links, mentions and hashtags made clickable, and optionally one JPEG, PNG or WebP image from a public https URL with alt text. |
+| `api_get` | read | Any XRPC query (GET) with your session, such as `app.bsky.feed.getTimeline` or `app.bsky.notification.listNotifications`. |
+| `api_request` | write | Any XRPC procedure (POST with a JSON body), such as `com.atproto.repo.deleteRecord`. Sent once, never retried. Account, session and identity methods are left out. |
 
 ## How it works
 

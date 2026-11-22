@@ -107,7 +107,7 @@ test('without its credentials a connector still lists its tools and names the mi
   try {
     assert.equal(client.getServerVersion().name, 'devto');
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name), ['list_my_articles', 'create_draft_article', 'update_article']);
+    assert.deepEqual(tools.map((tool) => tool.name), ['list_my_articles', 'create_draft_article', 'update_article', 'api_get', 'api_request']);
     const result = await client.callTool({ name: 'list_my_articles', arguments: {} });
     assert.equal(result.isError, true);
     assert.match(JSON.parse(result.content[0].text).error, /set DEVTO_API_KEY in its environment/);
@@ -122,7 +122,7 @@ test('without its credentials a connector still lists its tools and names the mi
 test('--list, --version, an unknown connector and a bad CONNECTOR_ACCOUNTS', () => {
   const list = spawnSync(process.execPath, [CLI, '--list'], { encoding: 'utf8' });
   assert.equal(list.status, 0);
-  assert.match(list.stdout, /bluesky\n {2}env: {3}BLUESKY_IDENTIFIER, BLUESKY_APP_PASSWORD\n {2}tools: get_profile, list_my_posts, create_post/);
+  assert.match(list.stdout, /bluesky\n {2}env: {3}BLUESKY_IDENTIFIER, BLUESKY_APP_PASSWORD\n {2}tools: get_profile, list_my_posts, create_post, api_get, api_request\n/);
   assert.match(list.stdout, /devto\n {2}env: {3}DEVTO_API_KEY/);
   assert.match(list.stdout, /serper\n {2}env: {3}SERPER_API_KEY\n {2}tools: web_search/);
 
