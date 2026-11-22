@@ -1,0 +1,12 @@
+{
+  "object": "list",
+  "results": [
+    { "object": "user", "id": "ee5f0f84-409a-440f-983a-a5315961c6e4", "type": "person", "person": { "email": "alex@example.com" }, "name": "Alex Example", "avatar_url": null },
+    { "object": "user", "id": "16d84278-ab0e-484c-9bdd-b35da3bd8905", "type": "bot", "bot": {}, "name": "Content agent", "avatar_url": null }
+  ],
+  "next_cursor": null,
+  "has_more": false,
+  "type": "user",
+  "user": {},
+  "request_id": "4f1b3a6e-0000-4000-8000-000000000009"
+}

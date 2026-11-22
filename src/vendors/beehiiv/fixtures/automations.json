@@ -1,0 +1,1 @@
+{ "data": [ { "id": "aut_00000000-0000-0000-0000-000000000001", "name": "Welcome series", "status": "running", "trigger_events": ["signup", "api"], "description": "" }, { "id": "aut_00000000-0000-0000-0000-000000000002", "name": "Win-back", "status": "running", "trigger_events": ["segment"] } ], "limit": 100, "page": 1, "total_results": 2, "total_pages": 1 }

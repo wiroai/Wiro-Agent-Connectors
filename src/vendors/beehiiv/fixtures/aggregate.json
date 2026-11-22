@@ -1,0 +1,1 @@
+{ "data": { "stats": { "email": { "recipients": 5000, "delivered": 4900, "opens": 2600, "unique_opens": 2300, "clicks": 500, "unique_clicks": 410, "unsubscribes": 12, "spam_reports": 1 }, "web": { "views": 9000, "clicks": 800 }, "clicks": [ { "url": "https://acme.example.com/docs", "total_unique_clicks": 120 } ] } } }

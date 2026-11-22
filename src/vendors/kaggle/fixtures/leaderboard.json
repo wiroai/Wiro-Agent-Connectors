@@ -1,0 +1,1 @@
+{ "submissions": [ { "teamId": 1, "teamName": "Team A", "submissionDate": "2026-11-01T00:00:00Z", "score": "0.99" }, { "teamId": 2, "teamName": "Team B", "submissionDate": "2026-11-02T00:00:00Z", "score": "0.98" }, { "teamId": 3, "teamName": "Team C", "submissionDate": "2026-11-03T00:00:00Z", "score": "0.97" } ], "nextPageToken": "" }

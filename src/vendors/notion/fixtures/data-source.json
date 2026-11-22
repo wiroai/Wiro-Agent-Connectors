@@ -1,0 +1,14 @@
+{
+  "object": "data_source",
+  "id": "248104cd-477e-80af-bc30-000bd28de8f9",
+  "title": [{ "type": "text", "text": { "content": "Content Calendar" }, "plain_text": "Content Calendar" }],
+  "parent": { "type": "database_id", "database_id": "248104cd-477e-80fd-b757-e945d38000bd" },
+  "properties": {
+    "Status": { "id": "%3AUPp", "name": "Status", "type": "status", "status": { "options": [{ "id": "aa11", "name": "Draft", "color": "gray" }, { "id": "aa12", "name": "Published", "color": "green" }], "groups": [] } },
+    "Tags": { "id": "q%5E%3Cv", "name": "Tags", "type": "multi_select", "multi_select": { "options": [{ "id": "cc33", "name": "Q4", "color": "red" }] } },
+    "Related": { "id": "rel1", "name": "Related", "type": "relation", "relation": { "data_source_id": "248104cd-477e-80af-bc30-000bd28de8fa", "type": "single_property", "single_property": {} } },
+    "Score": { "id": "f1", "name": "Score", "type": "formula", "formula": { "expression": "prop(\"Estimate\") * 14" } },
+    "Name": { "id": "title", "name": "Name", "type": "title", "title": {} }
+  },
+  "request_id": "4f1b3a6e-0000-4000-8000-000000000007"
+}

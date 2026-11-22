@@ -1,0 +1,13 @@
+{
+  "object": "user",
+  "id": "16d84278-ab0e-484c-9bdd-b35da3bd8905",
+  "name": "Content agent",
+  "avatar_url": null,
+  "type": "bot",
+  "bot": {
+    "owner": { "type": "workspace", "workspace": true },
+    "workspace_name": "Acme Team",
+    "workspace_limits": { "max_file_upload_size_in_bytes": 5242880 }
+  },
+  "request_id": "4f1b3a6e-0000-4000-8000-000000000001"
+}

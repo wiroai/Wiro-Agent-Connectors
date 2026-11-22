@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "search", "args": { "page_size": 5 } },
+  "write": {
+    "tool": "create_page",
+    "args": {
+      "workspace": true,
+      "title": "Connector smoke test {{timestamp}}",
+      "markdown": "A page from the connector smoke test. It can be moved to the trash."
+    },
+    "note": "Creates a private top-level page, which only a personal access token may do; with an internal connection, replace workspace with parent_page_id set to a page shared with it. Move the page to the trash with trash_page."
+  }
+}

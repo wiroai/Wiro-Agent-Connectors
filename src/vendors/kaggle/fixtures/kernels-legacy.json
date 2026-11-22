@@ -1,0 +1,4 @@
+[
+  { "id": 101, "ref": "janedoe/sales-forecast", "refNullable": "janedoe/sales-forecast", "title": "Sales Forecast", "author": "Jane Doe", "slug": "sales-forecast", "lastRunTime": "2026-11-20T10:11:12.13Z", "language": "python", "kernelType": "notebook", "isPrivate": true, "enableGpu": false, "enableInternet": false, "totalVotes": 0, "currentVersionNumber": 4 },
+  { "id": 102, "titleNullable": "Feature prep", "refNullable": "janedoe/feature-prep", "isPrivateNullable": false, "languageNullable": "python", "kernelTypeNullable": "script" }
+]

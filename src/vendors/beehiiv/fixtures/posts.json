@@ -1,0 +1,4 @@
+{ "data": [
+  { "id": "post_00000000-0000-0000-0000-000000000001", "title": "Weekly digest", "subtitle": "", "status": "confirmed", "publish_date": 1795300000, "audience": "free", "platform": "both", "web_url": "https://acme.example.com/p/weekly-digest", "content_tags": ["product"], "stats": { "email": { "recipients": 100, "delivered": 98, "opens": 50, "unique_opens": 45, "open_rate": 45.9, "clicks": 10, "unique_clicks": 8, "click_rate": 8.2, "unsubscribes": 1, "spam_reports": 0 }, "web": { "views": 200, "clicks": 40 }, "clicks": [] } },
+  { "id": "post_00000000-0000-0000-0000-000000000002", "title": "Draft", "status": "draft", "audience": "free", "platform": "email", "created": 1795400000 }
+], "limit": 2, "page": 1, "total_results": 7, "total_pages": 4 }

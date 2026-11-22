@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "list_publications", "args": {} },
+  "write": {
+    "tool": "create_draft_post",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "body_content": "<p>A draft from the connector smoke test. It reaches no one.</p>",
+      "recipients": { "email": { "tier_ids": ["free"] } }
+    },
+    "note": "Needs BEEHIIV_PUBLICATIONID and the Pro or Enterprise plan. Leaves a draft post that reaches no one; the connector never deletes posts: delete it in beehiiv."
+  }
+}

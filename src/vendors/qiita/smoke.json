@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "get_my_account", "args": {} },
+  "write": {
+    "tool": "create_article",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "body": "A limited-share article from the connector smoke test.",
+      "tags": [{ "name": "test" }]
+    },
+    "note": "Leaves a limited-share article that only the account and people with its link can open. Remove it with delete_article."
+  }
+}

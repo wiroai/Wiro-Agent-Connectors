@@ -1,0 +1,1 @@
+{ "quotaRefreshTime": "2026-11-29T00:00:00Z", "gpuQuota": { "timeUsed": "36000s", "timeReserved": "1800s", "totalTimeAllowed": "108000s", "minimumTimeAllowed": "0s", "isPayToScaleEnabled": false, "hasEverRun": true }, "tpuQuota": { "timeUsed": "0s", "totalTimeAllowed": "72000s" } }
