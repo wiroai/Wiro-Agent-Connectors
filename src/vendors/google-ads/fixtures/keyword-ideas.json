@@ -1,0 +1,27 @@
+{
+  "results": [
+    {
+      "text": "trail running shoes",
+      "keywordIdeaMetrics": {
+        "competition": "HIGH",
+        "monthlySearchVolumes": [{ "month": "OCTOBER", "year": "2026", "monthlySearches": "33100" }],
+        "avgMonthlySearches": "27100",
+        "competitionIndex": "86",
+        "lowTopOfPageBidMicros": "650000",
+        "highTopOfPageBidMicros": "2410000"
+      }
+    },
+    {
+      "text": "waterproof trail shoes",
+      "keywordIdeaMetrics": {
+        "competition": "MEDIUM",
+        "avgMonthlySearches": "4400",
+        "competitionIndex": "55",
+        "lowTopOfPageBidMicros": "520000",
+        "highTopOfPageBidMicros": "1880000"
+      }
+    }
+  ],
+  "totalSize": "812",
+  "nextPageToken": "keyword-ideas-page-2"
+}

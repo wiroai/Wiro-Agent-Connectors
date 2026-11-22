@@ -1,0 +1,49 @@
+{
+  "results": [
+    {
+      "campaign": {
+        "resourceName": "customers/1112223333/campaigns/20001",
+        "status": "ENABLED",
+        "advertisingChannelType": "SEARCH",
+        "name": "Shoes - Search - US",
+        "id": "20001"
+      },
+      "metrics": {
+        "clicks": "1234",
+        "costMicros": "555300000",
+        "impressions": "56789",
+        "ctr": 0.02173,
+        "averageCpc": 450000,
+        "conversions": 15.0
+      },
+      "campaignBudget": {
+        "resourceName": "customers/1112223333/campaignBudgets/30001",
+        "amountMicros": "20000000"
+      }
+    },
+    {
+      "campaign": {
+        "resourceName": "customers/1112223333/campaigns/20002",
+        "status": "PAUSED",
+        "advertisingChannelType": "DISPLAY",
+        "name": "Shoes - Display - Remarketing",
+        "id": "20002"
+      },
+      "metrics": {
+        "clicks": "50",
+        "costMicros": "10000000",
+        "impressions": "10000",
+        "ctr": 0.005,
+        "averageCpc": 200000,
+        "conversions": 0.0
+      },
+      "campaignBudget": {
+        "resourceName": "customers/1112223333/campaignBudgets/30002",
+        "amountMicros": "5000000"
+      }
+    }
+  ],
+  "nextPageToken": "CJ6R2KmCMxIAGAE",
+  "fieldMask": "campaign.id,campaign.name,campaign.status,campaign.advertisingChannelType,campaignBudget.amountMicros,metrics.clicks,metrics.impressions,metrics.ctr,metrics.averageCpc,metrics.costMicros,metrics.conversions",
+  "queryResourceConsumption": "120"
+}

@@ -1,0 +1,32 @@
+{
+  "mutateOperationResponses": [
+    { "adGroupCriterionResult": { "resourceName": "customers/1112223333/adGroupCriteria/40001~60001" } },
+    {}
+  ],
+  "partialFailureError": {
+    "code": 3,
+    "message": "Too long., at mutate_operations[1].ad_group_criterion_operation.create.keyword.text",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.ads.googleads.v26.errors.GoogleAdsFailure",
+        "errors": [
+          {
+            "errorCode": { "stringLengthError": "TOO_LONG" },
+            "message": "Too long.",
+            "trigger": { "stringValue": "an extremely long keyword text that goes on and on well beyond the limit of eighty characters" },
+            "location": {
+              "fieldPathElements": [
+                { "fieldName": "mutate_operations", "index": 1 },
+                { "fieldName": "ad_group_criterion_operation" },
+                { "fieldName": "create" },
+                { "fieldName": "keyword" },
+                { "fieldName": "text" }
+              ]
+            }
+          }
+        ],
+        "requestId": "Xy3kExampleRequest2"
+      }
+    ]
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "read": { "tool": "list_customers", "args": {} },
+  "write": {
+    "tool": "mutate",
+    "args": {
+      "customer_id": "1234567890",
+      "validate_only": true,
+      "operations": [
+        {
+          "campaignBudgetOperation": {
+            "create": { "name": "Connector smoke test {{timestamp}}", "amountMicros": 1000000, "deliveryMethod": "STANDARD", "explicitlyShared": false }
+          }
+        }
+      ]
+    },
+    "note": "Put one of your own account IDs in customer_id first. validate_only: true makes Google Ads check the budget operation and change nothing, so there is nothing to undo."
+  }
+}

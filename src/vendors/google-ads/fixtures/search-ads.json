@@ -1,0 +1,22 @@
+{
+  "results": [
+    {
+      "adGroupAd": {
+        "resourceName": "customers/1112223333/adGroupAds/40001~50001",
+        "ad": {
+          "resourceName": "customers/1112223333/ads/50001",
+          "id": "50001",
+          "finalUrls": ["https://shop.example.com/shoes"],
+          "responsiveSearchAd": {
+            "headlines": [
+              { "text": "Example Store Shoes", "pinnedField": "HEADLINE_1" },
+              { "text": "Free Returns" }
+            ]
+          }
+        },
+        "adStrength": "GOOD"
+      }
+    }
+  ],
+  "fieldMask": "adGroupAd.ad.id,adGroupAd.ad.finalUrls,adGroupAd.ad.responsiveSearchAd.headlines,adGroupAd.adStrength"
+}

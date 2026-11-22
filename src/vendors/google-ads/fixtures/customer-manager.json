@@ -1,0 +1,17 @@
+{
+  "results": [
+    {
+      "customer": {
+        "resourceName": "customers/4445556666",
+        "id": "4445556666",
+        "descriptiveName": "Example Agency MCC",
+        "currencyCode": "USD",
+        "timeZone": "America/New_York",
+        "status": "ENABLED",
+        "manager": true,
+        "testAccount": false
+      }
+    }
+  ],
+  "fieldMask": "customer.id,customer.descriptiveName,customer.manager,customer.status,customer.currencyCode,customer.timeZone,customer.testAccount"
+}

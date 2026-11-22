@@ -1,0 +1,8 @@
+{
+  "mutateOperationResponses": [
+    { "campaignBudgetResult": { "resourceName": "customers/1112223333/campaignBudgets/30003" } },
+    { "campaignResult": { "resourceName": "customers/1112223333/campaigns/20003" } },
+    { "adGroupResult": { "resourceName": "customers/1112223333/adGroups/40003" } },
+    { "adGroupAdResult": { "resourceName": "customers/1112223333/adGroupAds/40003~50003" } }
+  ]
+}
