@@ -11,7 +11,7 @@ Hosts end a tool call after about a minute and drop a late result, so that wait 
 | `access_token` | `TWITTER_ACCESS_TOKEN` | yes |
 | `xusername` | `TWITTER_XUSERNAME` | no |
 
-**`access_token`**: an OAuth 2.0 user access token of the account, from your own X app. A host that connects X for you runs this sign-in and refreshes the token (it lasts 2 hours); the connector never refreshes or stores it. To get one yourself:
+**`access_token`**: an OAuth 2.0 user access token of the account, from your own X app. A host that connects X for you runs this sign-in and refreshes the token (it lasts 2 hours); the connector never refreshes or stores it. That sign-in must ask for `media.write` along with the other scopes: a token granted without it posts text, but every image, GIF and video upload is refused, and a refresh never adds a scope, so the account has to sign in again once the scope is asked for. To get one yourself:
 
 1. Open the [X Developer Portal → Projects & Apps](https://developer.x.com/en/portal/projects-and-apps) and select your app (or create one).
 2. Under **User authentication settings**, turn on **OAuth 2.0**, choose **Web App**, and add your callback URL.
