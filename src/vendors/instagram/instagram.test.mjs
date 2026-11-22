@@ -429,6 +429,27 @@ test('with Instagram Login, a connection an older setup kept (id and username as
   }
 });
 
+test('with Instagram Login, a connection moved over with its token and chosen account but no account id still publishes; the older accountId is accountid here', async () => {
+  const { module, fetch, ctx } = setup(router({
+    [`POST https://graph.instagram.com/v26.0/${LOGIN_IG}/media`]: f('container-create.json'),
+    [`GET https://graph.instagram.com/v26.0/${CONTAINER}`]: f('container-finished.json'),
+    [`POST https://graph.instagram.com/v26.0/${LOGIN_IG}/media_publish`]: f('media-publish.json'),
+    'GET https://graph.instagram.com/v26.0/17900000000000001': f('media-details.json'),
+  }), { credentials: { access_token: LOGIN_TOKEN }, accounts: { accounts: [LOGIN_IG] } });
+  // The id and the username are optional; the picker's legacy field and the credential are the older field name in lowercase.
+  assert.deepEqual(JSON.parse(JSON.stringify(module.requiredCredentials)), [['access_token'], ['systemusertoken']]);
+  assert.equal(module.credentials.includes('accountid'), true);
+  assert.equal(module.accountPickers[0].legacyField, 'accountid');
+
+  const published = await callTool(module, 'publish_image', { image_url: 'https://cdn.example.com/loaf.jpg' }, ctx);
+  assert.equal(published.isError, false);
+  assert.equal(published.payload.account_id, LOGIN_IG);
+  for (const call of fetch.calls) {
+    assert.equal(call.origin, 'https://graph.instagram.com');
+    assert.equal(call.headers.authorization, `Bearer ${LOGIN_TOKEN}`);
+  }
+});
+
 test('a system user token comes first: a token passed next to it is never used, and calls go through the linked Pages', async () => {
   const STRAY = 'EAAPageTokenKeptBefore0009';
   const STUDIO = '17841400000000003';
