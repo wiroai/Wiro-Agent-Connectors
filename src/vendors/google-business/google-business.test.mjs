@@ -46,7 +46,7 @@ test('list_accounts lists the Business Profile accounts and is the accounts pick
   assert.deepEqual({ ...picker }, {
     key: 'accounts',
     label: 'Business Profile accounts',
-    description: 'The accounts (your own, or a business group) whose locations the agent may work on.',
+    description: 'The Business Profile accounts (your own, or a business group) the agent may read. It works only on the locations you choose.',
     multiple: true,
     tool: 'list_accounts',
     idField: 'id',
@@ -102,18 +102,52 @@ test('list_locations goes through every account page by page, skipping accounts 
   assert.equal(second.payload.nextCursor, undefined);
 });
 
-test('with a choice, list_locations reads only the chosen accounts and shows only the chosen locations', async () => {
+test('with a choice, list_locations shows only the chosen locations and stops once it has shown them all', async () => {
   const { module, fetch, ctx } = setup(business());
   const { payload } = await callTool(module, 'list_locations', {}, ctx);
-  assert.deepEqual(fetch.calls.map((call) => call.path), ['/v1/accounts/111/locations']);
-  assert.deepEqual(payload.locations.map((item) => item.id), ['9001']);
-  const refused = await callTool(module, 'list_locations', { account_id: '222' }, ctx);
-  assert.match(refused.payload.error, /The account 222 is not among the accounts chosen for this connection/);
+  assert.deepEqual(fetch.calls.map((call) => call.path), ['/v1/accounts', '/v1/accounts/111/locations']);
+  assert.deepEqual(payload.locations.map((item) => [item.id, item.account_id]), [['9001', '111']]);
+  assert.equal(payload.nextCursor, undefined, 'every chosen location was shown');
+
+  // One account, chosen or not: still only the chosen locations.
+  const other = await callTool(module, 'list_locations', { account_id: '333' }, ctx);
+  assert.equal(other.isError, false, other.payload.error);
+  assert.deepEqual(other.payload.locations, []);
+
   const none = setup(business(), {});
   const empty = await callTool(none.module, 'list_locations', {}, none.ctx);
   assert.deepEqual(empty.payload.locations, []);
-  assert.match(empty.payload.note, /No Business Profile account is chosen/);
+  assert.match(empty.payload.note, /No location is chosen/);
   assert.equal(none.fetch.calls.length, 0);
+});
+
+test('locations chosen without their accounts are found in every account and work with the review tools', async () => {
+  // Locations only, or a location in a business group that was not chosen: the location choice is the lock.
+  for (const accounts of [{ locations: ['9101'] }, { accounts: ['111'], locations: ['9001', '9101'] }]) {
+    const { module, fetch, ctx } = setup(business({
+      [`GET ${REVIEWS}/v4/accounts/333/locations/9101/reviews`]: () => jsonResponse(200, fx('reviews.json')),
+    }), accounts);
+    let cursor;
+    const found = [];
+    for (let round = 0; round < 5; round++) {
+      const { payload, isError } = await callTool(module, 'list_locations', cursor ? { cursor } : {}, ctx);
+      assert.equal(isError, false, payload.error);
+      found.push(...payload.locations.map((item) => [item.id, item.account_id]));
+      cursor = payload.nextCursor;
+      if (!cursor) break;
+    }
+    assert.deepEqual(found.filter(([id]) => id === '9101'), [['9101', '333']]);
+    assert.ok(found.every(([id]) => accounts.locations.includes(id)));
+
+    const reviews = await callTool(module, 'list_reviews', { location_id: '9101', account_id: '333' }, ctx);
+    assert.equal(reviews.isError, false, reviews.payload.error);
+    assert.equal(fetch.calls.at(-1).path, '/v4/accounts/333/locations/9101/reviews');
+  }
+  const only = setup(business(), { locations: ['9001'] });
+  const missing = await callTool(only.module, 'get_review', { location_id: '9001', review_id: REVIEW }, only.ctx);
+  assert.match(missing.payload.error, /Give account_id: the location's account id, from list_locations/);
+  const given = await callTool(only.module, 'get_review', { location_id: '9001', account_id: '111', review_id: REVIEW }, only.ctx);
+  assert.equal(given.isError, false, given.payload.error);
 });
 
 test('list_reviews reads newest edits first and trims each review, translation and reply state included', async () => {
@@ -166,12 +200,12 @@ test('since keeps newer reviews and stops paging at it; only_unanswered drops an
   assert.equal(fetch.calls.length, 2);
 });
 
-test('a location or account outside the choice is refused before any request; the account must be known', async () => {
+test('a location outside the choice is refused before any request; the account must be known', async () => {
   const { module, fetch, ctx } = setup(business());
   const location = await callTool(module, 'list_reviews', { location_id: '9002' }, ctx);
   assert.match(location.payload.error, /The location 9002 is not among the locations chosen for this connection\. Use one of: 9001\. Nothing was sent\./);
-  const account = await callTool(module, 'reply_to_review', { location_id: '9001', account_id: '222', review_id: REVIEW, comment: 'Thanks' }, ctx);
-  assert.match(account.payload.error, /The account 222 is not among the accounts chosen/);
+  const elsewhere = await callTool(module, 'reply_to_review', { location_id: '9002', account_id: '111', review_id: REVIEW, comment: 'Thanks' }, ctx);
+  assert.match(elsewhere.payload.error, /The location 9002 is not among the locations chosen/);
   assert.equal(fetch.calls.length, 0);
 
   const open = setup(business(), null);
@@ -264,22 +298,90 @@ test('api_get and api_request reach the other APIs, only for chosen accounts and
   assert.equal(fetch.calls[2].origin, REVIEWS);
   const categories = await callTool(module, 'api_get', { origin: INFO, path: '/v1/categories', query: { regionCode: 'TR', languageCode: 'tr', view: 'BASIC' } }, ctx);
   assert.equal(categories.isError, false, 'reference data needs no account');
+  const account = await callTool(module, 'api_get', { origin: ACCOUNTS, path: '/v1/accounts/111' }, ctx);
+  assert.equal(account.isError, false, 'an account-wide read of a chosen account');
+  assert.equal(fetch.calls.length, 5);
 
   const otherLocation = await callTool(module, 'api_request', { method: 'PATCH', origin: INFO, path: '/v1/locations/9002', query: { updateMask: 'title' }, json: { title: 'x' } }, ctx);
   assert.match(otherLocation.payload.error, /The location 9002 is not among the locations chosen/);
   const nothing = await callTool(module, 'api_get', { origin: ACCOUNTS, path: '/v1/accounts' }, ctx);
   assert.match(nothing.payload.error, /names none of the accounts or locations chosen/);
-  const batch = await callTool(module, 'api_request', { method: 'POST', path: '/v4/accounts/111/locations:batchGetReviews', json: { locationNames: ['accounts/111/locations/9002'] } }, ctx);
-  assert.match(batch.payload.error, /The location 9002 is not among the locations chosen/);
+  const otherAccount = await callTool(module, 'api_get', { origin: ACCOUNTS, path: '/v1/accounts/222' }, ctx);
+  assert.match(otherAccount.payload.error, /The account 222 is not among the accounts chosen/);
+  const allLocations = await callTool(module, 'api_get', { origin: INFO, path: '/v1/accounts/111/locations' }, ctx);
+  assert.match(allLocations.payload.error, /listed with list_locations/);
+  const accountWrite = await callTool(module, 'api_request', { method: 'POST', origin: INFO, path: '/v1/accounts/111/locations', json: { title: 'New place' } }, ctx);
+  assert.match(accountWrite.payload.error, /a change must name a chosen location/);
+  const wildcard = await callTool(module, 'api_get', { path: '/v4/accounts/111/locations/-/reviews' }, ctx);
+  assert.match(wildcard.payload.error, /numeric ids/);
   const wrongBase = await callTool(module, 'api_get', { origin: INFO, path: '/v4/accounts/111' }, ctx);
   assert.match(wrongBase.payload.error, /start with \/v1\//);
-  assert.equal(fetch.calls.length, 4);
+  assert.equal(fetch.calls.length, 5);
 
   const broken = setup(() => jsonResponse(500, { error: { message: 'internal' } }));
   const unknown = await callTool(broken.module, 'api_request', { method: 'POST', path: '/v4/accounts/111/locations/9001/localPosts', json: { summary: 'Open late on Friday' } }, broken.ctx);
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(broken.fetch.calls.length, 1);
+});
+
+test('locationNames in a body are checked however they are sent: as json, as text, or under their field name', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, { locationReviews: [] }));
+  const path = '/v4/accounts/111/locations:batchGetReviews';
+  const other = ['accounts/111/locations/9002'];
+  for (const args of [
+    { path, json: { locationNames: other } },
+    { path, json: { location_names: other } },
+    { path, json: { locationNames: ['accounts/111/locations/9001'], location_names: other } },
+    { path, json: { locationNames: other }, content_type: 'application/json' },
+    // As text, on a path that names a chosen location: the body is read before it is sent.
+    { path: '/v4/accounts/111/locations/9001/localPosts', body: JSON.stringify({ locationNames: other }), content_type: 'application/json' },
+    { path: '/v4/accounts/111/locations/9001/localPosts', body: JSON.stringify({ location_names: other }), content_type: 'application/json; charset=utf-8' },
+  ]) {
+    const { payload } = await callTool(module, 'api_request', { method: 'POST', ...args }, ctx);
+    assert.match(payload.error, /The location 9002 is not among the locations chosen/, JSON.stringify(args));
+  }
+  // As text on the account path, the request names no chosen location the guard can see: refused as well.
+  for (const key of ['locationNames', 'location_names']) {
+    const { payload } = await callTool(module, 'api_request', { method: 'POST', path, body: JSON.stringify({ [key]: other }), content_type: 'application/json' }, ctx);
+    assert.match(payload.error, /Nothing was sent\./);
+  }
+  const malformed = await callTool(module, 'api_request', { method: 'POST', path, json: { locationNames: ['locations/9002'] } }, ctx);
+  assert.match(malformed.payload.error, /must list names such as accounts\/111\/locations\/9001/);
+  const notAList = await callTool(module, 'api_request', { method: 'POST', path, json: { location_names: 'accounts/111/locations/9002' } }, ctx);
+  assert.match(notAList.payload.error, /must be a list of names/);
+  const notJson = await callTool(module, 'api_request', { method: 'POST', path: '/v4/accounts/111/locations/9001/localPosts', body: 'summary=hello', content_type: 'application/x-www-form-urlencoded' }, ctx);
+  assert.match(notJson.payload.error, /take a JSON body/);
+  // A raw body naming a chosen location on a location path: what is sent is the JSON that was read.
+  const raw = await callTool(module, 'api_request', { method: 'POST', path: '/v4/accounts/111/locations/9001/localPosts', body: '{"summary": "Open late",\n "summary": "Open late on Friday"}', content_type: 'application/json' }, ctx);
+  assert.equal(raw.isError, false, raw.payload.error);
+  assert.equal(fetch.calls.length, 1);
+  assert.equal(new TextDecoder().decode(fetch.calls[0].body), '{"summary":"Open late on Friday"}');
+  const chosen = await callTool(module, 'api_request', { method: 'POST', path, json: { locationNames: ['accounts/111/locations/9001'] } }, ctx);
+  assert.equal(chosen.isError, false, chosen.payload.error);
+  assert.equal(fetch.calls.length, 2);
+});
+
+test('admins, invitations, transfers and notification settings are never changed, with or without a choice', async () => {
+  for (const accounts of [LOCKED, null]) {
+    const { module, fetch, ctx } = setup(() => jsonResponse(200, {}), accounts);
+    for (const args of [
+      { method: 'POST', origin: ACCOUNTS, path: '/v1/accounts/111/admins', json: { admin: 'someone@example.com', role: 'OWNER' } },
+      { method: 'POST', origin: ACCOUNTS, path: '/v1/locations/9001/admins', json: { admin: 'someone@example.com', role: 'OWNER' } },
+      { method: 'PATCH', path: '/v4/accounts/111/admins/abc', json: { role: 'MANAGER' } },
+      { method: 'DELETE', path: '/v4/accounts/111/locations/9001/admins/abc' },
+      { method: 'POST', origin: ACCOUNTS, path: '/v1/locations/9001:transfer', json: { destinationAccount: 'accounts/999' } },
+      { method: 'POST', path: '/v4/accounts/111/locations/9001:transfer', json: { toAccount: 'accounts/999' } },
+      { method: 'POST', origin: ACCOUNTS, path: '/v1/accounts/111/invitations/xyz:accept' },
+      { method: 'PUT', path: '/v4/accounts/111/notifications', json: { topicName: 'projects/p/topics/t' } },
+    ]) {
+      const { payload } = await callTool(module, 'api_request', args, ctx);
+      assert.match(payload.error, /are not made here: make them in Business Profile Manager\. Nothing was sent\./, `${args.method} ${args.path}`);
+    }
+    const admins = await callTool(module, 'api_get', { origin: ACCOUNTS, path: '/v1/accounts/111/admins' }, ctx);
+    assert.equal(admins.isError, false, 'reading the admins changes nothing');
+    assert.equal(fetch.calls.length, 1);
+  }
 });
 
 test('log lines carry no token and no review text', async () => {

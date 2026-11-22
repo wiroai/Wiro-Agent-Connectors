@@ -32,10 +32,10 @@ Open the Google account's [third-party connections](https://myaccount.google.com
 
 | Key | What is chosen | Listed by |
 | --- | --- | --- |
-| `accounts` | The Business Profile accounts (your own, or a business group) whose locations the agent may work on | `list_accounts` |
+| `accounts` | The Business Profile accounts (your own, or a business group) the agent may read account-wide; with exactly one chosen, review tools use it when no account id is given | `list_accounts` |
 | `locations` | The locations whose reviews the agent may read and answer | `list_locations` |
 
-With a choice in place (`CONNECTOR_ACCOUNTS={"accounts":["111"],"locations":["9001"]}` in the CLI), the review tools need a chosen location of a chosen account, `account_id` may be left out when one account is chosen, and the generic tools only reach paths that name a chosen account or location (or the shared category, attribute and chain lists). Without a choice, review tools take `account_id` with `location_id`; `list_locations` gives both.
+The two are chosen separately, and the location choice is the lock. With a choice in place (`CONNECTOR_ACCOUNTS={"accounts":["111"],"locations":["9001"]}` in the CLI), review tools and the generic tools work only on chosen locations, whichever account holds them, and `list_locations` shows only those (it goes through every account to find them). `account_id` may be left out when exactly one account is chosen and it holds the location; otherwise `list_locations` gives it. In the generic tools, a change always names a chosen location (a `locations/ID` path, or `locationNames`), an account-wide read (such as `/v1/accounts/111`) needs a chosen account, an account's location list is read with `list_locations`, and the shared category, attribute and chain lists need neither. Without a choice, review tools take `account_id` with `location_id`; `list_locations` gives both.
 
 ## Tools
 
@@ -48,7 +48,7 @@ With a choice in place (`CONNECTOR_ACCOUNTS={"accounts":["111"],"locations":["90
 | `reply_to_review` | update | Posts or replaces the owner's reply, up to 4,096 bytes. Google checks it before showing it. |
 | `delete_review_reply` | delete | Deletes the owner's reply; the review stays. |
 | `api_get` | read | Any other GET on the Business Profile APIs, such as a location's details, local posts or daily metrics. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE on those APIs, such as a local post. Sent once, never retried. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE on those APIs, such as a local post. Admins, invitations, transfers and notification settings are never changed. Sent once, never retried. |
 
 ## Limits
 
@@ -56,4 +56,5 @@ With a choice in place (`CONNECTOR_ACCOUNTS={"accounts":["111"],"locations":["90
 - Replies are at most 4,096 bytes (letters such as ç or é count as two). Google moderates them: `get_review` shows `pending`, `approved` or `rejected` with the policy problem. The API cannot report a review or reply to it as anyone but the owner.
 - Google's terms allow keeping review content for at most 30 days, and ask for the business's consent before replies are posted automatically.
 - `list_reviews` reads 50 reviews per call; `since` stops at older ones. Every result stays under 32 KB, with a cursor for more.
+- Changes to who manages an account or a location (admins, invitations, transfers) and to where its notifications go are never sent: make them in Business Profile Manager. A body given as text (`body`) must be JSON.
 - Nothing is retried: a reply or deletion with an unclear outcome comes back as unknown, with `get_review` to check.
