@@ -229,20 +229,33 @@ test('Neue Post Format content goes as given, after checks for alt text and Tumb
 
 test('update_post reads the post, keeps what is not given, and sends it back whole with the new state', async () => {
   const path = `/v2/blog/${ACME}/posts/1234567891234999`;
+  const published = { id_string: '1234567891235555', state: 'published', post_url: 'https://www.tumblr.com/acme/1234567891235555/winter-series', content: [] };
   const { module, fetch, ctx } = setup({
     [`GET ${path}`]: () => jsonResponse(200, fixture(import.meta.url, 'post-npf.json')),
-    [`PUT ${path}`]: () => jsonResponse(200, fixture(import.meta.url, 'edited.json')),
+    // Tumblr gives a draft a new id when it publishes it.
+    [`PUT ${path}`]: (request) => jsonResponse(200, request.json.state === 'published' ? fixture(import.meta.url, 'edited.json') : { meta: { status: 200, msg: 'OK' }, response: { id: '1234567891234999' } }),
+    [`GET /v2/blog/${ACME}/posts`]: (request) => jsonResponse(200, { meta: { status: 200 }, response: { posts: request.query.id === published.id_string ? [published] : [] } }),
   });
   const { payload, isError } = await callTool(module, 'update_post', { post_id: '1234567891234999', state: 'published' }, ctx);
   assert.equal(isError, false, payload.error);
-  const [read, put] = fetch.calls;
+  const [read, put, link] = fetch.calls;
   assert.deepEqual(read.query, { post_format: 'npf' });
   const draft = fixture(import.meta.url, 'post-npf.json').response;
   assert.deepEqual(put.json, { content: draft.content, layout: draft.layout, state: 'published', tags: 'prints,winter' });
-  assert.deepEqual(payload, { id: '1234567891234999', blog: ACME, state: 'published', tags: ['prints', 'winter'], content_blocks: 2 });
+  assert.deepEqual(link.query, { id: '1234567891235555', npf: 'true' }, 'the link is read by the new id');
+  assert.deepEqual(payload, {
+    id: '1234567891235555',
+    previous_id: '1234567891234999',
+    blog: ACME,
+    state: 'published',
+    tags: ['prints', 'winter'],
+    content_blocks: 2,
+    post_url: 'https://www.tumblr.com/acme/1234567891235555/winter-series',
+  });
 
-  await callTool(module, 'update_post', { post_id: '1234567891234999', text: 'New words', tags: ['new'] }, ctx);
+  const edited = await callTool(module, 'update_post', { post_id: '1234567891234999', text: 'New words', tags: ['new'] }, ctx);
   assert.deepEqual(callsTo(fetch, 'PUT', path)[1].json, { content: [{ type: 'text', text: 'New words' }], layout: [], state: 'draft', tags: 'new' });
+  assert.deepEqual(edited.payload, { id: '1234567891234999', blog: ACME, state: 'draft', tags: ['new'], content_blocks: 1 }, 'a draft keeps its id and needs no link');
 
   const nothing = await callTool(module, 'update_post', { post_id: '1234567891234999' }, ctx);
   assert.match(nothing.payload.error, /Nothing to change/);
@@ -258,17 +271,24 @@ test('update_post keeps a queued post\'s time, never guesses a missing state, an
   await callTool(module, 'update_post', { post_id: '5', tags: ['friday'] }, ctx);
   assert.deepEqual(callsTo(fetch, 'PUT', path)[0].json, { content: [{ type: 'text', text: 'Q' }], layout: [], state: 'queue', publish_on: '2026-12-05T10:00:00Z', tags: 'friday' });
 
+  // A post waiting in the queue has only its next slot: sending that time would pin it there, out of the queue's order.
+  post = { state: 'queued', queued_state: 'queued', scheduled_publish_time: 1796119200, tags: [], content: [{ type: 'text', text: 'Q' }], layout: [] };
+  const queued = await callTool(module, 'update_post', { post_id: '5', tags: ['saturday'] }, ctx);
+  assert.equal(queued.isError, false, queued.payload.error);
+  assert.deepEqual(callsTo(fetch, 'PUT', path)[1].json, { content: [{ type: 'text', text: 'Q' }], layout: [], state: 'queue', tags: 'saturday' });
+  assert.equal(queued.payload.publish_on, undefined);
+
   post = { content: [{ type: 'text', text: 'x' }] };
   const unknown = await callTool(module, 'update_post', { post_id: '5', tags: ['x'] }, ctx);
   assert.match(unknown.payload.error, /Tumblr did not say which state the post is in: give state/);
   const withState = await callTool(module, 'update_post', { post_id: '5', state: 'draft' }, ctx);
   assert.equal(withState.isError, false, withState.payload.error);
-  assert.equal('tags' in callsTo(fetch, 'PUT', path)[1].json, false, 'tags Tumblr did not send are not cleared');
+  assert.equal('tags' in callsTo(fetch, 'PUT', path)[2].json, false, 'tags Tumblr did not send are not cleared');
 
   post = { state: 'published', body: '<p>legacy</p>' };
   const legacy = await callTool(module, 'update_post', { post_id: '5', state: 'draft' }, ctx);
   assert.match(legacy.payload.error, /not in the Neue Post Format/);
-  assert.equal(callsTo(fetch, 'PUT', path).length, 2);
+  assert.equal(callsTo(fetch, 'PUT', path).length, 3);
 });
 
 test('get_post returns the blocks to edit; delete_post deletes once with a form body', async () => {
@@ -282,6 +302,9 @@ test('get_post returns the blocks to edit; delete_post deletes once with a form 
   assert.deepEqual(read.payload.tags, ['prints', 'winter']);
   assert.equal(read.payload.content.length, 2);
   assert.equal(read.payload.layout.length, 1);
+  assert.equal(read.payload.blocks_total, 2);
+  assert.equal(read.payload.blocks_from, 0);
+  assert.equal(read.payload.nextCursor, undefined);
 
   const deleted = await callTool(module, 'delete_post', { post_id: '1234567891234999' }, ctx);
   assert.deepEqual(deleted.payload, { deleted: true, id: '1234567891234999', blog: ACME });
@@ -290,23 +313,27 @@ test('get_post returns the blocks to edit; delete_post deletes once with a form 
   assert.equal(new TextDecoder().decode(sent.body), 'id=1234567891234999');
 });
 
-test('writes without a clear answer are unknown and sent once; Tumblr\'s refusals get plain sentences', async () => {
-  for (const [tool, args, route] of [
-    ['create_post', { text: 'x' }, `POST /v2/blog/${ACME}/posts`],
-    ['delete_post', { post_id: '9' }, `POST /v2/blog/${ACME}/post/delete`],
+test('writes without a clear answer are unknown and sent once, each naming the read that shows it; Tumblr\'s refusals get plain sentences', async () => {
+  for (const [tool, args, route, check, hint] of [
+    ['create_post', { text: 'x' }, `POST /v2/blog/${ACME}/posts`, 'list_posts', /It was sent as a draft: list_posts shows it with state "draft" and the same blog_id\. Call list_posts to see whether it was, before trying again\./],
+    ['create_post', { text: 'x', state: 'queue' }, `POST /v2/blog/${ACME}/posts`, 'list_posts', /It was sent to the queue: list_posts shows it with state "queue"/],
+    ['create_post', { text: 'x', state: 'published' }, `POST /v2/blog/${ACME}/posts`, 'list_posts', /list_posts shows the blog's published posts/],
+    ['create_post', { text: 'x', state: 'private' }, `POST /v2/blog/${ACME}/posts`, 'list_posts', /a private post, which list_posts may not show/],
+    ['delete_post', { post_id: '9' }, `POST /v2/blog/${ACME}/post/delete`, 'get_post', /Once the post is deleted, get_post finds no such post \(HTTP 404\)\. Call get_post/],
   ]) {
     const { module, fetch, ctx } = setup({ [route]: () => jsonResponse(503, { meta: { status: 503, msg: 'Service Unavailable' } }) });
     const { payload } = await callTool(module, tool, args, ctx);
     assert.equal(payload.outcome, 'unknown');
-    assert.equal(payload.check, 'list_posts');
+    assert.equal(payload.check, check);
+    assert.match(payload.error, hint);
     assert.equal(fetch.calls.length, 1);
   }
   const denied = setup({ 'GET /v2/user/info': () => jsonResponse(401, fixture(import.meta.url, 'error-401.json')) }, null);
   const auth = await callTool(denied.module, 'list_blogs', {}, denied.ctx);
-  assert.match(auth.payload.error, /Tumblr rejected the credentials \(HTTP 401\)\. Check that the Tumblr access token is correct and still active\./);
-  const forbidden = setup({ [`POST /v2/blog/${ACME}/posts`]: () => jsonResponse(403, { meta: { status: 403, msg: 'Forbidden' } }) });
+  assert.match(auth.payload.error, /Tumblr rejected the credentials \(HTTP 401\)(: Unable to authorize)?\. Check that the Tumblr access token is correct and still active\./);
+  const forbidden = setup({ [`POST /v2/blog/${ACME}/posts`]: () => jsonResponse(403, { meta: { status: 403, msg: 'Forbidden' }, errors: [{ title: 'Forbidden', code: 8023, detail: 'Daily posting limit reached' }] }) });
   const refused = await callTool(forbidden.module, 'create_post', { text: 'x' }, forbidden.ctx);
-  assert.match(refused.payload.error, /this account may not post to this blog .*\(HTTP 403\)\. Nothing was changed\./);
+  assert.match(refused.payload.error, /the account may not use this blog .*, or a Tumblr limit was reached: 250 posts or 250 image uploads a day, or a full queue of 1,000 posts \(HTTP 403\)\. .*Nothing was changed\./);
   const limited = setup({ [`GET /v2/blog/${ACME}/posts`]: () => jsonResponse(429, { meta: { status: 429, msg: 'Limit Exceeded' } }, { 'retry-after': '120' }) });
   const rate = await callTool(limited.module, 'list_posts', {}, limited.ctx);
   assert.equal(rate.payload.retryAfter, 120);
@@ -349,4 +376,117 @@ test('logs carry no token and no content', async () => {
   assert.equal(all.includes(TOKEN), false);
   assert.equal(all.includes('Secret launch'), false);
   assert.ok(logs.every((line) => /^tumblr create_post POST \d{3} \d+ms$/.test(line)), all);
+});
+
+test('get_post pages a long post by block and never cuts one; its cursor stays with its post', async () => {
+  const path = `/v2/blog/${ACME}/posts/1234567891234999`;
+  const blocks = Array.from({ length: 30 }, (_, index) => ({ type: 'text', text: `${index}: ${'w'.repeat(1500)}` }));
+  const { module, fetch, ctx } = setup({
+    [`GET ${path}`]: () => jsonResponse(200, { meta: { status: 200 }, response: { id_string: '1234567891234999', state: 'published', tags: ['long'], content: blocks, layout: [] } }),
+  });
+  const first = await callTool(module, 'get_post', { post_id: '1234567891234999' }, ctx);
+  assert.equal(first.isError, false, first.payload.error);
+  assert.ok(textBytes(first.result) <= 32 * 1024);
+  assert.equal(first.payload.blocks_total, 30);
+  assert.equal(first.payload.blocks_from, 0);
+  assert.deepEqual(first.payload.tags, ['long']);
+  const shown = first.payload.content.length;
+  assert.ok(shown > 0 && shown < 30, `${shown} blocks on the first page`);
+  assert.deepEqual(first.payload.content, blocks.slice(0, shown), 'each block comes whole');
+
+  const all = [...first.payload.content];
+  let cursor = first.payload.nextCursor;
+  while (cursor) {
+    const next = await callTool(module, 'get_post', { post_id: '1234567891234999', cursor }, ctx);
+    assert.equal(next.isError, false, next.payload.error);
+    assert.equal(next.payload.blocks_from, all.length);
+    all.push(...next.payload.content);
+    cursor = next.payload.nextCursor;
+  }
+  assert.deepEqual(all, blocks, 'every block, once, in order');
+
+  const before = fetch.calls.length;
+  const other = await callTool(module, 'get_post', { post_id: '5', cursor: first.payload.nextCursor }, ctx);
+  assert.match(other.payload.error, /The cursor belongs to another post/);
+  assert.equal(fetch.calls.length, before, 'nothing was sent');
+});
+
+test('update_post: content must keep the post\'s number of blocks unless replace_all; replace_blocks changes single blocks and keeps the layout', async () => {
+  const path = `/v2/blog/${ACME}/posts/1234567891234999`;
+  const { module, fetch, ctx } = setup({
+    [`GET ${path}`]: () => jsonResponse(200, fixture(import.meta.url, 'post-npf.json')),
+    [`PUT ${path}`]: () => jsonResponse(200, { meta: { status: 200, msg: 'OK' }, response: { id: '1234567891234999' } }),
+  });
+  const draft = fixture(import.meta.url, 'post-npf.json').response;
+  const puts = () => callsTo(fetch, 'PUT', path);
+
+  const partial = await callTool(module, 'update_post', { post_id: '1234567891234999', content: [draft.content[0]] }, ctx);
+  assert.match(partial.payload.error, /The post has 2 blocks and content has 1: content replaces the whole post\. To change single blocks, use replace_blocks; to replace the post with exactly these blocks, add replace_all: true\. Nothing was changed\./);
+  assert.equal(puts().length, 0);
+
+  const replaced = await callTool(module, 'update_post', { post_id: '1234567891234999', content: [{ type: 'text', text: 'Only this' }], replace_all: true }, ctx);
+  assert.equal(replaced.isError, false, replaced.payload.error);
+  assert.deepEqual(puts()[0].json.content, [{ type: 'text', text: 'Only this' }]);
+  assert.deepEqual(puts()[0].json.layout, [], 'a layout for the old blocks goes');
+
+  const fixed = await callTool(module, 'update_post', { post_id: '1234567891234999', content: [{ type: 'text', text: 'Fixed words' }, draft.content[1]] }, ctx);
+  assert.equal(fixed.isError, false, fixed.payload.error);
+  assert.deepEqual(puts()[1].json.layout, draft.layout, 'blocks in the same places keep the layout');
+
+  const one = await callTool(module, 'update_post', { post_id: '1234567891234999', replace_blocks: [{ index: 0, block: { type: 'text', text: 'Winter series, now with dates' } }] }, ctx);
+  assert.equal(one.isError, false, one.payload.error);
+  assert.deepEqual(puts()[2].json, {
+    content: [{ type: 'text', text: 'Winter series, now with dates' }, draft.content[1]],
+    layout: draft.layout,
+    state: 'draft',
+    tags: 'prints,winter',
+  });
+  assert.equal(one.payload.content_blocks, 2);
+
+  const cases = [
+    [{ replace_blocks: [{ index: 2, block: { type: 'text', text: 'x' } }] }, /replace_blocks names block 2, but the post has 2 blocks, numbered from 0\. Nothing was changed\./],
+    [{ replace_blocks: [{ index: 0, block: { type: 'text', text: 'x' } }, { index: 0, block: { type: 'text', text: 'y' } }] }, /replace_blocks names block 0 twice/],
+    [{ replace_blocks: [{ index: 1, block: { type: 'image', media: [{ url: 'https://cdn.example.com/a.png' }] } }] }, /replace_blocks\[0\]\.block is an image without alt_text/],
+    [{ replace_blocks: [{ index: 0, block: { type: 'text', text: 'x' } }], text: 'y' }, /Give replace_blocks, or new content/],
+    [{ replace_blocks: [{ index: 0, block: { type: 'text', text: 'x' } }], layout: [] }, /layout goes with content/],
+  ];
+  for (const [args, message] of cases) {
+    const { payload, isError } = await callTool(module, 'update_post', { post_id: '1234567891234999', ...args }, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, message);
+  }
+  assert.equal(puts().length, 3);
+});
+
+test('an unclear publish of a draft warns that the published post has a new id', async () => {
+  const path = `/v2/blog/${ACME}/posts/1234567891234999`;
+  const { module, fetch, ctx } = setup({
+    [`GET ${path}`]: () => jsonResponse(200, fixture(import.meta.url, 'post-npf.json')),
+    [`PUT ${path}`]: () => { throw new TypeError('fetch failed'); },
+  });
+  const { payload } = await callTool(module, 'update_post', { post_id: '1234567891234999', state: 'published' }, ctx);
+  assert.equal(payload.outcome, 'unknown');
+  assert.equal(payload.check, 'get_post');
+  assert.match(payload.error, /Tumblr gives a draft or a queued post a new id when it publishes it: if get_post finds no post 1234567891234999, it was most likely published, and list_posts shows it\. Call get_post to see whether it was, before trying again\./);
+  assert.equal(callsTo(fetch, 'PUT', path).length, 1);
+
+  const kept = setup({
+    [`GET ${path}`]: () => jsonResponse(200, fixture(import.meta.url, 'post-npf.json')),
+    [`PUT ${path}`]: () => jsonResponse(502, { meta: { status: 502, msg: 'Bad Gateway' } }),
+  });
+  const edit = await callTool(kept.module, 'update_post', { post_id: '1234567891234999', tags: ['x'] }, kept.ctx);
+  assert.equal(edit.payload.outcome, 'unknown');
+  assert.doesNotMatch(edit.payload.error, /new id/, 'a draft edited as a draft keeps its id');
+});
+
+test('upload_images stops before one post holds more than 50 MB of images', async () => {
+  const big = new Uint8Array(19 * 1024 * 1024);
+  big.set(PNG);
+  const { module, fetch, ctx } = setup({ media: () => bytesResponse(200, big) });
+  const images = [1, 2, 3].map((n) => ({ url: `https://cdn.example.com/${n}.png`, alt_text: `Print ${n}` }));
+  const { payload, isError } = await callTool(module, 'create_post', { images, upload_images: true }, ctx);
+  assert.equal(isError, true);
+  assert.match(payload.error, /The images to upload come to more than 52,428,800 bytes, the most one post uploads here: upload the rest in another post, or leave upload_images out so Tumblr fetches the images by URL\. Nothing was sent\./);
+  assert.equal(fetch.calls.filter((call) => call.origin !== 'https://api.tumblr.com').length, 3, 'it stops at the image that goes over');
+  assert.equal(callsTo(fetch, 'POST', `/v2/blog/${ACME}/posts`).length, 0);
 });

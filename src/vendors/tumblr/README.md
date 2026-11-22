@@ -35,9 +35,9 @@ With blogs chosen, every tool refuses any other blog before sending anything, an
 | --- | --- | --- |
 | `list_blogs` | read | The blogs the account can post to, with their ids, names, titles and addresses. The `blogs` picker's tool. |
 | `list_posts` | read | A blog's published posts (newest first, with link, note count and tags, optionally by tag), its drafts, or its queue with each post's time. |
-| `get_post` | read | One post in the Neue Post Format: state, tags, content blocks and layout. |
+| `get_post` | read | One post in the Neue Post Format: state, tags, a scheduled post's time, layout and content blocks. A long post comes in parts, block by block, with a cursor; no block is ever cut. |
 | `create_post` | create | A post, as a draft by default: text in paragraphs, images with alt text (by URL, or downloaded and uploaded with `upload_images`), a link block, or Neue Post Format content blocks, with tags. `state` publishes it, queues it (at `publish_on` or the blog's queue times) or keeps it private. |
-| `update_post` | update | Publishes, queues or edits a post: reads it first and keeps what is not given, since Tumblr replaces a post whole. A queued post keeps its time; a missing state is never guessed. |
+| `update_post` | update | Publishes, queues or edits a post: reads it first and keeps what is not given, since Tumblr replaces a post whole. `replace_blocks` changes single blocks by their index; `content` replaces them all, and must have as many blocks as the post unless `replace_all` is set. A scheduled post keeps its time and a queued post its place; a missing state is never guessed. Tumblr gives a published draft or queued post a new id: the tool returns it, with the post's link. |
 | `delete_post` | delete | Deletes a post. Tumblr has no trash. |
 | `api_get` | read | Any other GET of the API under `/v2/`, such as a blog's notes or followers. While blogs are chosen, a path must name one of them by its id. |
 | `api_request` | write | A POST, PUT, PATCH or DELETE under `/v2/`, such as shuffling the queue. Sent once, never retried. |
@@ -46,6 +46,8 @@ With blogs chosen, every tool refuses any other blog before sending anything, an
 
 - One account may publish 250 posts a day (reblogs included) and upload 250 images a day; a blog's queue holds up to 1,000 posts. One app may make 1,000 requests an hour and 5,000 a day.
 - A text block (a paragraph) holds up to 4,096 characters; a post up to 30 images (20 MB each, GIFs 10 MB) and 10 link blocks. Every image needs alt text.
+- With `upload_images`, one post downloads and uploads up to 50 MB of images in all; images given by URL are fetched by Tumblr itself.
+- A refusal (HTTP 403) means the account may not use the blog, or a daily limit or the queue's limit was reached; the message names each cause.
 - Tags: no `#` and no commas, up to 140 characters each; Tumblr search reads the first 30.
 - Only posts made in the Neue Post Format (and older text posts) can be edited here; Tumblr answers 400 for other older posts, which are edited on Tumblr.
 - Published posts are read with the access token alone, without the app's consumer key.

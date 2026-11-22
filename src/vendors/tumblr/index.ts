@@ -12,6 +12,7 @@ import {
   apiTools,
   defineConnector,
   formatNumber,
+  OutcomeUnknown,
   requireAccounts,
   ToolFailure,
   truncate,
@@ -23,11 +24,14 @@ import {
 import { imageSize, multipart, sniffImage, type FormPart } from './media.js';
 
 const STATES = ['draft', 'published', 'queue', 'private'] as const;
+type PostState = (typeof STATES)[number];
 const MAX_TEXT_BLOCK = 4096;
 const MAX_IMAGES = 30;
 const MAX_LINKS = 10;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_GIF_BYTES = 10 * 1024 * 1024;
+/** The most one post downloads with upload_images, all its images together. */
+const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const BLOG_ARGUMENT = {
   type: 'string' as const,
   minLength: 1,
@@ -35,10 +39,20 @@ const BLOG_ARGUMENT = {
   description: 'The blog: its id (t:...) from list_blogs, or its name. Optional when exactly one blog is chosen for the connection.',
 };
 const POST_ID = { type: 'string' as const, pattern: '^\\d{1,25}$', description: 'The post id, from list_posts or create_post.' };
+// Tumblr's own reason (its errors[].detail) does not reach these messages, so
+// each names every cause Tumblr documents for its status.
 const ERRORS = {
-  400: 'Tumblr did not accept the request (check the JSON, the content blocks, the image URLs and that publish_on is in the future)',
-  403: 'Tumblr refused: this account may not post to this blog (it may have left a group blog, or the blog was deleted)',
+  400: 'Tumblr did not accept the request: the post\'s JSON, a content block or the layout may not be valid, an image may be in a format or at an address Tumblr cannot use, or publish_on may not be in the future',
+  403: 'Tumblr refused: the account may not use this blog (as when it left a group blog, or the blog was deleted), or a Tumblr limit was reached: 250 posts or 250 image uploads a day, or a full queue of 1,000 posts',
   404: 'Tumblr found no such blog or post',
+};
+
+/** Where a post that may have been made shows, by the state it was sent in. */
+const CREATE_CHECKS: Record<PostState, string> = {
+  draft: 'It was sent as a draft: list_posts shows it with state "draft" and the same blog_id.',
+  queue: 'It was sent to the queue: list_posts shows it with state "queue" and the same blog_id.',
+  published: 'list_posts shows the blog\'s published posts, newest first.',
+  private: 'It was sent as a private post, which list_posts may not show: look on the blog in Tumblr.',
 };
 
 const CONTENT_FIELDS = {
@@ -68,7 +82,7 @@ const CONTENT_FIELDS = {
     description: 'Images after the text, each with alt text, up to 30.',
   },
   link_url: { type: 'string' as const, format: 'uri' as const, maxLength: 2000, description: 'A link block after the images; Tumblr fills its title, text and picture from the page.' },
-  upload_images: { type: 'boolean' as const, default: false, description: 'Download the images and upload them with the post, instead of letting Tumblr fetch them by URL (default false). Use it when Tumblr refuses an image URL.' },
+  upload_images: { type: 'boolean' as const, default: false, description: 'Download the images and upload them with the post (up to 50 MB in all), instead of letting Tumblr fetch them by URL (default false). Use it when Tumblr refuses an image URL.' },
   tags: {
     type: 'array' as const,
     maxItems: 30,
@@ -79,6 +93,29 @@ const CONTENT_FIELDS = {
   publish_on: { type: 'string' as const, maxLength: 40, description: 'With state queue: when it goes out, e.g. 2026-12-01T18:00:00Z. Without it, a queued post goes out on the blog\'s queue times.' },
   slug: { type: 'string' as const, maxLength: 200, pattern: '^[A-Za-z0-9-]+$', description: 'Words for the post\'s address, e.g. new-print-series.' },
   source_url: { type: 'string' as const, format: 'uri' as const, maxLength: 2000, description: 'Where the content comes from, for attribution.' },
+};
+
+const UPDATE_FIELDS = {
+  replace_blocks: {
+    type: 'array' as const,
+    minItems: 1,
+    maxItems: 100,
+    items: {
+      type: 'object' as const,
+      properties: {
+        index: { type: 'integer' as const, minimum: 0, maximum: 9999, description: 'The block\'s place in the post, from 0: get_post\'s blocks_from plus its place in that page\'s content.' },
+        block: { type: 'object' as const, description: 'Its new Neue Post Format block, such as {"type": "text", "text": "..."}.' },
+      },
+      required: ['index', 'block'],
+      additionalProperties: false,
+    },
+    description: 'Changes single blocks by their index and keeps the other blocks and the layout. Instead of content, text, images and link_url.',
+  },
+  replace_all: {
+    type: 'boolean' as const,
+    default: false,
+    description: 'With content: replace the post with exactly these blocks even when there are more or fewer than the post has now (default false).',
+  },
 };
 
 interface ImageArg {
@@ -98,6 +135,14 @@ interface ContentArgs {
   publish_on?: string;
   slug?: string;
   source_url?: string;
+}
+
+interface UpdateArgs extends ContentArgs {
+  blog_id?: string;
+  post_id: string;
+  state?: PostState;
+  replace_blocks?: Array<{ index: number; block: Record<string, unknown> }>;
+  replace_all: boolean;
 }
 
 function compact(value: Record<string, unknown>): Record<string, unknown> {
@@ -164,25 +209,30 @@ function guessType(url: string): string | undefined {
   return ({ jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp' } as Record<string, string>)[extension ?? ''];
 }
 
+/** One Neue Post Format block, checked for what Tumblr refuses and what every image needs; returns its type. */
+function checkBlock(block: Record<string, unknown>, where: string): string {
+  const type = block['type'];
+  if (typeof type !== 'string') throw new ToolFailure(`${where} has no type: each block is like {"type": "text", "text": "..."}. Nothing was sent.`);
+  if (type === 'text') {
+    const text = block['text'];
+    if (typeof text !== 'string') throw new ToolFailure(`${where} is a text block without text. Nothing was sent.`);
+    if (codePoints(text) > MAX_TEXT_BLOCK) {
+      throw new ToolFailure(`${where} has ${formatNumber(codePoints(text))} characters; Tumblr allows ${formatNumber(MAX_TEXT_BLOCK)} per text block: split it. Nothing was sent.`);
+    }
+  } else if (type === 'image') {
+    const alt = block['alt_text'];
+    if (typeof alt !== 'string' || !alt.trim()) throw new ToolFailure(`${where} is an image without alt_text: say what it shows. Nothing was sent.`);
+  }
+  return type;
+}
+
 function checkBlocks(blocks: Array<Record<string, unknown>>): void {
   let images = 0;
   let links = 0;
   blocks.forEach((block, index) => {
-    const type = block['type'];
-    if (typeof type !== 'string') throw new ToolFailure(`content[${index}] has no type: each block is like {"type": "text", "text": "..."}. Nothing was sent.`);
-    if (type === 'text') {
-      const text = block['text'];
-      if (typeof text !== 'string') throw new ToolFailure(`content[${index}] is a text block without text. Nothing was sent.`);
-      if (codePoints(text) > MAX_TEXT_BLOCK) {
-        throw new ToolFailure(`content[${index}] has ${formatNumber(codePoints(text))} characters; Tumblr allows ${formatNumber(MAX_TEXT_BLOCK)} per text block: split it. Nothing was sent.`);
-      }
-    } else if (type === 'image') {
-      images++;
-      const alt = block['alt_text'];
-      if (typeof alt !== 'string' || !alt.trim()) throw new ToolFailure(`content[${index}] is an image without alt_text: say what it shows. Nothing was sent.`);
-    } else if (type === 'link') {
-      links++;
-    }
+    const type = checkBlock(block, `content[${index}]`);
+    if (type === 'image') images++;
+    else if (type === 'link') links++;
   });
   if (images > MAX_IMAGES) throw new ToolFailure(`The post has ${images} images; Tumblr allows ${MAX_IMAGES}. Nothing was sent.`);
   if (links > MAX_LINKS) throw new ToolFailure(`The post has ${links} link blocks; Tumblr allows ${MAX_LINKS}. Nothing was sent.`);
@@ -212,11 +262,20 @@ async function buildContent(h: ToolHelpers, args: ContentArgs): Promise<BuiltCon
     content.push({ type: 'text', text: paragraph });
   });
   const files: FormPart[] = [];
+  let downloaded = 0;
   for (const [index, image] of (args.images ?? []).entries()) {
     let media: Record<string, unknown>;
     if (args.upload_images) {
       const what = (args.images?.length ?? 0) > 1 ? `image ${index + 1}` : 'image';
       const { bytes } = await h.media(image.url, { what, maxBytes: MAX_IMAGE_BYTES, accept: 'image/jpeg,image/png,image/gif,image/webp' });
+      // Every image is held in memory until the post goes out, so one post uploads a bounded amount.
+      downloaded += bytes.length;
+      if (downloaded > MAX_UPLOAD_BYTES) {
+        throw new ToolFailure(
+          `The images to upload come to more than ${formatNumber(MAX_UPLOAD_BYTES)} bytes, the most one post uploads here: upload the rest `
+            + 'in another post, or leave upload_images out so Tumblr fetches the images by URL. Nothing was sent.',
+        );
+      }
       const type = sniffImage(bytes);
       if (!type) throw new ToolFailure(`The ${what} URL did not return a JPEG, PNG, GIF or WebP image. Nothing was sent.`);
       if (type === 'image/gif' && bytes.length > MAX_GIF_BYTES) throw new ToolFailure(`The ${what} is a GIF of ${formatNumber(bytes.length)} bytes; Tumblr takes GIFs up to ${formatNumber(MAX_GIF_BYTES)}. Nothing was sent.`);
@@ -239,6 +298,26 @@ function postBody(body: Record<string, unknown>, files: FormPart[]): Pick<ApiReq
   if (!files.length) return { json: body };
   const form = multipart([{ name: 'json', value: JSON.stringify(body), contentType: 'application/json' }, ...files]);
   return { body: form.body, contentType: form.contentType };
+}
+
+/** A post id from Tumblr's answer: a string of digits, or a number small enough to be exact. */
+function idFrom(value: unknown): string | undefined {
+  if (typeof value === 'string' && /^\d{1,25}$/.test(value)) return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value);
+  return undefined;
+}
+
+/** A published post's link, read back by its id; the post exists either way. */
+async function readLink(h: ToolHelpers, blog: string, id: string, done: string): Promise<Record<string, unknown>> {
+  try {
+    const { data } = await api(h, { path: `/v2/blog/${blogPath(blog)}/posts`, query: { id, npf: true } });
+    const posts: any[] = Array.isArray(data?.response?.posts) ? data.response.posts : [];
+    const post = posts.find((item) => idFrom(item?.id_string) === id || idFrom(item?.id) === id);
+    if (typeof post?.post_url === 'string') return { post_url: post.post_url };
+  } catch (error) {
+    if (!(error instanceof ToolFailure)) throw error;
+  }
+  return { note: `The post was ${done}, but its link could not be read: list_posts shows it.` };
 }
 
 function tagList(tags: unknown): string[] | undefined {
@@ -383,28 +462,48 @@ const connector = defineConnector({
       name: 'get_post',
       kind: 'read',
       title: 'Get a Tumblr post',
-      description: 'Returns one post of a blog in the Neue Post Format: its state, tags, content blocks and layout, and a queued post\'s time. update_post edits it.',
+      description:
+        'Returns one post of a blog in the Neue Post Format: its state, tags, a scheduled post\'s time, its layout and its content '
+        + 'blocks, with blocks_total and blocks_from (the index of the first block returned). A long post comes in parts: pass '
+        + 'nextCursor back as cursor, with the same blog_id and post_id, for the next blocks. update_post edits it, and its '
+        + 'replace_blocks changes single blocks by their index.',
       inputSchema: {
         type: 'object',
         properties: {
           blog_id: BLOG_ARGUMENT,
           post_id: POST_ID,
+          cursor: { type: 'string', description: 'nextCursor from the previous result, for the next blocks of the same post.' },
         },
         required: ['post_id'],
         additionalProperties: false,
       },
-      async run(args: { blog_id?: string; post_id: string }, h) {
+      async run(args: { blog_id?: string; post_id: string; cursor?: string }, h) {
         const blog = await resolveBlog(h, args.blog_id);
+        const state = h.cursor(args.cursor);
+        if (state && (state['i'] !== args.post_id || state['b'] !== blog)) {
+          throw new ToolFailure('The cursor belongs to another post. Pass the same blog_id and post_id as in the previous call, or leave cursor out.');
+        }
+        const start = typeof state?.['o'] === 'number' ? state['o'] : 0;
         const { data } = await api(h, { path: `/v2/blog/${blogPath(blog)}/posts/${args.post_id}`, query: { post_format: 'npf' } });
         const post = data?.response ?? {};
-        return compact({
+        const fields = compact({
           ...trimPost(post),
           blog,
           publish_on: post.publish_on || undefined,
           slug: post.slug || undefined,
           tags: tagList(post.tags) ?? [],
-          content: Array.isArray(post.content) ? post.content : undefined,
           layout: Array.isArray(post.layout) && post.layout.length ? post.layout : undefined,
+        });
+        if (!Array.isArray(post.content)) {
+          return { ...fields, note: 'Tumblr sent this post without Neue Post Format blocks: read and edit it on Tumblr.' };
+        }
+        // Blocks are never cut: a post too long for one result continues at the next block.
+        const blocks: unknown[] = post.content;
+        return h.page({
+          key: 'content',
+          items: blocks.slice(start),
+          extra: { ...fields, blocks_total: blocks.length, blocks_from: start },
+          resumeAt: (index) => h.makeCursor({ b: blog, i: args.post_id, o: start + index }),
         });
       },
     },
@@ -427,7 +526,7 @@ const connector = defineConnector({
         },
         additionalProperties: false,
       },
-      async run(args: ContentArgs & { blog_id?: string; state: (typeof STATES)[number] }, h) {
+      async run(args: ContentArgs & { blog_id?: string; state: PostState }, h) {
         if (args.publish_on !== undefined && args.state !== 'queue') throw new ToolFailure('publish_on goes with state queue. Nothing was sent.');
         const publishOn = args.publish_on !== undefined ? futureTime(args.publish_on) : undefined;
         const blog = await resolveBlog(h, args.blog_id);
@@ -442,19 +541,18 @@ const connector = defineConnector({
           slug: args.slug,
           source_url: args.source_url,
         });
-        const { data } = await api(h, { method: 'POST', path: `/v2/blog/${blogPath(blog)}/posts`, ...postBody(body, built.files), write: true });
-        const id = data?.response?.id !== undefined ? String(data.response.id) : undefined;
+        let data: any;
+        try {
+          ({ data } = await api(h, { method: 'POST', path: `/v2/blog/${blogPath(blog)}/posts`, ...postBody(body, built.files), write: true }));
+        } catch (error) {
+          // list_posts shows published posts unless told the state: name the list this post would be in.
+          if (error instanceof OutcomeUnknown) throw new OutcomeUnknown(`${error.message} ${CREATE_CHECKS[args.state]}`);
+          throw error;
+        }
+        const id = idFrom(data?.response?.id_string) ?? idFrom(data?.response?.id);
         const result: Record<string, unknown> = compact({ id, blog, state: data?.response?.state ?? args.state, publish_on: publishOn });
         if (id && args.state === 'published') {
-          // The link of a published post, read back; the post exists either way.
-          try {
-            const read = await api(h, { path: `/v2/blog/${blogPath(blog)}/posts`, query: { id, npf: true } });
-            const post = Array.isArray(read.data?.response?.posts) ? read.data.response.posts[0] : undefined;
-            if (typeof post?.post_url === 'string') result['post_url'] = post.post_url;
-          } catch (error) {
-            if (!(error instanceof ToolFailure)) throw error;
-            result['note'] = 'The post was created, but its link could not be read: list_posts shows it.';
-          }
+          Object.assign(result, await readLink(h, blog, id, 'created'));
         } else if (id && !blog.startsWith('t:') && (args.state === 'draft' || args.state === 'queue')) {
           result['manage_url'] = `https://www.tumblr.com/blog/${blog}/${args.state === 'draft' ? 'drafts' : 'queue'}`;
         }
@@ -468,9 +566,11 @@ const connector = defineConnector({
       title: 'Edit or publish a Tumblr post',
       description:
         'Changes a post: its state (publish a draft with state published, or queue it with publish_on), its tags, or its content. '
-        + 'Tumblr replaces a post whole, so the tool reads the post first and keeps what is not given; new content replaces all blocks. '
-        + 'A queued post keeps its time unless publish_on is given. Editing a published post changes it live. Older posts not made in '
-        + 'the Neue Post Format must be edited on Tumblr.',
+        + 'Tumblr replaces a post whole, so the tool reads the post first and keeps what is not given. replace_blocks changes single '
+        + 'blocks by their index and keeps the rest and the layout; content (or text, images and link_url) replaces all blocks, and '
+        + 'content must have as many blocks as the post has unless replace_all is true. A scheduled post keeps its time, and a queued '
+        + 'post its place, unless publish_on is given. Tumblr gives a draft or a queued post a new id when it publishes it: use the id '
+        + 'this returns. Editing a published post changes it live. Older posts not made in the Neue Post Format must be edited on Tumblr.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -478,33 +578,68 @@ const connector = defineConnector({
           post_id: POST_ID,
           state: { type: 'string', enum: [...STATES], description: 'The new state: published, draft, queue or private.' },
           ...CONTENT_FIELDS,
+          ...UPDATE_FIELDS,
         },
         required: ['post_id'],
         additionalProperties: false,
       },
-      async run(args: ContentArgs & { blog_id?: string; post_id: string; state?: (typeof STATES)[number] }, h) {
+      async run(args: UpdateArgs, h) {
         const blog = await resolveBlog(h, args.blog_id);
+        if (args.replace_blocks && (args.content || args.text !== undefined || args.images || args.link_url !== undefined)) {
+          throw new ToolFailure('Give replace_blocks, or new content (content, or text, images and link_url), not both. Nothing was changed.');
+        }
+        args.replace_blocks?.forEach((item, index) => checkBlock(item.block, `replace_blocks[${index}].block`));
         const built = await buildContent(h, args);
-        const changes = built || args.state || args.tags || args.publish_on || args.slug || args.source_url;
-        if (!changes) throw new ToolFailure('Nothing to change: give state, tags, publish_on, slug, source_url or new content. Nothing was changed.');
+        const changes = built || args.replace_blocks || args.state || args.tags || args.publish_on || args.slug || args.source_url;
+        if (!changes) throw new ToolFailure('Nothing to change: give state, tags, publish_on, slug, source_url, replace_blocks or new content. Nothing was changed.');
         const path = `/v2/blog/${blogPath(blog)}/posts/${args.post_id}`;
         const { data } = await api(h, { path, query: { post_format: 'npf' } });
         const current = data?.response ?? {};
         if (!Array.isArray(current.content)) {
           throw new ToolFailure('This post is not in the Neue Post Format, so Tumblr does not let it be edited here: edit it on Tumblr. Nothing was changed.');
         }
-        const state = args.state ?? stateFor(current.state);
+        const before = stateFor(current.state);
+        const state = args.state ?? before;
         if (!state || !(STATES as readonly string[]).includes(state)) {
           // Never guess: a draft edited as published would go live.
           throw new ToolFailure('Tumblr did not say which state the post is in: give state (published, draft, queue or private) with the edit. Nothing was changed.');
         }
         if (args.publish_on !== undefined && state !== 'queue') throw new ToolFailure('publish_on goes with state queue. Nothing was changed.');
+        // Only a scheduled post has publish_on. A post waiting in the queue goes back without one, so it keeps its place there.
         const publishOn = args.publish_on !== undefined
           ? futureTime(args.publish_on)
-          : state === 'queue' ? (current.publish_on || (typeof current.scheduled_publish_time === 'number' ? new Date(current.scheduled_publish_time * 1000).toISOString() : undefined)) : undefined;
+          : state === 'queue' && typeof current.publish_on === 'string' && current.publish_on ? current.publish_on : undefined;
+
+        const blocks = current.content as Array<Record<string, unknown>>;
+        const currentLayout: unknown[] = Array.isArray(current.layout) ? current.layout : [];
+        let content = blocks;
+        let layout = currentLayout;
+        if (args.replace_blocks) {
+          content = [...blocks];
+          const seen = new Set<number>();
+          for (const { index, block } of args.replace_blocks) {
+            if (index >= blocks.length) {
+              throw new ToolFailure(`replace_blocks names block ${index}, but the post has ${blocks.length} block${blocks.length === 1 ? '' : 's'}, numbered from 0. Nothing was changed.`);
+            }
+            if (seen.has(index)) throw new ToolFailure(`replace_blocks names block ${index} twice. Nothing was changed.`);
+            seen.add(index);
+            content[index] = block;
+          }
+        } else if (built) {
+          // Blocks sent back from part of a long post would drop the rest of it.
+          if (args.content && !args.replace_all && args.content.length !== blocks.length) {
+            throw new ToolFailure(
+              `The post has ${blocks.length} blocks and content has ${args.content.length}: content replaces the whole post. To change single `
+                + 'blocks, use replace_blocks; to replace the post with exactly these blocks, add replace_all: true. Nothing was changed.',
+            );
+          }
+          content = built.content;
+          // The layout names blocks by index: it stays while the blocks keep their places.
+          layout = args.layout ?? (args.content && args.content.length === blocks.length ? currentLayout : []);
+        }
         const body = compact({
-          content: built ? built.content : current.content,
-          layout: built ? (args.layout ?? []) : (Array.isArray(current.layout) ? current.layout : []),
+          content,
+          layout,
           state,
           publish_on: publishOn,
           // Tags Tumblr did not send back are left out rather than cleared.
@@ -512,14 +647,44 @@ const connector = defineConnector({
           slug: args.slug,
           source_url: args.source_url,
         });
-        await api(h, { method: 'PUT', path, ...postBody(body, built?.files ?? []), write: true, errors: { 400: 'Tumblr did not accept the edit (an older post must be edited on Tumblr; check the blocks and that publish_on is in the future)' } });
-        return compact({ id: args.post_id, blog, state, publish_on: publishOn, tags: typeof body['tags'] === 'string' && body['tags'] ? body['tags'].split(',') : undefined, content_blocks: (body['content'] as unknown[]).length });
+        const publishing = state === 'published' && before !== 'published';
+        let answer: any;
+        try {
+          ({ data: answer } = await api(h, {
+            method: 'PUT',
+            path,
+            ...postBody(body, built?.files ?? []),
+            write: true,
+            errors: { 400: 'Tumblr did not accept the edit: the post may be an older one that must be edited on Tumblr, or a content block, the layout, an image or publish_on may not be valid' },
+          }));
+        } catch (error) {
+          if (error instanceof OutcomeUnknown && publishing) {
+            throw new OutcomeUnknown(
+              `${error.message} Tumblr gives a draft or a queued post a new id when it publishes it: if get_post finds no post ${args.post_id}, `
+                + 'it was most likely published, and list_posts shows it.',
+            );
+          }
+          throw error;
+        }
+        // A published draft or queued post has a new id; the old one finds nothing any more.
+        const id = idFrom(answer?.response?.id_string) ?? idFrom(answer?.response?.id) ?? args.post_id;
+        const result: Record<string, unknown> = compact({
+          id,
+          previous_id: id !== args.post_id ? args.post_id : undefined,
+          blog,
+          state,
+          publish_on: publishOn,
+          tags: typeof body['tags'] === 'string' && body['tags'] ? body['tags'].split(',') : undefined,
+          content_blocks: content.length,
+        });
+        if (state === 'published') Object.assign(result, await readLink(h, blog, id, publishing ? 'published' : 'changed'));
+        return result;
       },
     },
     {
       name: 'delete_post',
       kind: 'delete',
-      check: 'list_posts',
+      check: 'get_post',
       title: 'Delete a Tumblr post',
       description: 'Deletes a post of a blog. Tumblr has no trash: it cannot be restored, and its notes and reblog trail go with it.',
       inputSchema: {
@@ -533,13 +698,18 @@ const connector = defineConnector({
       },
       async run(args: { blog_id?: string; post_id: string }, h) {
         const blog = await resolveBlog(h, args.blog_id);
-        await api(h, {
-          method: 'POST',
-          path: `/v2/blog/${blogPath(blog)}/post/delete`,
-          body: utf8Bytes(`id=${encodeURIComponent(args.post_id)}`),
-          contentType: 'application/x-www-form-urlencoded',
-          write: true,
-        });
+        try {
+          await api(h, {
+            method: 'POST',
+            path: `/v2/blog/${blogPath(blog)}/post/delete`,
+            body: utf8Bytes(`id=${encodeURIComponent(args.post_id)}`),
+            contentType: 'application/x-www-form-urlencoded',
+            write: true,
+          });
+        } catch (error) {
+          if (error instanceof OutcomeUnknown) throw new OutcomeUnknown(`${error.message} Once the post is deleted, get_post finds no such post (HTTP 404).`);
+          throw error;
+        }
         return { deleted: true, id: args.post_id, blog };
       },
     },
