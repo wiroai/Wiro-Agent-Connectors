@@ -1,0 +1,17 @@
+{
+  "id": "8ReelVideoLarge0000000000000000",
+  "name": "reel-summer-1080x1920.mp4",
+  "mimeType": "video/mp4",
+  "size": "734003200",
+  "parents": ["1MMZGoCreativesFolder00000000000"],
+  "createdTime": "2026-04-02T09:30:00.000Z",
+  "modifiedTime": "2026-04-02T09:30:00.000Z",
+  "webViewLink": "https://drive.google.com/file/d/8ReelVideoLarge0000000000000000/view?usp=drivesdk",
+  "webContentLink": "https://drive.google.com/uc?id=8ReelVideoLarge0000000000000000&export=download",
+  "copyRequiresWriterPermission": false,
+  "downloadRestrictions": {
+    "itemDownloadRestriction": { "restrictedForReaders": false, "restrictedForWriters": false },
+    "effectiveDownloadRestrictionWithContext": { "restrictedForReaders": false, "restrictedForWriters": false }
+  },
+  "capabilities": { "canShare": true }
+}
