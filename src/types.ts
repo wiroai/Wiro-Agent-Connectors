@@ -91,6 +91,33 @@ export interface ToolContext {
   log(text: string): void;
 }
 
+/**
+ * An account selection a host offers once a connection is made, e.g. the
+ * Pages an agent may post to. The host runs `tool` with no arguments (and
+ * then with `cursor` set to the result's nextCursor, while there is one),
+ * reads the id and the name of each item in the list it returns at `idField`
+ * and `nameField`, and passes the chosen ids on every call as
+ * ctx.accounts[key]. The module's account lock refuses any other account.
+ */
+export interface AccountPicker {
+  /** The ctx.accounts key, ^[a-z][a-z0-9_]{0,63}$, e.g. "pages". */
+  key: string;
+  /** What is chosen, e.g. "Facebook Pages". */
+  label: string;
+  /** A sentence for the person choosing, e.g. "The Pages the agent may post to." */
+  description?: string;
+  /** true when several may be chosen, false when one is. */
+  multiple: boolean;
+  /** The module's read tool that lists the candidates; it takes no required argument. */
+  tool: string;
+  /** The dot path of an item's id, e.g. "id" or "account.id". */
+  idField: string;
+  /** The dot path of an item's display name, e.g. "name". */
+  nameField: string;
+  /** The field an older setup kept this selection in, for a host that migrates it, e.g. "pageid". */
+  legacyField?: string;
+}
+
 /** What dist/vendors/<vendor>.js exports. */
 export interface ConnectorModule {
   /** ^[a-z][a-z0-9-]{1,29}$, equal to the file name. */
@@ -106,6 +133,15 @@ export interface ConnectorModule {
   originFields: string[];
   /** The ctx.credentials names the module reads, e.g. ["api_key"]. */
   credentials: string[];
+  /**
+   * The credentials a call needs, as alternatives: a call goes ahead when
+   * every credential of at least one list has a value, e.g. [["access_token"],
+   * ["system_user_token"]]. A credential in no list is optional. By default
+   * one list of every credential, so all are required.
+   */
+  requiredCredentials: string[][];
+  /** The account selections a host offers after connecting (empty when none). */
+  accountPickers: AccountPicker[];
   tools: ToolDescriptor[];
   call(toolName: string, args: unknown, ctx: ToolContext): Promise<CallToolResult>;
 }

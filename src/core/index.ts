@@ -5,6 +5,8 @@ export { apiTools } from './api-tools.js';
 export type { ApiAccountRule, ApiToolRequest, ApiToolsOptions, ApiWriteMethod } from './api-tools.js';
 export { defineConnector, VENDOR_PATTERN } from './connector.js';
 export type { ConnectorDefinition, ToolDefinition, ToolHelpers, ToolKind } from './connector.js';
+export type { AccountPicker } from '../types.js';
+export { andList, orList, requiredAlternatives, unmetAlternatives } from './credentials.js';
 export { OutcomeUnknown, ToolFailure } from './errors.js';
 export type { FailureDetails } from './errors.js';
 export { MAX_API_RESPONSE_BYTES, readCapped, retryAfterSeconds, vendorCode, vendorMessage } from './http.js';

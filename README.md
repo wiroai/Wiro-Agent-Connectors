@@ -34,7 +34,7 @@ Requires Node.js 22 or later. Start a connector by name; it reads its credential
 DEVTO_API_KEY=your-key npx -y @wiro-ai/wiro-agent-connectors devto
 ```
 
-`npx -y @wiro-ai/wiro-agent-connectors --list` prints every connector with its tools and variables.
+`npx -y @wiro-ai/wiro-agent-connectors --list` prints every connector with its tools and variables, and, where a connector has them, the alternatives it accepts and its [account keys](#account-pickers-and-the-account-lock).
 
 | Connector | Environment variables | Where to get them |
 | --- | --- | --- |
@@ -42,7 +42,7 @@ DEVTO_API_KEY=your-key npx -y @wiro-ai/wiro-agent-connectors devto
 | `devto` | `DEVTO_API_KEY` | dev.to → Settings → Extensions → DEV Community API Keys → Generate API Key. |
 | `bluesky` | `BLUESKY_IDENTIFIER`, `BLUESKY_APP_PASSWORD` | Your handle (such as `alice.bsky.social`) and an app password from Bluesky → Settings → Privacy and security → App passwords. Never your account password. Accounts hosted by Bluesky only. |
 
-A connector without its variables still starts and lists its tools; each call then answers with the variable to set. A connector whose service signs in with OAuth reads a current access token from `<VENDOR>_ACCESS_TOKEN`: get one from your own OAuth app, as the CLI does not refresh it.
+A connector without its variables (or, for one that accepts [alternatives](#required-credentials), without one complete set of them) still starts and lists its tools; each call then answers with the variables to set. A connector whose service signs in with OAuth reads a current access token from `<VENDOR>_ACCESS_TOKEN`: get one from your own OAuth app, as the CLI does not refresh it.
 
 ### Claude Desktop
 
@@ -132,6 +132,8 @@ module.exports = {
   origins: ['https://dev.to'],     // the fixed API origins it calls
   originFields: [],                // credentials that hold a site or instance URL, e.g. ['instance_url']
   credentials: ['api_key'],        // the names it reads from ctx.credentials
+  requiredCredentials: [['api_key']], // what a call needs: every credential of one of these lists
+  accountPickers: [],              // the accounts a host lets the user choose, e.g. [{ key: 'pages', ... }]
   tools: [{ name, title, description, inputSchema, annotations }],
   async call(toolName, args, ctx) {} // returns an MCP CallToolResult
 };
@@ -174,6 +176,10 @@ The CLI's guarded fetch does all of this. Every other host must do the same, whe
 
 A connector whose service signs in with OAuth declares the credential `access_token`. The host passes its current access token there on every call and refreshes it on its own; a module never refreshes, stores or logs it, and an expired token comes back as a plain 401 error. In the CLI, `access_token` comes from `<VENDOR>_ACCESS_TOKEN`, as it is; when set, the CLI passes it along even to a connector that does not require it.
 
+### Required credentials
+
+`requiredCredentials` says which credentials a call needs, as alternatives: a call goes ahead when every credential of at least one list has a value. By default there is one list with every credential, so all of them are required. A service that takes either an OAuth access token or a long-lived token from its settings declares both lists, `[["access_token"], ["system_user_token"]]`, and a credential that is in no list, such as a value only some calls use, is optional. Without a complete list, a call sends nothing and answers that the connector is not connected, naming what each alternative still lacks: "Example is not connected: it needs the Example access token, or the Example system user token." A host can read the lists to tell whether a connection is complete before it calls anything. The CLI reads every declared variable and needs one complete list; `--list` prints the alternatives of a connector that has them.
+
 ### Generic API tools
 
 A connector's own tools do the common jobs; the rest of a vendor's API is reachable through two generic tools that the core builds for a module:
@@ -183,9 +189,26 @@ A connector's own tools do the common jobs; the rest of a vendor's API is reacha
 
 Both send the connection's credentials, keep to the module's origins and its base path (checked after `.` and `..` are resolved), and, when the host applies an account lock, only reach paths that name a chosen account. Their descriptions name the vendor's API, its base path and its reference.
 
-### Account lock
+### Account pickers and the account lock
 
-Tools that act on one of several accounts (pages, ad accounts, channels) check the account against `ctx.accounts`, for example `{ "pages": ["123"] }`, before sending anything. In the CLI, set `CONNECTOR_ACCOUNTS` to that JSON to apply a lock; without it there is none. None of the current connectors takes an account argument yet.
+Tools that act on one of several accounts (pages, ad accounts, channels) check the account against `ctx.accounts`, for example `{ "pages": ["123"] }`, before sending anything. A connector describes each such choice in `accountPickers`, so a host can let the user make it after connecting:
+
+```js
+accountPickers: [{
+  key: 'pages',             // the ctx.accounts key the choice goes under
+  label: 'Facebook Pages',
+  description: 'The Pages the agent may post to.', // optional
+  multiple: true,           // several may be chosen; false for one
+  tool: 'list_pages',       // the read tool that lists the candidates
+  idField: 'id',            // dot paths into each item it returns, such as 'id' or 'owner.name'
+  nameField: 'name',
+  legacyField: 'pageid',    // optional: the field an older setup kept this choice in, for a host that migrates it
+}]
+```
+
+A host runs the picker's tool with no arguments, and again with `cursor` set to the result's `nextCursor` while there is one. The tool returns one list, such as `{ "pages": [...] }`: the host reads each item's id and name at `idField` and `nameField`, lets the user choose, and passes the chosen ids on every call as `ctx.accounts[key]`. The module's tools then refuse any other account before sending anything. A picker's tool is always a read tool that takes no required argument, and its key, label and description name only the service.
+
+In the CLI, set `CONNECTOR_ACCOUNTS` to that JSON, keyed by the account keys `--list` prints, to apply a lock; without it there is none. None of the current connectors takes an account argument yet.
 
 ## Security
 

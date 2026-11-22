@@ -2,7 +2,8 @@
 // wiro-agent-connectors <vendor>: serves one connector over stdio, with the
 // vendor's credentials read from the environment.
 
-import { accountsFromEnv, credentialsFromEnv, envNameFor, listVendors, loadConnector, serveStdio } from './host/index.js';
+import { describeConnector, describeNeeded } from './host/describe.js';
+import { accountsFromEnv, credentialsFromEnv, listVendors, loadConnector, serveStdio } from './host/index.js';
 
 // The package version, for the MCP server info and --version.
 const { version } = require('../package.json') as { version: string };
@@ -10,20 +11,18 @@ const { version } = require('../package.json') as { version: string };
 const USAGE = `Usage: wiro-agent-connectors <vendor>
 
 Serves one connector as an MCP server over stdio. Each connector reads its
-credentials from environment variables named <VENDOR>_<CREDENTIAL>.
+credentials from environment variables named <VENDOR>_<CREDENTIAL>. To limit
+the accounts its tools may act on, set CONNECTOR_ACCOUNTS to JSON such as
+{"pages":["123"]}, keyed by the account keys --list prints.
 
 Options:
-  --list       List the connectors with their tools and environment variables
+  --list       List the connectors with their tools, environment variables and account keys
   --version    Print the version
   --help       Print this help`;
 
 function describeVendors(): string {
   return listVendors()
-    .map((vendor) => {
-      const module = loadConnector(vendor);
-      const env = module.credentials.map((name) => envNameFor(vendor, name)).join(', ');
-      return `${vendor}\n  env:   ${env || '(none)'}\n  tools: ${module.tools.map((tool) => tool.name).join(', ')}`;
-    })
+    .map((vendor) => describeConnector(loadConnector(vendor)))
     .join('\n\n');
 }
 
@@ -52,17 +51,20 @@ async function main(argv: string[]): Promise<void> {
     return;
   }
 
-  const { credentials, missing } = credentialsFromEnv(module, process.env);
+  const { credentials, needed } = credentialsFromEnv(module, process.env);
   const accounts = accountsFromEnv(process.env);
-  if (missing.length) {
-    process.stderr.write(`${module.vendor}: ${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set; tools will answer with an error until ${missing.length > 1 ? 'they are' : 'it is'}.\n`);
+  const [only] = needed;
+  if (needed.length === 1 && only) {
+    process.stderr.write(`${module.vendor}: ${describeNeeded(needed)} ${only.length > 1 ? 'are' : 'is'} not set; tools will answer with an error until ${only.length > 1 ? 'they are' : 'it is'}.\n`);
+  } else if (needed.length > 1) {
+    process.stderr.write(`${module.vendor}: set ${describeNeeded(needed)}; tools will answer with an error until then.\n`);
   }
   await serveStdio(module, {
     credentials,
     accounts,
     version,
-    ...(missing.length
-      ? { missingCredentials: `This server has no credentials for ${module.vendor}: set ${missing.join(' and ')} in its environment and restart it.` }
+    ...(needed.length
+      ? { missingCredentials: `This server has no credentials for ${module.vendor}: set ${describeNeeded(needed)} in its environment and restart it.` }
       : {}),
   });
 }

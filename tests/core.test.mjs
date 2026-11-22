@@ -8,16 +8,20 @@ const require = createRequire(import.meta.url);
 const core = require('../build/core.js');
 const {
   allowedAccounts,
+  andList,
   decodeCursor,
   defineConnector,
   encodeCursor,
   fitPage,
+  orList,
   OUTPUT_LIMIT_BYTES,
   parseSiteUrl,
   requireAccounts,
+  requiredAlternatives,
   retryAfterSeconds,
   siteOrigin,
   ToolFailure,
+  unmetAlternatives,
   validateArguments,
 } = core;
 
@@ -132,9 +136,12 @@ test('a connector definition is checked when the module loads', () => {
   assert.throws(() => defineConnector({ ...base, credentials: ['site_url'], originFields: ['site_url', 'site_url'] }), /origin field site_url is listed twice/);
   assert.doesNotThrow(() => defineConnector({ ...base, origins: [], credentials: ['site_url', 'api_key'], originFields: ['site_url'] }));
   const module = defineConnector(base);
-  assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'originFields', 'credentials', 'tools', 'call']);
+  assert.deepEqual(Object.keys(module), ['vendor', 'origins', 'originFields', 'credentials', 'requiredCredentials', 'accountPickers', 'tools', 'call']);
   assert.deepEqual(module.originFields, []);
+  assert.deepEqual(module.requiredCredentials, [['api_key']], 'by default one list of every credential');
+  assert.deepEqual(module.accountPickers, []);
   assert.ok(Object.isFrozen(module) && Object.isFrozen(module.tools[0].annotations));
+  assert.ok(Object.isFrozen(module.requiredCredentials[0]));
 });
 
 test('a site or instance URL credential becomes an https origin, or a plain reason why not', () => {
@@ -342,4 +349,194 @@ test('a module that declares access_token gets the host\'s current OAuth token o
   assert.equal(expired.calls.length, 1, 'a module never refreshes or retries: the host does');
   const missing = await callTool(module, 'read_x', {}, makeContext({ credentials: {}, fetch }).ctx);
   assert.equal(missing.payload.error, 'Acme is not connected: the Acme access token is missing.');
+});
+
+test('alternatives: what each one lacks, smallest first, in plain words', () => {
+  const has = (...names) => (name) => names.includes(name);
+  assert.deepEqual(requiredAlternatives({ credentials: ['a', 'b'] }), [['a', 'b']], 'by default every credential');
+  assert.deepEqual(requiredAlternatives({ credentials: ['a', 'b'], requiredCredentials: [['a'], ['b']] }), [['a'], ['b']]);
+  assert.deepEqual(unmetAlternatives([['a'], ['b', 'c']], has('a')), [], 'one complete list is enough');
+  assert.deepEqual(unmetAlternatives([['a'], ['b', 'c']], has('b')), [['a'], ['c']], 'what is given is not asked for again');
+  assert.deepEqual(unmetAlternatives([['a', 'b'], ['c', 'b']], has('a', 'c')), [['b']], 'two lists that lack the same are named once');
+  assert.deepEqual(unmetAlternatives([['a', 'b', 'c'], ['d', 'b']], has('a', 'd')), [['b']], 'a list that lacks more than another is left out');
+  assert.deepEqual(unmetAlternatives([[]], has()), [], 'an empty list needs nothing');
+  assert.deepEqual(['A', 'A and B', 'A, B and C'], [andList(['A']), andList(['A', 'B']), andList(['A', 'B', 'C'])]);
+  assert.deepEqual(['A', 'A, or B', 'A, B, or C'], [orList(['A']), orList(['A', 'B']), orList(['A', 'B', 'C'])]);
+});
+
+test('requiredCredentials are checked when the module loads: lists of its own credentials, none of them redundant', () => {
+  const tool = { name: 'get_x', kind: 'read', title: 'Get', description: 'Gets.', inputSchema: READ_SCHEMA, run: async () => ({}) };
+  const base = { vendor: 'acme', label: 'Acme', origins: ['https://api.acme.test'], credentials: ['access_token', 'system_user_token', 'appsecret_proof'], tools: [tool] };
+  const module = defineConnector({ ...base, requiredCredentials: [['access_token'], ['system_user_token']] });
+  assert.deepEqual(module.requiredCredentials, [['access_token'], ['system_user_token']], 'exported as given');
+  const cases = [
+    [[], /requiredCredentials must be a list of credential lists/],
+    ['access_token', /requiredCredentials must be a list of credential lists/],
+    [[[]], /requiredCredentials\[0\] must list at least one credential/],
+    [[['access_token'], 'system_user_token'], /requiredCredentials\[1\] must list at least one credential/],
+    [[['api_key']], /requiredCredentials\[0\]: api_key is not one of the credentials/],
+    [[['access_token', 'access_token']], /requiredCredentials\[0\] lists access_token twice/],
+    [[['access_token'], ['access_token']], /requiredCredentials\[1\] contains all of requiredCredentials\[0\], so it is never needed/],
+    [[['access_token', 'appsecret_proof'], ['access_token']], /requiredCredentials\[0\] contains all of requiredCredentials\[1\], so it is never needed/],
+  ];
+  for (const [requiredCredentials, message] of cases) {
+    assert.throws(() => defineConnector({ ...base, requiredCredentials }), message, JSON.stringify(requiredCredentials));
+  }
+
+  // With no fixed origin, every list must bring the address the API lives at.
+  const site = { ...base, origins: [], originFields: ['site_url'], credentials: ['site_url', 'access_token', 'app_password'] };
+  assert.doesNotThrow(() => defineConnector({ ...site, requiredCredentials: [['site_url', 'access_token'], ['site_url', 'app_password']] }));
+  assert.throws(
+    () => defineConnector({ ...site, requiredCredentials: [['access_token'], ['site_url', 'app_password']] }),
+    /requiredCredentials\[0\] needs an origin field: the module has no fixed origin, so a call made with only these credentials could reach nothing/,
+  );
+});
+
+test('account pickers are checked when the module loads, and exported as given', () => {
+  const listPages = { name: 'list_pages', kind: 'read', title: 'List', description: 'Lists Pages.', inputSchema: { type: 'object', properties: { cursor: { type: 'string' } }, additionalProperties: false }, run: async () => ({}) };
+  const getPage = { name: 'get_page', kind: 'read', title: 'Get', description: 'Gets a Page.', inputSchema: { type: 'object', properties: { page_id: { type: 'string' } }, required: ['page_id'], additionalProperties: false }, run: async () => ({}) };
+  const post = { name: 'create_post', kind: 'create', check: 'list_pages', title: 'Post', description: 'Posts.', inputSchema: READ_SCHEMA, run: async () => ({}) };
+  const base = { vendor: 'acme', label: 'Acme', origins: ['https://api.acme.test'], credentials: ['access_token'], tools: [listPages, getPage, post] };
+  const pages = { key: 'pages', label: 'Acme Pages', description: 'The Pages the agent may post to.', multiple: true, tool: 'list_pages', idField: 'id', nameField: 'name', legacyField: 'pageid' };
+  const owners = { key: 'owners', label: 'Acme owners', multiple: false, tool: 'list_pages', idField: 'owner.id', nameField: 'owner.profile.name' };
+
+  const module = defineConnector({ ...base, accountPickers: [pages, owners] });
+  assert.deepEqual(module.accountPickers, [pages, owners]);
+  assert.deepEqual(Object.keys(module.accountPickers[1]), ['key', 'label', 'multiple', 'tool', 'idField', 'nameField'], 'optional fields only when given');
+  assert.notEqual(module.accountPickers[0], pages, 'a copy');
+  assert.ok(Object.isFrozen(module.accountPickers) && Object.isFrozen(module.accountPickers[0]));
+
+  const cases = [
+    [{}, /accountPickers must be a list/],
+    [['pages'], /each account picker must be an object/],
+    [[{ ...pages, key: 'Pages' }], /account picker "Pages": key must match \^\[a-z\]\[a-z0-9_\]\{0,63\}\$/],
+    [[{ ...pages, key: undefined }], /account picker undefined: key must match/],
+    [[pages, { ...owners, key: 'pages' }], /account picker pages is defined twice/],
+    [[{ ...pages, idfield: 'id' }], /account picker pages: unknown field idfield \(expected: key, label, description, multiple, tool, idField, nameField, legacyField\)/],
+    [[{ ...pages, label: ' ' }], /account picker pages: label is required/],
+    [[{ ...pages, description: '' }], /account picker pages: description, when given, must be a text of 1 to 1024 characters/],
+    [[{ ...pages, description: 'x'.repeat(1025) }], /description, when given, must be a text of 1 to 1024 characters/],
+    [[{ ...pages, multiple: 'yes' }], /account picker pages: multiple must be true or false/],
+    [[{ ...pages, tool: 'list_everything' }], /account picker pages: tool must be the name of a read tool/],
+    [[{ ...pages, tool: 'create_post' }], /account picker pages: tool must be the name of a read tool/],
+    [[{ ...pages, tool: 'get_page' }], /account picker pages: its tool get_page must take no required argument/],
+    [[{ ...pages, idField: undefined }], /account picker pages: idField must be a dot path into each item the tool returns/],
+    [[{ ...pages, idField: 'owner..id' }], /idField must be a dot path/],
+    [[{ ...pages, idField: '.id' }], /idField must be a dot path/],
+    [[{ ...pages, idField: 'page id' }], /idField must be a dot path/],
+    [[{ ...pages, nameField: 'owner.__proto__' }], /account picker pages: nameField must be a dot path/],
+    [[{ ...pages, nameField: 'constructor' }], /nameField must be a dot path/],
+    [[{ ...pages, nameField: 'a.b.c.d.e.f.g' }], /nameField must be a dot path/],
+    [[{ ...pages, legacyField: 'Page-ID' }], /account picker pages: legacyField, when given, must match/],
+  ];
+  for (const [accountPickers, message] of cases) {
+    assert.throws(() => defineConnector({ ...base, accountPickers }), message, JSON.stringify(accountPickers));
+  }
+});
+
+/** A connector a call may make with a token from an OAuth sign-in, or with a long-lived system token. */
+function alternativesConnector(run = async (args, h) => (await h.api({ path: '/me' })).data) {
+  return defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins: ['https://api.acme.test'],
+    credentials: ['access_token', 'system_user_token', 'appsecret_proof'],
+    credentialLabels: { access_token: 'Acme access token', system_user_token: 'Acme system user token', appsecret_proof: 'Acme app secret proof' },
+    requiredCredentials: [['access_token'], ['system_user_token']],
+    authHeaders: (credentials) => ({ authorization: `Bearer ${credentials.access_token ?? credentials.system_user_token}` }),
+    tools: [{ name: 'read_x', kind: 'read', title: 'Read', description: 'Reads.', inputSchema: READ_SCHEMA, run }],
+  });
+}
+
+test('a call goes ahead when one alternative is complete; otherwise it names the alternatives and sends nothing', async () => {
+  const module = alternativesConnector();
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  for (const credentials of [{ access_token: 'token-1' }, { system_user_token: 'system-1' }, { access_token: 'token-2', appsecret_proof: 'proof' }]) {
+    const { isError, payload } = await callTool(module, 'read_x', {}, makeContext({ credentials, fetch }).ctx);
+    assert.equal(isError, false, payload.error);
+  }
+  assert.deepEqual(fetch.calls.map((call) => call.headers.authorization), ['Bearer token-1', 'Bearer system-1', 'Bearer token-2'], 'a credential in no list is optional');
+
+  // A blank value counts as missing, and an optional credential completes nothing.
+  const none = await callTool(module, 'read_x', {}, makeContext({ credentials: { access_token: '  ', appsecret_proof: 'proof' }, fetch }).ctx);
+  assert.equal(none.isError, true);
+  assert.equal(none.payload.error, 'Acme is not connected: it needs the Acme access token, or the Acme system user token.');
+  assert.equal(fetch.calls.length, 3, 'nothing was sent');
+});
+
+test('the message names only what each alternative still lacks, once each', async () => {
+  const module = defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins: ['https://api.acme.test'],
+    credentials: ['access_token', 'username', 'app_password', 'api_token'],
+    credentialLabels: { access_token: 'Acme access token', username: 'Acme user name', app_password: 'Acme app password', api_token: 'Acme API token' },
+    requiredCredentials: [['access_token'], ['username', 'app_password'], ['username', 'api_token']],
+    tools: [{ name: 'read_x', kind: 'read', title: 'Read', description: 'Reads.', inputSchema: READ_SCHEMA, run: async () => ({}) }],
+  });
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  const cases = [
+    [{}, 'Acme is not connected: it needs the Acme access token, the Acme user name and Acme app password, or the Acme user name and Acme API token.'],
+    [{ username: 'alice' }, 'Acme is not connected: it needs the Acme access token, the Acme app password, or the Acme API token.'],
+    [{ app_password: 'p', api_token: 't' }, 'Acme is not connected: it needs the Acme access token, or the Acme user name.'],
+  ];
+  for (const [credentials, message] of cases) {
+    const { payload } = await callTool(module, 'read_x', {}, makeContext({ credentials, fetch }).ctx);
+    assert.equal(payload.error, message, JSON.stringify(credentials));
+  }
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('a 401 names the credentials the call went ahead with, not every one the module reads', async () => {
+  const module = alternativesConnector();
+  const rejected = fakeFetch(() => jsonResponse(401, {}));
+  const token = await callTool(module, 'read_x', {}, makeContext({ credentials: { access_token: 't', appsecret_proof: 'p' }, fetch: rejected }).ctx);
+  assert.equal(token.payload.error, 'Acme rejected the credentials (HTTP 401). Check that the Acme access token is correct and still active.');
+  const system = await callTool(module, 'read_x', {}, makeContext({ credentials: { system_user_token: 's' }, fetch: rejected }).ctx);
+  assert.equal(system.payload.error, 'Acme rejected the credentials (HTTP 401). Check that the Acme system user token is correct and still active.');
+
+  // By default every credential is in use.
+  const pair = defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins: ['https://api.acme.test'],
+    credentials: ['handle', 'app_password'],
+    credentialLabels: { handle: 'Acme handle', app_password: 'Acme app password' },
+    tools: [{ name: 'read_x', kind: 'read', title: 'Read', description: 'Reads.', inputSchema: READ_SCHEMA, run: async (args, h) => h.api({ path: '/me' }) }],
+  });
+  const both = await callTool(pair, 'read_x', {}, makeContext({ credentials: { handle: 'h', app_password: 'p' }, fetch: rejected }).ctx);
+  assert.equal(both.payload.error, 'Acme rejected the credentials (HTTP 401). Check that the Acme handle and Acme app password are correct and still active.');
+});
+
+test('an origin field the call goes ahead without may be empty, and then gives no origin', async () => {
+  const module = defineConnector({
+    vendor: 'acme',
+    label: 'Acme',
+    origins: ['https://public-api.acme.test'],
+    originFields: ['site_url'],
+    credentials: ['access_token', 'site_url', 'app_password'],
+    credentialLabels: { site_url: 'Acme site URL' },
+    requiredCredentials: [['access_token'], ['site_url', 'app_password']],
+    tools: [
+      { name: 'read_x', kind: 'read', title: 'Read', description: 'Reads.', inputSchema: READ_SCHEMA, run: async (args, h) => {
+        await h.api({ path: '/me', origin: h.origins.at(-1) });
+        return { origins: h.origins };
+      } },
+      { name: 'read_site', kind: 'read', title: 'Site', description: 'Reads the site.', inputSchema: READ_SCHEMA, run: async (args, h) => h.api({ path: '/', origin: h.originOf('site_url') }) },
+    ],
+  });
+  const fetch = fakeFetch(() => jsonResponse(200, {}));
+  const token = await callTool(module, 'read_x', {}, makeContext({ credentials: { access_token: 't' }, fetch }).ctx);
+  assert.deepEqual(token.payload, { origins: ['https://public-api.acme.test'] });
+  const site = await callTool(module, 'read_x', {}, makeContext({ credentials: { site_url: 'blog.example', app_password: 'p' }, fetch }).ctx);
+  assert.deepEqual(site.payload, { origins: ['https://public-api.acme.test', 'https://blog.example'] });
+  assert.deepEqual(fetch.calls.map((call) => call.url), ['https://public-api.acme.test/me', 'https://blog.example/me']);
+
+  // A site URL that is given must still be a good one, even beside the token.
+  const bad = await callTool(module, 'read_x', {}, makeContext({ credentials: { access_token: 't', site_url: 'http://blog.example' }, fetch }).ctx);
+  assert.equal(bad.payload.error, 'Acme is not connected correctly: the Acme site URL must be an https address, not http://. Nothing was sent to Acme.');
+  // Asking for the origin of an empty field is a module error, never a request.
+  const empty = await callTool(module, 'read_site', {}, makeContext({ credentials: { access_token: 't' }, fetch }).ctx);
+  assert.equal(empty.payload.error, 'read_site failed unexpectedly.');
+  assert.equal(fetch.calls.length, 2);
 });

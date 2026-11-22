@@ -34,9 +34,30 @@ const connector = defineConnector({
   // e.g. originFields: ['site_url']. Reach it with
   // h.api({ origin: h.originOf('site_url'), path }).
   originFields: [],
-  // Names the module reads from ctx.credentials. All are required.
+  // Names the module reads from ctx.credentials. All are required, unless
+  // requiredCredentials lists alternatives. For a service that takes an OAuth
+  // token or an API key, say, credentials: ['access_token', 'api_key'] with
+  // requiredCredentials: [['access_token'], ['api_key']] lets a call go ahead
+  // with either one (authHeaders then sends the one given); a credential in
+  // no list is optional.
   credentials: ['api_key'],
   credentialLabels: { api_key: 'Example API key' },
+  // The accounts a host lets the user choose after connecting. The host runs
+  // `tool` (a read tool with no required argument) to list the candidates,
+  // reads each item's id and name at idField and nameField (dot paths), and
+  // passes the chosen ids on every call as ctx.accounts[key]. Tools check
+  // them with requireAccounts under the same key, as create_item does.
+  accountPickers: [
+    {
+      key: 'workspaces',
+      label: 'Example workspaces',
+      description: 'The workspaces the agent may create items in.',
+      multiple: true,
+      tool: 'list_workspaces',
+      idField: 'id',
+      nameField: 'name',
+    },
+  ],
   // Added to every API request (never to media downloads).
   authHeaders: (credentials) => ({ authorization: `Bearer ${credentials['api_key']}` }),
   tools: [
@@ -71,6 +92,35 @@ const connector = defineConnector({
         return h.page({
           key: 'items',
           items: items.map(trimItem).slice(skip),
+          resumeAt: (index) => h.makeCursor({ ...(page ? { p: page } : {}), o: skip + index }),
+          ...(typeof data?.next_page === 'string' ? { nextPage: h.makeCursor({ p: data.next_page, o: 0 }) } : {}),
+        });
+      },
+    },
+    {
+      // The workspaces picker's tool. Hosts call it with no arguments, then
+      // with cursor while the result has a nextCursor, so it pages like
+      // list_items and returns one list whose items carry id and name.
+      name: 'list_workspaces',
+      kind: 'read',
+      title: 'List Example workspaces',
+      description: 'Lists the workspaces of the connected Example account, with their ids and names. Pass nextCursor back as cursor for more.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          cursor: { type: 'string', description: 'nextCursor from the previous result.' },
+        },
+        additionalProperties: false,
+      },
+      async run(args: { cursor?: string }, h) {
+        const state = h.cursor(args.cursor);
+        const page = typeof state?.['p'] === 'string' ? state['p'] : undefined;
+        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const { data } = await h.api({ path: '/v1/workspaces', query: { page } });
+        const workspaces: any[] = Array.isArray(data?.workspaces) ? data.workspaces : [];
+        return h.page({
+          key: 'workspaces',
+          items: workspaces.map((workspace) => ({ id: workspace?.id, name: workspace?.name })).slice(skip),
           resumeAt: (index) => h.makeCursor({ ...(page ? { p: page } : {}), o: skip + index }),
           ...(typeof data?.next_page === 'string' ? { nextPage: h.makeCursor({ p: data.next_page, o: 0 }) } : {}),
         });
@@ -126,5 +176,6 @@ const connector = defineConnector({
   ],
 });
 
-// Exported as the module itself: { vendor, origins, originFields, credentials, tools, call }.
+// Exported as the module itself:
+// { vendor, origins, originFields, credentials, requiredCredentials, accountPickers, tools, call }.
 export = connector;

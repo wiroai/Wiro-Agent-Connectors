@@ -31,7 +31,7 @@ test('the host code a tool result can come from does not mention it either', () 
   }
 });
 
-test('no tool name, title, description or schema mentions it', () => {
+test('no tool name, title, description or schema, and no account picker a host shows, mentions it', () => {
   for (const folder of folders) {
     const { module } = loadModule(folder);
     for (const tool of module.tools) {
@@ -39,6 +39,7 @@ test('no tool name, title, description or schema mentions it', () => {
         assert.doesNotMatch(text, BRAND, `${folder} ${tool.name}`);
       }
     }
+    for (const picker of module.accountPickers) assert.doesNotMatch(JSON.stringify(picker), BRAND, `${folder} picker ${picker.key}`);
   }
 });
 

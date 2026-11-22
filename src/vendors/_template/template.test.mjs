@@ -34,6 +34,26 @@ test('list_items sends one GET with the auth header and trims each item', async 
   assert.equal(fetch.calls[1].query.page, 'p2');
 });
 
+test('the workspaces picker: hosts call list_workspaces with no arguments, then with the cursor, and read id and name from each item', async () => {
+  // Hosts list the candidates with no account lock (null).
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, {
+    workspaces: [{ id: 'ws_1', name: 'Main', plan: 'left out' }, { id: 'ws_2', name: 'Side' }],
+    next_page: 'p2',
+  }), null);
+  const [picker] = module.accountPickers;
+  assert.equal(picker.key, 'workspaces');
+  assert.equal(picker.tool, 'list_workspaces');
+
+  const first = await callTool(module, picker.tool, {}, ctx);
+  assert.equal(first.isError, false);
+  assert.equal(fetch.calls[0].url, 'https://api.example.com/v1/workspaces');
+  const field = (item, path) => path.split('.').reduce((value, name) => value?.[name], item);
+  assert.deepEqual(first.payload.workspaces.map((item) => [field(item, picker.idField), field(item, picker.nameField)]), [['ws_1', 'Main'], ['ws_2', 'Side']]);
+
+  await callTool(module, picker.tool, { cursor: first.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[1].query.page, 'p2');
+});
+
 test('create_item refuses a workspace outside the selected accounts, before any request', async () => {
   const { module, fetch, ctx } = setup(() => jsonResponse(201, { id: 'it_2', name: 'New' }));
   const { payload, isError } = await callTool(module, 'create_item', { workspace_id: 'ws_9', name: 'New' }, ctx);

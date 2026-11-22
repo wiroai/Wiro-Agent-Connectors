@@ -21,6 +21,7 @@ export { assertConnectorModule, DEFAULT_VENDORS_DIR, listVendors, loadConnector,
 export { createConnectorServer, serveStdio } from './server.js';
 export type { ConnectorServerOptions } from './server.js';
 export type {
+  AccountPicker,
   CallToolResult,
   ConnectorAccounts,
   ConnectorFetch,

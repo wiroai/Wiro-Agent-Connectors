@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 
-// The host building blocks other programs use: the module check and the
-// environment mapping of the CLI.
+// The host building blocks other programs use: the module check, the
+// environment mapping of the CLI, and what its --list prints.
 
 const require = createRequire(import.meta.url);
 const { ACCESS_TOKEN_CREDENTIAL, assertConnectorModule, credentialsFromEnv, envNameFor } = require('../dist/host/index.js');
+const { describeConnector, describeNeeded } = require('../dist/host/describe.js');
+const { defineConnector } = require('../build/core.js');
 
 const base = { vendor: 'acme', origins: ['https://api.acme.test'], originFields: [], credentials: ['api_key'], tools: [], call: async () => ({ content: [] }) };
 
@@ -26,12 +28,90 @@ test('the CLI reads each credential from <VENDOR>_<CREDENTIAL>, and an OAuth acc
   const oauth = { vendor: 'google-ads', credentials: ['access_token', 'developer_token'] };
   assert.deepEqual(
     credentialsFromEnv(oauth, { GOOGLE_ADS_ACCESS_TOKEN: ' token-1 ', GOOGLE_ADS_DEVELOPER_TOKEN: 'dev-1' }),
-    { credentials: { access_token: 'token-1', developer_token: 'dev-1' }, missing: [] },
+    { credentials: { access_token: 'token-1', developer_token: 'dev-1' }, missing: [], needed: [] },
   );
   assert.deepEqual(credentialsFromEnv(oauth, { GOOGLE_ADS_DEVELOPER_TOKEN: 'dev-1' }).missing, ['GOOGLE_ADS_ACCESS_TOKEN'], 'declared, it is required');
 
   // Not declared, it is passed along when set, as hosts pass a connection's token, and never required.
   const keyed = { vendor: 'acme', credentials: ['api_key'] };
-  assert.deepEqual(credentialsFromEnv(keyed, { ACME_API_KEY: 'k', ACME_ACCESS_TOKEN: 't' }), { credentials: { api_key: 'k', access_token: 't' }, missing: [] });
-  assert.deepEqual(credentialsFromEnv(keyed, { ACME_API_KEY: 'k', ACME_ACCESS_TOKEN: '  ' }), { credentials: { api_key: 'k' }, missing: [] });
+  assert.deepEqual(credentialsFromEnv(keyed, { ACME_API_KEY: 'k', ACME_ACCESS_TOKEN: 't' }), { credentials: { api_key: 'k', access_token: 't' }, missing: [], needed: [] });
+  assert.deepEqual(credentialsFromEnv(keyed, { ACME_API_KEY: 'k', ACME_ACCESS_TOKEN: '  ' }), { credentials: { api_key: 'k' }, missing: [], needed: [] });
 });
+
+test('with alternatives, the CLI needs one complete list, and names what each one lacks', () => {
+  const meta = { vendor: 'meta-ads', credentials: ['access_token', 'system_user_token', 'appsecret_proof'], requiredCredentials: [['access_token'], ['system_user_token']] };
+  assert.deepEqual(
+    credentialsFromEnv(meta, { META_ADS_SYSTEM_USER_TOKEN: ' system-1 ' }),
+    { credentials: { system_user_token: 'system-1' }, missing: [], needed: [] },
+    'one complete list is enough',
+  );
+  assert.deepEqual(
+    credentialsFromEnv(meta, { META_ADS_APPSECRET_PROOF: 'proof', META_ADS_ACCESS_TOKEN: ' ' }),
+    { credentials: { appsecret_proof: 'proof' }, missing: ['META_ADS_ACCESS_TOKEN', 'META_ADS_SYSTEM_USER_TOKEN'], needed: [['META_ADS_ACCESS_TOKEN'], ['META_ADS_SYSTEM_USER_TOKEN']] },
+  );
+  const site = { vendor: 'acme', credentials: ['access_token', 'site_url', 'app_password'], requiredCredentials: [['access_token'], ['site_url', 'app_password']] };
+  assert.deepEqual(credentialsFromEnv(site, { ACME_SITE_URL: 'blog.example' }).needed, [['ACME_ACCESS_TOKEN'], ['ACME_APP_PASSWORD']], 'what is set is not asked for again');
+  // A module built before requiredCredentials existed needs every credential.
+  assert.deepEqual(credentialsFromEnv({ vendor: 'acme', credentials: ['handle', 'app_password'] }, {}).needed, [['ACME_HANDLE', 'ACME_APP_PASSWORD']]);
+
+  assert.equal(describeNeeded([['DEVTO_API_KEY']]), 'DEVTO_API_KEY');
+  assert.equal(describeNeeded([['ACME_HANDLE', 'ACME_APP_PASSWORD']]), 'ACME_HANDLE and ACME_APP_PASSWORD');
+  assert.equal(describeNeeded([['META_ADS_ACCESS_TOKEN'], ['META_ADS_SYSTEM_USER_TOKEN']]), 'META_ADS_ACCESS_TOKEN, or META_ADS_SYSTEM_USER_TOKEN');
+  assert.equal(describeNeeded([['ACME_ACCESS_TOKEN'], ['ACME_SITE_URL', 'ACME_APP_PASSWORD']]), 'ACME_ACCESS_TOKEN, or ACME_SITE_URL and ACME_APP_PASSWORD');
+});
+
+test('the module check reads requiredCredentials and accountPickers, and accepts a module built before them', () => {
+  const tools = [{ name: 'list_pages' }];
+  const picker = { key: 'pages', label: 'Acme Pages', multiple: true, tool: 'list_pages', idField: 'id', nameField: 'name' };
+  const v2 = { ...base, credentials: ['access_token', 'api_key'], requiredCredentials: [['access_token'], ['api_key']], accountPickers: [picker], tools };
+  assert.doesNotThrow(() => assertConnectorModule(v2, 'acme'));
+  assert.doesNotThrow(() => assertConnectorModule({ ...base, tools }, 'acme'), 'without either field');
+  assert.throws(() => assertConnectorModule({ ...v2, requiredCredentials: [['secret']] }, 'acme'), /requiredCredentials is not a list of lists of its credentials/);
+  assert.throws(() => assertConnectorModule({ ...v2, requiredCredentials: [] }, 'acme'), /requiredCredentials is not a list of lists of its credentials/);
+  assert.throws(() => assertConnectorModule({ ...v2, requiredCredentials: ['api_key'] }, 'acme'), /requiredCredentials is not a list of lists of its credentials/);
+  assert.throws(() => assertConnectorModule({ ...v2, accountPickers: {} }, 'acme'), /accountPickers is not a list/);
+  assert.throws(() => assertConnectorModule({ ...v2, accountPickers: [{ ...picker, tool: 'list_ads' }] }, 'acme'), /an account picker has no key or names none of its tools/);
+  assert.throws(() => assertConnectorModule({ ...v2, accountPickers: [null] }, 'acme'), /an account picker has no key or names none of its tools/);
+});
+
+const READ = { type: 'object', properties: { cursor: { type: 'string' } }, additionalProperties: false };
+
+function readTool(name) {
+  return { name, kind: 'read', title: name, description: `Runs ${name}.`, inputSchema: READ, run: async () => ({}) };
+}
+
+test('--list: variables and tools as before; the alternatives and account pickers when a connector has them', () => {
+  const plain = defineConnector({ vendor: 'acme', label: 'Acme', origins: ['https://api.acme.test'], credentials: ['api_key'], tools: [readTool('read_x')] });
+  assert.equal(describeConnector(plain), 'acme\n  env:   ACME_API_KEY\n  tools: read_x');
+
+  const optional = defineConnector({ ...plainDefinition(), credentials: ['api_key', 'region'], requiredCredentials: [['api_key']] });
+  assert.equal(describeConnector(optional), 'acme\n  env:   ACME_API_KEY, ACME_REGION\n  needs: ACME_API_KEY\n  tools: read_x');
+
+  const full = defineConnector({
+    vendor: 'meta-ads',
+    label: 'Acme Ads',
+    origins: ['https://api.acme.test'],
+    credentials: ['access_token', 'system_user_token', 'appsecret_proof'],
+    requiredCredentials: [['access_token'], ['system_user_token']],
+    accountPickers: [
+      { key: 'ad_accounts', label: 'Ad accounts', multiple: true, tool: 'list_ad_accounts', idField: 'id', nameField: 'name' },
+      { key: 'pages', label: 'Pages', description: 'The Page ads run for.', multiple: false, tool: 'list_pages', idField: 'id', nameField: 'name', legacyField: 'pageid' },
+    ],
+    tools: [readTool('list_ad_accounts'), readTool('list_pages')],
+  });
+  assert.equal(describeConnector(full), [
+    'meta-ads',
+    '  env:      META_ADS_ACCESS_TOKEN, META_ADS_SYSTEM_USER_TOKEN, META_ADS_APPSECRET_PROOF',
+    '  needs:    META_ADS_ACCESS_TOKEN, or META_ADS_SYSTEM_USER_TOKEN',
+    '  tools:    list_ad_accounts, list_pages',
+    '  accounts: ad_accounts (Ad accounts, one or more, listed by list_ad_accounts)',
+    '            pages (Pages, one, listed by list_pages)',
+  ].join('\n'));
+
+  const keyless = defineConnector({ ...plainDefinition(), credentials: [] });
+  assert.equal(describeConnector(keyless), 'acme\n  env:   (none)\n  tools: read_x', 'no credentials: nothing to need');
+});
+
+function plainDefinition() {
+  return { vendor: 'acme', label: 'Acme', origins: ['https://api.acme.test'], credentials: ['api_key'], tools: [readTool('read_x')] };
+}

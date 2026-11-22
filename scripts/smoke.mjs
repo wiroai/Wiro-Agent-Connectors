@@ -36,9 +36,10 @@ try {
 
 const module = host.loadConnector(vendor);
 const plan = JSON.parse(fs.readFileSync(path.join(root, 'src', 'vendors', vendor, 'smoke.json'), 'utf8'));
-const { credentials, missing } = host.credentialsFromEnv(module, process.env);
-if (missing.length) {
-  process.stderr.write(`Set ${missing.join(' and ')} (in the environment or .env) first.\n`);
+const { credentials, needed } = host.credentialsFromEnv(module, process.env);
+if (needed.length) {
+  // Each list is one way to connect: "A and B", or "A, or B" for alternatives.
+  process.stderr.write(`Set ${needed.map((list) => list.join(' and ')).join(', or ')} (in the environment or .env) first.\n`);
   process.exit(1);
 }
 const accounts = host.accountsFromEnv(process.env);

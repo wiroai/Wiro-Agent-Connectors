@@ -1,4 +1,5 @@
 import type {
+  AccountPicker,
   CallToolResult,
   ConnectorModule,
   JsonSchema,
@@ -6,6 +7,7 @@ import type {
   ToolContext,
   ToolDescriptor,
 } from '../types.js';
+import { andList, orList, requiredAlternatives, unmetAlternatives } from './credentials.js';
 import { OutcomeUnknown, ToolFailure, type FailureDetails } from './errors.js';
 import { createHttp, type ApiRequest, type ApiResponse, type MediaOptions, type MediaResult } from './http.js';
 import { parseSiteUrl } from './origins.js';
@@ -37,6 +39,12 @@ const ANNOTATIONS: Record<ToolKind, ToolAnnotations> = {
 export const VENDOR_PATTERN = /^[a-z][a-z0-9-]{1,29}$/;
 const TOOL_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
 const CREDENTIAL_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+const PICKER_KEY_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+/** A field of a picker item, or of an object inside it: "id", "account.id" (at most six names deep). */
+const DOT_PATH_PATTERN = /^[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+){0,5}$/;
+/** Names a host reading a dot path must never walk into. */
+const UNSAFE_PATH_NAMES = new Set(['__proto__', 'prototype', 'constructor']);
+const PICKER_FIELDS = ['key', 'label', 'description', 'multiple', 'tool', 'idField', 'nameField', 'legacyField'];
 
 /** What a tool's run() gets besides its arguments. */
 export interface ToolHelpers {
@@ -49,7 +57,12 @@ export interface ToolHelpers {
    * origins of its originFields credentials. The first one is h.api's default.
    */
   readonly origins: readonly string[];
-  /** The https origin a credential named in originFields gave for this call, e.g. "https://mastodon.social". */
+  /**
+   * The https origin a credential named in originFields gave for this call,
+   * e.g. "https://mastodon.social". It throws for any other credential, and
+   * for one left empty because the call went ahead without it (see
+   * requiredCredentials).
+   */
   originOf(credential: string): string;
   /** One request to one of this call's origins. Never retried. */
   api(request: ApiRequest): Promise<ApiResponse>;
@@ -89,7 +102,24 @@ export interface ConnectorDefinition {
    * normalizeCredentials, so hosts and the module agree on it.
    */
   originFields?: string[];
+  /** The names the module reads from ctx.credentials, e.g. ["api_key"]. All are required, unless requiredCredentials says otherwise. */
   credentials: string[];
+  /**
+   * Only when not every credential is needed: the alternatives, e.g. a token
+   * from an OAuth sign-in or a long-lived token from the service's settings,
+   * [["access_token"], ["system_user_token"]]. A call goes ahead when every
+   * credential of at least one list has a value; otherwise it answers that the
+   * connector is not connected, naming what each alternative still lacks. A
+   * credential in no list is optional. Default: one list of every credential.
+   */
+  requiredCredentials?: string[][];
+  /**
+   * The account selections a host offers after connecting, for tools that act
+   * on one of several accounts (pages, ad accounts, channels). Each names a
+   * read tool that lists the candidates; see AccountPicker. The tools check
+   * the selection with requireAccounts, under the same key.
+   */
+  accountPickers?: AccountPicker[];
   /** Words for each credential in messages, e.g. { api_key: "dev.to API key" }. */
   credentialLabels?: Record<string, string>;
   /** Headers added to every API request (not to media downloads). */
@@ -148,6 +178,88 @@ function assertDefinition(def: ConnectorDefinition): void {
     const check = def.tools.find((candidate) => candidate.name === tool.check);
     if (!check || check.kind !== 'read') problem(`write tool ${tool.name} needs check: the name of a read tool`);
   }
+  assertRequiredCredentials(def, problem);
+  assertAccountPickers(def, problem);
+}
+
+function assertRequiredCredentials(def: ConnectorDefinition, problem: (message: string) => never): void {
+  const required: unknown = def.requiredCredentials;
+  if (required === undefined) return;
+  if (!Array.isArray(required) || !required.length) {
+    problem('requiredCredentials must be a list of credential lists, e.g. [["access_token"], ["api_key"]]');
+  }
+  required.forEach((list: unknown, index: number) => {
+    const which = `requiredCredentials[${index}]`;
+    if (!Array.isArray(list) || !list.length) problem(`${which} must list at least one credential`);
+    list.forEach((name: unknown, position: number) => {
+      if (typeof name !== 'string' || !def.credentials.includes(name)) problem(`${which}: ${String(name)} is not one of the credentials`);
+      if (list.indexOf(name) !== position) problem(`${which} lists ${name} twice`);
+    });
+  });
+  const lists = required as string[][];
+  lists.forEach((list, index) => {
+    // A list holding all of another one is never the one a call needs.
+    const covered = lists.findIndex((other, otherIndex) => otherIndex !== index
+      && other.every((name) => list.includes(name))
+      && (other.length < list.length || otherIndex < index));
+    if (covered !== -1) problem(`requiredCredentials[${index}] contains all of requiredCredentials[${covered}], so it is never needed`);
+    // Without fixed origins, the API's address comes from an origin field: a call needs one.
+    if (!def.origins.length && !list.some((name) => def.originFields?.includes(name))) {
+      problem(`requiredCredentials[${index}] needs an origin field: the module has no fixed origin, so a call made with only these credentials could reach nothing`);
+    }
+  });
+}
+
+function isDotPath(value: unknown): boolean {
+  return typeof value === 'string' && DOT_PATH_PATTERN.test(value) && !value.split('.').some((name) => UNSAFE_PATH_NAMES.has(name));
+}
+
+function assertAccountPickers(def: ConnectorDefinition, problem: (message: string) => never): void {
+  const pickers: unknown = def.accountPickers;
+  if (pickers === undefined) return;
+  if (!Array.isArray(pickers)) problem('accountPickers must be a list');
+  const keys = new Set<string>();
+  for (const item of pickers as unknown[]) {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) problem('each account picker must be an object');
+    const picker = item as Record<string, unknown>;
+    const key = picker['key'];
+    if (typeof key !== 'string' || !PICKER_KEY_PATTERN.test(key)) problem(`account picker ${JSON.stringify(key)}: key must match ^[a-z][a-z0-9_]{0,63}$`);
+    if (keys.has(key)) problem(`account picker ${key} is defined twice`);
+    keys.add(key);
+    const fail: (message: string) => never = (message) => problem(`account picker ${key}: ${message}`);
+    const unknown = Object.keys(picker).filter((field) => !PICKER_FIELDS.includes(field));
+    if (unknown.length) fail(`unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')} (expected: ${PICKER_FIELDS.join(', ')})`);
+    const { label, description, multiple, legacyField } = picker;
+    if (typeof label !== 'string' || !label.trim()) fail('label is required');
+    if (description !== undefined && (typeof description !== 'string' || !description.trim() || description.length > 1024)) {
+      fail('description, when given, must be a text of 1 to 1024 characters');
+    }
+    if (typeof multiple !== 'boolean') fail('multiple must be true or false');
+    const tool = def.tools.find((candidate) => candidate.name === picker['tool']);
+    if (!tool || tool.kind !== 'read') fail('tool must be the name of a read tool');
+    // Hosts list the candidates with no arguments (and cursor for more).
+    if (tool.inputSchema.required?.length) fail(`its tool ${tool.name} must take no required argument`);
+    for (const field of ['idField', 'nameField']) {
+      if (!isDotPath(picker[field])) fail(`${field} must be a dot path into each item the tool returns, like "id" or "account.name"`);
+    }
+    if (legacyField !== undefined && (typeof legacyField !== 'string' || !CREDENTIAL_PATTERN.test(legacyField))) {
+      fail('legacyField, when given, must match ^[a-z][a-z0-9_]{0,63}$');
+    }
+  }
+}
+
+/** A picker as the module exports it: the fields given, in a fixed order. */
+function copyPicker(picker: AccountPicker): AccountPicker {
+  return {
+    key: picker.key,
+    label: picker.label,
+    ...(picker.description !== undefined ? { description: picker.description } : {}),
+    multiple: picker.multiple,
+    tool: picker.tool,
+    idField: picker.idField,
+    nameField: picker.nameField,
+    ...(picker.legacyField !== undefined ? { legacyField: picker.legacyField } : {}),
+  };
 }
 
 function result(payload: Record<string, unknown>, isError: boolean): CallToolResult {
@@ -176,6 +288,15 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
   const tools = new Map(def.tools.map((tool) => [tool.name, tool]));
   const toolList = def.tools.map((tool) => tool.name).join(', ');
   const credentialLabel = (name: string): string => def.credentialLabels?.[name] ?? `${label} ${name.replace(/_/g, ' ')}`;
+  const required = requiredAlternatives(def);
+  /** What the connection lacks, in plain words: each alternative's missing credentials. */
+  const notConnected = (unmet: string[][]): string => {
+    const [first] = unmet;
+    if (unmet.length === 1 && first) {
+      return `${label} is not connected: the ${andList(first.map(credentialLabel))} ${first.length > 1 ? 'are' : 'is'} missing.`;
+    }
+    return `${label} is not connected: it needs ${orList(unmet.map((missing) => `the ${andList(missing.map(credentialLabel))}`))}.`;
+  };
 
   const descriptors: ToolDescriptor[] = def.tools.map((tool) => ({
     name: tool.name,
@@ -199,13 +320,17 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
     };
     const given = trimmed(ctx.credentials);
     const credentials = def.normalizeCredentials ? def.normalizeCredentials({ ...given }) : given;
-    const missing = def.credentials.filter((name) => !credentials[name]);
-    if (missing.length) {
-      return failure(`${label} is not connected: the ${missing.map(credentialLabel).join(' and ')} ${missing.length > 1 ? 'are' : 'is'} missing.`);
-    }
+    const has = (name: string): boolean => Boolean(credentials[name]);
+    const unmet = unmetAlternatives(required, has);
+    if (unmet.length) return failure(notConnected(unmet));
+    const complete = required.filter((list) => list.every(has));
+    // The credentials the call goes ahead with: those of its complete lists.
+    const inUse = def.credentials.filter((name) => complete.some((list) => list.includes(name)));
     // Credential origins are this call's only: they come from the values the host passed.
     const fieldOrigins = new Map<string, string>();
     for (const name of def.originFields ?? []) {
+      // An origin field the call goes ahead without may be empty: it then gives no origin.
+      if (!given[name] && !inUse.includes(name)) continue;
       const site = parseSiteUrl(given[name] ?? '');
       if (!site.ok) return failure(`${label} is not connected correctly: the ${credentialLabel(name)} ${site.problem}. Nothing was sent to ${label}.`);
       fieldOrigins.set(name, site.origin);
@@ -223,7 +348,8 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
       tool: tool.name,
       readOnly: tool.kind === 'read',
       origins,
-      credentialLabel: def.credentials.map(credentialLabel).join(' and '),
+      // A 401 names the credentials in use (for a module that needs none, the ones given).
+      credentialLabels: (inUse.length ? inUse : def.credentials.filter(has)).map(credentialLabel),
       ctx,
       authHeaders: () => def.authHeaders?.(frozenCredentials) ?? {},
       log,
@@ -238,7 +364,7 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
       origins: Object.freeze([...origins]),
       originOf: (credential) => {
         const origin = fieldOrigins.get(credential);
-        if (!origin) throw new Error(`${credential} is not an origin field`);
+        if (!origin) throw new Error(`${credential} gives no origin in this call`);
         return origin;
       },
       api: http.api,
@@ -282,6 +408,8 @@ export function defineConnector(def: ConnectorDefinition): ConnectorModule {
     origins: [...def.origins],
     originFields: [...(def.originFields ?? [])],
     credentials: [...def.credentials],
+    requiredCredentials: required.map((list) => [...list]),
+    accountPickers: (def.accountPickers ?? []).map(copyPicker),
     tools: descriptors,
     call,
   });

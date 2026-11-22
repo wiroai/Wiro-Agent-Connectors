@@ -1,3 +1,4 @@
+import { requiredAlternatives, unmetAlternatives } from '../core/credentials.js';
 import type { ConnectorAccounts, ConnectorModule } from '../types.js';
 
 /** The environment variable a credential is read from: <VENDOR>_<CREDENTIAL>, e.g. DEVTO_API_KEY. */
@@ -14,30 +15,43 @@ export const ACCESS_TOKEN_CREDENTIAL = 'access_token';
 
 export interface EnvCredentials {
   credentials: Record<string, string>;
-  /** The variables that are not set, e.g. ["DEVTO_API_KEY"]. */
+  /**
+   * The variables still to set before a call can go ahead, e.g.
+   * ["DEVTO_API_KEY"]; empty once one of the module's requiredCredentials
+   * lists is complete. With several lists, `needed` keeps them apart.
+   */
   missing: string[];
+  /**
+   * What each requiredCredentials list still lacks, e.g.
+   * [["META_ADS_ACCESS_TOKEN"], ["META_ADS_SYSTEM_USER_TOKEN"]]: setting the
+   * variables of any one of them is enough. Empty once a list is complete.
+   */
+  needed: string[][];
 }
 
 /**
  * The credentials of a module from <VENDOR>_<CREDENTIAL> variables. Every
- * declared credential is required. An OAuth access token is read from
+ * declared credential is read; the module's requiredCredentials say which
+ * are needed (by default all of them). An OAuth access token is read from
  * <VENDOR>_ACCESS_TOKEN into access_token even when the module does not
  * declare it, as hosts pass a connection's token, and is then optional.
  */
-export function credentialsFromEnv(module: Pick<ConnectorModule, 'vendor' | 'credentials'>, env: NodeJS.ProcessEnv): EnvCredentials {
+export function credentialsFromEnv(
+  module: Pick<ConnectorModule, 'vendor' | 'credentials'> & Partial<Pick<ConnectorModule, 'requiredCredentials'>>,
+  env: NodeJS.ProcessEnv,
+): EnvCredentials {
   const credentials: Record<string, string> = {};
-  const missing: string[] = [];
   for (const name of module.credentials) {
-    const variable = envNameFor(module.vendor, name);
-    const value = env[variable]?.trim();
+    const value = env[envNameFor(module.vendor, name)]?.trim();
     if (value) credentials[name] = value;
-    else missing.push(variable);
   }
   if (!module.credentials.includes(ACCESS_TOKEN_CREDENTIAL)) {
     const token = env[envNameFor(module.vendor, ACCESS_TOKEN_CREDENTIAL)]?.trim();
     if (token) credentials[ACCESS_TOKEN_CREDENTIAL] = token;
   }
-  return { credentials, missing };
+  const needed = unmetAlternatives(requiredAlternatives(module), (name) => Boolean(credentials[name]))
+    .map((list) => list.map((name) => envNameFor(module.vendor, name)));
+  return { credentials, missing: [...new Set(needed.flat())], needed };
 }
 
 /** The variable that limits account-scoped arguments in the CLI. */

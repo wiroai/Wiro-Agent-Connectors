@@ -1,4 +1,5 @@
 import type { ToolContext } from '../types.js';
+import { andList } from './credentials.js';
 import { OutcomeUnknown, ToolFailure } from './errors.js';
 import { cleanVendorText, formatNumber, utf8Decode } from './text.js';
 
@@ -69,7 +70,8 @@ export interface HttpEnvironment {
   readOnly: boolean;
   /** The origins this call may reach; the first is the default. */
   origins: readonly string[];
-  credentialLabel: string;
+  /** The words for the credentials this call goes ahead with, e.g. ["dev.to API key"]: a 401 names them. */
+  credentialLabels: readonly string[];
   ctx: ToolContext;
   authHeaders(): Record<string, string>;
   log(text: string): void;
@@ -193,6 +195,9 @@ function parseBody(bytes: Uint8Array, contentType: string | null): unknown {
 export function createHttp(env: HttpEnvironment) {
   const { label, ctx } = env;
   const nothingChanged = env.readOnly ? '' : ' Nothing was changed.';
+  const checkCredentials = env.credentialLabels.length
+    ? `Check that the ${andList(env.credentialLabels)} ${env.credentialLabels.length > 1 ? 'are' : 'is'} correct and still active.`
+    : `Check that the ${label} credentials are correct and still active.`;
 
   function failureFor(status: number, headers: Headers, data: unknown, request: ApiRequest): Error {
     const message = vendorMessage(data);
@@ -222,7 +227,7 @@ export function createHttp(env: HttpEnvironment) {
     }
     if (status === 401) {
       return new ToolFailure(
-        withCustom(`${label} rejected the credentials (HTTP 401)${said}. Check that the ${env.credentialLabel} is correct and still active.${nothingChanged}`),
+        withCustom(`${label} rejected the credentials (HTTP 401)${said}. ${checkCredentials}${nothingChanged}`),
         { status, ...extra },
       );
     }

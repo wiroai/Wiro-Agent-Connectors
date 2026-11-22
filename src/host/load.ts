@@ -37,7 +37,21 @@ export function assertConnectorModule(value: unknown, vendor: string): asserts v
     else if (Array.isArray(originFields) && originFields.some((name) => !module.credentials?.includes(name))) {
       problems.push('an origin field is not one of its credentials');
     }
+    // A module built before requiredCredentials and accountPickers existed has
+    // neither: every credential is required, and it offers no picker.
+    const credentials: unknown[] = Array.isArray(module.credentials) ? module.credentials : [];
+    const required: unknown = module.requiredCredentials ?? [credentials];
+    if (!Array.isArray(required) || !required.length
+      || !required.every((list) => Array.isArray(list) && list.every((name) => credentials.includes(name)))) {
+      problems.push('requiredCredentials is not a list of lists of its credentials');
+    }
     if (!Array.isArray(module.tools)) problems.push('tools is missing');
+    const toolNames = Array.isArray(module.tools) ? module.tools.map((tool) => tool?.name) : [];
+    const pickers: unknown = module.accountPickers ?? [];
+    if (!Array.isArray(pickers)) problems.push('accountPickers is not a list');
+    else if (!pickers.every((picker) => typeof picker?.key === 'string' && toolNames.includes(picker.tool))) {
+      problems.push('an account picker has no key or names none of its tools');
+    }
     if (typeof module.call !== 'function') problems.push('call is missing');
   }
   if (problems.length) throw new Error(`${vendor}.js is not a connector module: ${problems.join(', ')}.`);

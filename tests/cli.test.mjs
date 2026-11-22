@@ -125,6 +125,12 @@ test('--list, --version, an unknown connector and a bad CONNECTOR_ACCOUNTS', () 
   assert.match(list.stdout, /bluesky\n {2}env: {3}BLUESKY_IDENTIFIER, BLUESKY_APP_PASSWORD\n {2}tools: get_profile, list_my_posts, create_post, api_get, api_request\n/);
   assert.match(list.stdout, /devto\n {2}env: {3}DEVTO_API_KEY/);
   assert.match(list.stdout, /serper\n {2}env: {3}SERPER_API_KEY\n {2}tools: web_search/);
+  // These need every variable and offer no account picker, so neither line appears.
+  assert.doesNotMatch(list.stdout, /needs:|accounts:/);
+
+  const help = spawnSync(process.execPath, [CLI, '--help'], { encoding: 'utf8' });
+  assert.equal(help.status, 0);
+  assert.match(help.stdout, /set CONNECTOR_ACCOUNTS to JSON such as\n\{"pages":\["123"\]\}, keyed by the account keys --list prints/);
 
   const version = spawnSync(process.execPath, [CLI, '--version'], { encoding: 'utf8' });
   assert.equal(version.stdout.trim(), VERSION);
