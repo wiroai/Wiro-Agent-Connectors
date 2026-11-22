@@ -10,9 +10,24 @@
 // Authorization: Bearer header to https://roasit.com only.
 //
 // The apps picker (key "apps", Roasit's 12-character app tokens) limits every
-// app-level read to the apps chosen for the connection.
+// app-level read to the apps chosen for the connection. A choice is a whole
+// app, all its platforms: the platform goes with each call. While a host
+// applies that choice, a connection with no app chosen reports on nothing:
+// every app-level tool refuses until apps are chosen. list_apps marks the
+// chosen ones.
 
-import { apiTools, defineConnector, jsonSize, OUTPUT_LIMIT_BYTES, requireAccounts, truncate, type ApiToolRequest, type ToolHelpers } from '../../core/index.js';
+import {
+  allowedAccounts,
+  apiTools,
+  defineConnector,
+  jsonSize,
+  OUTPUT_LIMIT_BYTES,
+  requireAccounts,
+  ToolFailure,
+  truncate,
+  type ApiToolRequest,
+  type ToolHelpers,
+} from '../../core/index.js';
 
 const ORIGIN = 'https://roasit.com';
 const MAX_ROWS = 1000;
@@ -26,7 +41,15 @@ const ERRORS = {
   404: 'Roasit found no such app: the app token is wrong, or the account behind the token cannot see that app',
 };
 
-const APP_TOKEN = { type: 'string' as const, pattern: '^[0-9a-f]{12}$', description: 'The app token, 12 lower-case hex characters, from list_apps.' };
+const APP_TOKEN = {
+  type: 'string' as const,
+  pattern: '^[0-9a-f]{12}$',
+  description: 'The app token, 12 lower-case hex characters, from list_apps (one of the apps marked selected: true when the connection is limited to chosen apps).',
+};
+/** The refusal while the host applies an app choice that holds no app. */
+const NO_APP_CHOSEN =
+  'No app is chosen for this Roasit connection yet, and it reports only on the apps chosen for it. Ask whoever manages the connection '
+  + 'to choose them (list_apps lists the apps the token sees). Nothing was sent to Roasit.';
 const DATE = { type: 'string' as const, pattern: '^\\d{4}-\\d{2}-\\d{2}$' };
 const CURSOR = { type: 'string' as const, description: 'nextCursor from the previous result, with the same other arguments.' };
 const VALUES = (description: string, pattern = '^[^,]{1,200}$') => ({
@@ -42,7 +65,13 @@ function compact(value: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined && item !== null && item !== ''));
 }
 
+/** Refuses an app-level call while the host applies an app choice with no app in it. */
+function requireSomeApp(h: ToolHelpers): void {
+  if (allowedAccounts(h.ctx.accounts, 'apps')?.length === 0) throw new ToolFailure(NO_APP_CHOSEN);
+}
+
 function requireApp(h: ToolHelpers, appToken: string): void {
+  requireSomeApp(h);
   requireAccounts(h.ctx.accounts, 'apps', appToken, 'app');
 }
 
@@ -138,7 +167,7 @@ const connector = defineConnector({
     {
       key: 'apps',
       label: 'Roasit apps',
-      description: 'The apps the agent may report on.',
+      description: 'The apps the agent may report on, each with all its platforms (a report picks the platform). Reports cover only the apps chosen here, so choose an app added to Roasit later too.',
       multiple: true,
       tool: 'list_apps',
       idField: 'app_token',
@@ -170,12 +199,17 @@ const connector = defineConnector({
       title: 'List Roasit apps',
       description:
         'Lists the apps the token can see: app token (the id every report takes), name, reporting currency, platforms (ios, android, web) and the '
-        + 'store ids (iOS bundle and Apple ID, Android package). Pass nextCursor back as cursor for more.',
+        + 'store ids (iOS bundle and Apple ID, Android package). When the connection is limited to chosen apps, those are marked selected: true, '
+        + 'and only they can be reported on, each on any of its platforms. Pass nextCursor back as cursor for more.',
       inputSchema: { type: 'object', properties: { cursor: CURSOR }, additionalProperties: false },
       async run(args: { cursor?: string }, h) {
+        const chosen = allowedAccounts(h.ctx.accounts, 'apps');
         const data = await get(h, '/api/apps');
         const apps: any[] = Array.isArray(data) ? data : Array.isArray(data?.apps) ? data.apps : [];
-        return offsetPage(h, 'apps', apps.map(trimApp), skipOf(h, args.cursor), MAX_ROWS, {});
+        const items = apps.map((app) => compact({ ...trimApp(app), selected: chosen?.includes(String(app?.app_token)) ? true : undefined }));
+        return offsetPage(h, 'apps', items, skipOf(h, args.cursor), MAX_ROWS, compact({
+          note: chosen?.length === 0 ? 'No app is chosen for this connection yet, so every app-level tool is refused until apps from this list are chosen for it.' : undefined,
+        }));
       },
     },
     {
@@ -185,8 +219,9 @@ const connector = defineConnector({
       description:
         "One app's report, equal to the Roasit dashboard's Reports screen: rows by the dimensions with the metrics asked for, totals (ratios of sums: "
         + 'quote them), the currency, notes, days whose spend is not final, and how deep each network\'s spend goes. null means not available yet, never '
-        + 'zero. Creative ROAS, for example: dimensions network, campaign, ad and metrics installs, spend, cpi, rev_all, roas_all, sorted -spend. Keep '
-        + 'platform for a one-platform view. Rows come in pages: pass nextCursor back as cursor with the same other arguments.',
+        + 'zero. Creative ROAS, for example: dimensions network, campaign, ad and metrics installs, spend, cpi, rev_all, roas_all, sorted -spend. The '
+        + 'platform goes with each call: give platform for a one-platform view (list_apps shows the app\'s platforms); without it the report covers '
+        + 'the whole app. Rows come in pages: pass nextCursor back as cursor with the same other arguments.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -397,7 +432,8 @@ const connector = defineConnector({
       },
     },
     // Only api_get: the token can make GET calls only. Under an account lock a
-    // request must name a chosen app.
+    // request must name a chosen app, and with no app chosen it is refused
+    // with the sentence the other tools give.
     ...apiTools({
       label: 'Roasit',
       description:
@@ -406,7 +442,15 @@ const connector = defineConnector({
         + 'app_token.',
       basePath: '/api/',
       accounts: { key: 'apps', label: 'app', ids: requestApps },
-    }).filter((tool) => tool.name === 'api_get'),
+    })
+      .filter((tool) => tool.name === 'api_get')
+      .map((tool) => ({
+        ...tool,
+        async run(args: unknown, h: ToolHelpers) {
+          requireSomeApp(h);
+          return tool.run(args, h);
+        },
+      })),
   ],
 });
 

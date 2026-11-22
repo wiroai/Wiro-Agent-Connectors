@@ -21,8 +21,8 @@ Quick start table:
 | Tool | Kind | What it does |
 | --- | --- | --- |
 | `get_account` | read | The Roasit account behind the token and the token's name. |
-| `list_apps` | read | The apps the token sees: app token, name, reporting currency, platforms, store ids. Lists the candidates of the `apps` account picker. |
-| `get_report` | read | One app's report: rows by day, platform, country, network, campaign, ad group or ad, with the metrics asked for, filters, sort, totals, currency, notes, spend freshness and spend depth, in pages. |
+| `list_apps` | read | The apps the token sees: app token, name, reporting currency, platforms, store ids, with `selected: true` on the apps chosen for the connection. Lists the candidates of the `apps` account picker. |
+| `get_report` | read | One app's report, on one platform (`platform`) or the whole app: rows by day, platform, country, network, campaign, ad group or ad, with the metrics asked for, filters, sort, totals, currency, notes, spend freshness and spend depth, in pages. |
 | `list_metrics` | read | The metric catalogue, with each metric's kind and the dimensions and filters it is allowed with. |
 | `list_networks` | read | Network slugs, labels and whether each is paid. |
 | `get_skan_report` | read | An app's SKAdNetwork postback status and rows by day and network, with unmapped sources. |
@@ -32,7 +32,7 @@ Quick start table:
 | `list_events` | read | An app's SDK events and their conversion mapping. |
 | `api_get` | read | Any other GET of the Roasit API under `/api/`. |
 
-Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`). A selection is a whole app: one Roasit app token covers all of the app's platforms, and `get_report` (`platform`), `get_reconciliation` and `get_skan_report` scope a call to one platform.
+Account picker `apps` (Roasit apps, one or more, listed by `list_apps`): a connection reports only on the apps chosen for it, so a host that offers the picker needs at least one app chosen. With none chosen, every app-level tool and `api_get` refuse before anything is sent (`get_account`, `list_apps`, `list_metrics` and `list_networks` without an app still answer); an app added to the account later is covered once it is chosen too. `list_apps` marks the chosen apps `selected: true`; every app-level tool refuses an app token outside the selection before anything is sent, and `api_get` must name a chosen app (`/api/apps/<app_token>/...` or `app_token`). A selection is a whole app, never one platform of it: one Roasit app token covers all of the app's platforms (`list_apps` shows them), and the platform goes with each call: `get_report`'s `platform` (`ios`, `android`, `web`; without it, the whole app), `get_reconciliation`'s `platform`, and `get_skan_report` for iOS.
 
 Connection check: `get_account` with no arguments.
 
