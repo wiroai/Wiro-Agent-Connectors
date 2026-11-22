@@ -55,8 +55,8 @@ Every read is a GraphQL query sent by POST, which changes nothing.
 | `publish_post` | create | Publishes a new post at once, with no draft. |
 | `update_post` | update | Changes a live post at once. |
 | `submit_draft_for_review` | update | Hands a contributor's draft to a team blog's editors. |
-| `graphql_query` | read | Any other GraphQL query, such as a tag, a user, scheduled drafts or a post's comments. |
-| `graphql_mutation` | write | Any other GraphQL mutation, such as rejecting a submitted draft. Sent once, never retried. Deleting posts and drafts is not offered. |
+| `graphql_query` | read | Any other GraphQL query, such as a tag, a user, scheduled drafts or a post's comments. One query per call, with the fragments it uses. |
+| `graphql_mutation` | write | Any other GraphQL mutation, such as rejecting a submitted draft. One mutation per call, sent once, never retried. Deleting posts and drafts is not offered. |
 
 `create_draft` and `update_draft` take `send_newsletter`, which emails the blog's newsletter subscribers when the post goes live, and `delist`, which keeps a post out of Hashnode's feeds: both stay off unless asked for. `published_at` only backdates a post moved from another blog; it does not schedule.
 

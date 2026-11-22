@@ -12,12 +12,12 @@
 import { defineConnector, OutcomeUnknown, ToolFailure, type ToolHelpers } from '../../core/index.js';
 import {
   compact,
-  documentWords,
   failFromErrors,
   fitAnswer,
   gql,
   type GqlResult,
-  operationTypes,
+  type GraphqlDocument,
+  parseDocument,
   rootField,
   TEXT_WINDOW_BYTES,
   textWindow,
@@ -257,6 +257,25 @@ function mutationResult(result: GqlResult, field: string, inner: string): any {
     throw new OutcomeUnknown(`Hashnode answered without the ${inner}, so it is not known whether the change was made.`);
   }
   return value;
+}
+
+/**
+ * A document for the generic GraphQL tools, read as the server reads it, with
+ * exactly one operation (and any fragments it uses). One operation and no
+ * operationName: whatever the server reads differently, it then refuses a
+ * document with two operations rather than running one of them.
+ */
+function oneOperation(query: string, tool: string): { document: GraphqlDocument; type: string } {
+  const parsed = parseDocument(query);
+  if (!parsed.ok) throw new ToolFailure(`The document is not GraphQL that ${tool} can send: ${parsed.problem}. Nothing was sent.`);
+  const { document } = parsed;
+  if (document.operations.some((operation) => operation.type === 'subscription')) {
+    throw new ToolFailure('Subscriptions are not supported. Nothing was sent.');
+  }
+  if (document.operations.length > 1) {
+    throw new ToolFailure(`${tool} sends one operation per call (and the fragments it uses): send each one on its own. Nothing was sent.`);
+  }
+  return { document, type: document.operations[0]?.type ?? 'none' };
 }
 
 /** An answer with errors and no data at all: every top-level field null, or no data. */
@@ -582,25 +601,22 @@ const connector = defineConnector({
       title: 'Run a Hashnode GraphQL query',
       description:
         'Any other read of Hashnode\'s GraphQL API at https://gql-beta.hashnode.com, with the connected token, such as a tag, a user, '
-        + 'searchPostsOfPublication, scheduled drafts or a post\'s comments. Queries only; the endpoint serves its schema by introspection. '
-        + 'Returns data, and errors when some fields failed, cut to fit 32 KB (use first to page).',
+        + 'searchPostsOfPublication, scheduled drafts or a post\'s comments. One query per call, with any fragments it uses; the endpoint '
+        + 'serves its schema by introspection. Returns data, and errors when some fields failed, cut to fit 32 KB (use first to page).',
       inputSchema: {
         type: 'object',
         properties: {
-          query: { type: 'string', minLength: 1, maxLength: 20000, description: 'The GraphQL document: one or more queries, no mutation.' },
+          query: { type: 'string', minLength: 1, maxLength: 20000, description: 'The GraphQL document: one query (and its fragments), no mutation.' },
           variables: { type: 'object', description: 'The variables, e.g. {"host": "yourname.hashnode.dev"}.' },
-          operation_name: { type: 'string', pattern: '^[_A-Za-z][_0-9A-Za-z]*$', maxLength: 100, description: 'Which operation to run, when the document has several.' },
         },
         required: ['query'],
         additionalProperties: false,
       },
-      async run(args: { query: string; variables?: Record<string, unknown>; operation_name?: string }, h) {
-        const types = operationTypes(args.query);
-        if (types.includes('mutation') || types.includes('subscription')) {
-          throw new ToolFailure('graphql_query runs queries only: send a mutation with graphql_mutation. Nothing was sent.');
-        }
-        if (!types.includes('query')) throw new ToolFailure('The document has no query operation. Nothing was sent.');
-        const result = await gql(h, args.query, args.variables, { ...(args.operation_name ? { operationName: args.operation_name } : {}) });
+      async run(args: { query: string; variables?: Record<string, unknown> }, h) {
+        const { type } = oneOperation(args.query, 'graphql_query');
+        if (type === 'mutation') throw new ToolFailure('graphql_query runs queries only: send a mutation with graphql_mutation. Nothing was sent.');
+        if (type !== 'query') throw new ToolFailure('The document has no query operation. Nothing was sent.');
+        const result = await gql(h, args.query, args.variables);
         if (failedWhole(result)) failFromErrors(result.errors, false);
         return fitAnswer(compact({ data: result.data, errors: warningsOf(result) }));
       },
@@ -611,26 +627,25 @@ const connector = defineConnector({
       check: 'graphql_query',
       title: 'Run a Hashnode GraphQL mutation',
       description:
-        'Any other change through Hashnode\'s GraphQL API, with the connected token, such as rejecting a submitted draft. Sent once, never '
-        + 'retried. Deleting posts and drafts (removePost, deleteDraft) is not offered: delete them in Hashnode.',
+        'Any other change through Hashnode\'s GraphQL API, with the connected token, such as rejecting a submitted draft. One mutation per '
+        + 'call, with any fragments it uses; sent once, never retried. Deleting posts and drafts (removePost, deleteDraft) is not offered: '
+        + 'delete them in Hashnode.',
       inputSchema: {
         type: 'object',
         properties: {
-          query: { type: 'string', minLength: 1, maxLength: 120000, description: 'The GraphQL document with one mutation.' },
+          query: { type: 'string', minLength: 1, maxLength: 120000, description: 'The GraphQL document: one mutation (and its fragments).' },
           variables: { type: 'object', description: 'The variables, e.g. {"input": {...}}.' },
-          operation_name: { type: 'string', pattern: '^[_A-Za-z][_0-9A-Za-z]*$', maxLength: 100, description: 'Which operation to run, when the document has several.' },
         },
         required: ['query'],
         additionalProperties: false,
       },
-      async run(args: { query: string; variables?: Record<string, unknown>; operation_name?: string }, h) {
-        const types = operationTypes(args.query);
-        if (types.includes('subscription')) throw new ToolFailure('Subscriptions are not supported. Nothing was sent.');
-        if (!types.includes('mutation')) throw new ToolFailure('The document has no mutation: run queries with graphql_query. Nothing was sent.');
-        const words = documentWords(args.query);
-        const deleting = DELETING_FIELDS.find((field) => new RegExp(`\\b${field}\\b`).test(words));
+      async run(args: { query: string; variables?: Record<string, unknown> }, h) {
+        const { document, type } = oneOperation(args.query, 'graphql_mutation');
+        if (type !== 'mutation') throw new ToolFailure('The document has no mutation: run queries with graphql_query. Nothing was sent.');
+        // Every name outside strings and comments, so an alias or a fragment cannot carry a delete either.
+        const deleting = DELETING_FIELDS.find((field) => document.names.has(field));
         if (deleting) throw new ToolFailure(`${deleting} is not offered here: Hashnode deletes for good, so delete it in Hashnode itself. Nothing was sent.`);
-        const result = await gql(h, args.query, args.variables, { write: true, ...(args.operation_name ? { operationName: args.operation_name } : {}) });
+        const result = await gql(h, args.query, args.variables, { write: true });
         if (failedWhole(result)) failFromErrors(result.errors, true);
         return fitAnswer(compact({ data: result.data, errors: warningsOf(result) }));
       },

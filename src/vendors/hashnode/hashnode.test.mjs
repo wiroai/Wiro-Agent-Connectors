@@ -332,6 +332,33 @@ test('graphql_query runs queries only, as a safe read, and returns data with any
   assert.match(bad.payload.error, /Hashnode rejected the request \(HTTP 400\): Cannot query field "stats" on type "Post"/);
 });
 
+test('graphql_query reads strings as the server does, so a document cannot hide a mutation from it', async () => {
+  const { module, fetch, ctx } = setup([() => jsonResponse(200, { data: { tag: { id: 't1' } } })]);
+  // graphql-js reads \""" inside a block string as an escaped quote: the string goes on, and a second operation follows it.
+  const hidden = 'query Q { tag(slug: """ \\""" """) { id } }\nmutation M { m: updatePost(input: {id: "0123456789abcdef01234567", title: "pwned"}) { post { id } } }';
+  const refused = await callTool(module, 'graphql_query', { query: hidden }, ctx);
+  assert.equal(refused.isError, true);
+  assert.match(refused.payload.error, /sends one operation per call/);
+  // Neither an operation name nor a second query gets through.
+  const named = await callTool(module, 'graphql_query', { query: 'query Q { me { id } }', operation_name: 'M' }, ctx);
+  assert.match(named.payload.error, /Invalid arguments for graphql_query/);
+  const two = await callTool(module, 'graphql_query', { query: 'query A { me { id } } query B { me { username } }' }, ctx);
+  assert.match(two.payload.error, /sends one operation per call/);
+  // Whatever the lexer cannot read the way the server does is refused, not guessed at.
+  for (const document of ['{ tag(slug: "open', '{ tag(slug: """open) { id } }', 'query { a(x: "\\q") }', '{ me { id } } %', 'type Query { me: User }', '{ me { id }']) {
+    const broken = await callTool(module, 'graphql_query', { query: document }, ctx);
+    assert.equal(broken.isError, true, document);
+    assert.match(broken.payload.error, /Nothing was sent/, document);
+  }
+  assert.equal(fetch.calls.length, 0, 'nothing reached Hashnode');
+
+  // The same escape in a lone query is one string, and the query goes out as it is, without an operation name.
+  const fine = 'query Q { tag(slug: """a \\""" b""") { id } } fragment F on Tag { id }';
+  const ok = await callTool(module, 'graphql_query', { query: fine }, ctx);
+  assert.equal(ok.isError, false, ok.payload.error);
+  assert.deepEqual(fetch.calls[0].json, { query: fine });
+});
+
 test('graphql_mutation needs a mutation and never deletes posts or drafts', async () => {
   const { module, fetch, ctx } = setup([() => jsonResponse(200, { data: { rejectDraftSubmission: { draft: { id: 'd1' } } } })]);
   const query = 'mutation Reject($input: RejectDraftSubmissionInput!) { rejectDraftSubmission(input: $input) { draft { id } } }';
@@ -343,6 +370,22 @@ test('graphql_mutation needs a mutation and never deletes posts or drafts', asyn
     const refused = await callTool(module, 'graphql_mutation', { query: `mutation { ${field}(input: {id: "1"}) { __typename } }` }, ctx);
     assert.match(refused.payload.error, new RegExp(`${field} is not offered here`));
   }
+  // A comment ends at its line, so these block-string marks hide nothing; an escaped quote keeps its string going; an
+  // alias or a fragment still names the field.
+  const tricks = [
+    'mutation M { # """\nremovePost(input: {id: "0123456789abcdef01234567"}) { post { id } }\n# """\n}',
+    'mutation M { publishDraft(input: {draftId: """ \\""" """}) { post { id } } removePost(input: {id: "x"}) { post { id } } }',
+    'mutation M { gone: deleteDraft(id: "0123456789abcdef01234567") { __typename } }',
+    'mutation M { ...Gone } fragment Gone on Mutation { removePost(input: {id: "x"}) { post { id } } }',
+  ];
+  for (const query of tricks) {
+    const refused = await callTool(module, 'graphql_mutation', { query }, ctx);
+    assert.match(refused.payload.error, /(removePost|deleteDraft) is not offered here/, query);
+  }
+  const twoOps = await callTool(module, 'graphql_mutation', { query: 'mutation A { likePost(input: {postId: "1"}) { post { id } } } mutation B { likePost(input: {postId: "2"}) { post { id } } }' }, ctx);
+  assert.match(twoOps.payload.error, /sends one operation per call/);
+  const named = await callTool(module, 'graphql_mutation', { query, operation_name: 'Reject' }, ctx);
+  assert.match(named.payload.error, /Invalid arguments for graphql_mutation/);
   assert.equal(fetch.calls.length, 1);
 });
 

@@ -19,14 +19,17 @@ export interface GqlResult {
   errors: any[];
 }
 
-/** One GraphQL request. Reads go as safe POSTs; a mutation is the tool's write. */
+/**
+ * One GraphQL request. Reads go as safe POSTs; a mutation is the tool's write.
+ * Every document holds one operation, so no operationName is sent.
+ */
 export async function gql(
   h: ToolHelpers,
   query: string,
   variables: Record<string, unknown> | undefined,
-  options: { write?: boolean; operationName?: string } = {},
+  options: { write?: boolean } = {},
 ): Promise<GqlResult> {
-  const body = compact({ query, variables, operationName: options.operationName });
+  const body = compact({ query, variables });
   const size = utf8Length(JSON.stringify(body));
   if (size > MAX_REQUEST_BYTES) {
     throw new ToolFailure(
@@ -108,71 +111,218 @@ export function warningsOf(result: GqlResult): string[] | undefined {
   return result.errors.slice(0, 5).map((error) => cleanVendorText(String(error?.message ?? 'error'), 300) ?? 'error');
 }
 
-/**
- * The operation types of a GraphQL document, in order: "query" (also for an
- * anonymous { ... }), "mutation", "subscription" or "fragment". Strings,
- * block strings, comments and argument lists are skipped.
- */
-export function operationTypes(document: string): string[] {
-  const types: string[] = [];
-  let depth = 0;
-  let parens = 0;
-  let atDefinition = true;
-  let index = 0;
-  const length = document.length;
-  while (index < length) {
-    const char = document[index] as string;
-    if (char === '#') {
-      while (index < length && document[index] !== '\n' && document[index] !== '\r') index++;
+// Reading a GraphQL document as the server does. The generic tools decide what
+// a document may do from its operations and names, so the lexer follows the
+// GraphQL specification (and graphql-js, the server's parser) to the letter:
+// one pass, comments, strings and block strings (with their \""" escape) read
+// the way the server reads them, and anything it would not read is refused
+// rather than guessed at.
+
+interface Token {
+  kind: 'name' | 'punctuator' | 'string' | 'number';
+  value: string;
+}
+
+export interface GraphqlOperation {
+  type: 'query' | 'mutation' | 'subscription';
+  name?: string;
+}
+
+export interface GraphqlDocument {
+  /** The operations, in order; an anonymous { ... } is a query. */
+  operations: GraphqlOperation[];
+  fragments: number;
+  /** Every name outside strings and comments: fields, aliases, arguments, types, directives. */
+  names: Set<string>;
+}
+
+const PUNCTUATORS = new Set(['!', '$', '&', '(', ')', ':', '=', '@', '[', ']', '{', '|', '}']);
+const CLOSERS: Record<string, string> = { '}': '{', ')': '(', ']': '[' };
+const isDigit = (char: string | undefined): boolean => char !== undefined && char >= '0' && char <= '9';
+const isNameStart = (char: string | undefined): boolean => char !== undefined && /^[A-Za-z_]$/.test(char);
+const isHex = (char: string | undefined): boolean => char !== undefined && /^[0-9A-Fa-f]$/.test(char);
+
+class NotGraphql extends Error {}
+
+/** The end of a number starting at `start`, as graphql-js reads IntValue and FloatValue. */
+function readNumber(source: string, start: number): number {
+  let index = start;
+  if (source[index] === '-') index++;
+  if (source[index] === '0') {
+    index++;
+    if (isDigit(source[index])) throw new NotGraphql('a number with a leading zero');
+  } else if (isDigit(source[index])) {
+    while (isDigit(source[index])) index++;
+  } else {
+    throw new NotGraphql('a "-" without a number');
+  }
+  if (source[index] === '.') {
+    index++;
+    if (!isDigit(source[index])) throw new NotGraphql('a number without digits after its "."');
+    while (isDigit(source[index])) index++;
+  }
+  if (source[index] === 'e' || source[index] === 'E') {
+    index++;
+    if (source[index] === '+' || source[index] === '-') index++;
+    if (!isDigit(source[index])) throw new NotGraphql('a number without digits in its exponent');
+    while (isDigit(source[index])) index++;
+  }
+  if (source[index] === '.' || isNameStart(source[index])) throw new NotGraphql('a number followed by a name or a "."');
+  return index;
+}
+
+/** The end of a "..." string starting at `start`: its escapes are checked, and a line break ends nothing but the document. */
+function readString(source: string, start: number): number {
+  let index = start + 1;
+  for (;;) {
+    const char = source[index];
+    if (char === undefined || char === '\n' || char === '\r') throw new NotGraphql('a string that is not closed on its line');
+    if (char === '"') return index + 1;
+    if (char !== '\\') {
+      index++;
       continue;
     }
-    if (char === '"') {
-      if (document.startsWith('"""', index)) {
-        const end = document.indexOf('"""', index + 3);
-        index = end === -1 ? length : end + 3;
-        continue;
-      }
-      index++;
-      while (index < length && document[index] !== '"' && document[index] !== '\n') {
-        if (document[index] === '\\') index++;
-        index++;
-      }
-      index++;
-      continue;
+    const escaped = source[index + 1];
+    if (escaped !== undefined && '"\\/bfnrt'.includes(escaped)) {
+      index += 2;
+    } else if (escaped === 'u' && source[index + 2] === '{') {
+      let end = index + 3;
+      while (isHex(source[end])) end++;
+      if (end === index + 3 || source[end] !== '}') throw new NotGraphql('a broken \\u{...} escape in a string');
+      index = end + 1;
+    } else if (escaped === 'u' && [2, 3, 4, 5].every((offset) => isHex(source[index + offset]))) {
+      index += 6;
+    } else {
+      throw new NotGraphql('an unknown escape in a string');
     }
-    if (char === '(') {
-      parens++;
-    } else if (char === ')') {
-      parens = Math.max(0, parens - 1);
-    } else if (parens === 0 && char === '{') {
-      if (depth === 0 && atDefinition) types.push('query');
-      depth++;
-      atDefinition = false;
-    } else if (parens === 0 && char === '}') {
-      depth = Math.max(0, depth - 1);
-      if (depth === 0) atDefinition = true;
-    } else if (depth === 0 && parens === 0 && /[A-Za-z_]/.test(char)) {
-      let end = index;
-      while (end < length && /[A-Za-z0-9_]/.test(document[end] as string)) end++;
-      const word = document.slice(index, end);
-      if (atDefinition && ['query', 'mutation', 'subscription', 'fragment'].includes(word)) {
-        types.push(word);
-        atDefinition = false;
-      }
-      index = end;
+  }
+}
+
+/** The end of a """...""" block string starting at `start`. Inside it, \""" is a quote, not its end. */
+function readBlockString(source: string, start: number): number {
+  let index = start + 3;
+  for (;;) {
+    if (index >= source.length) throw new NotGraphql('a block string that is not closed');
+    if (source.startsWith('"""', index)) return index + 3;
+    if (source.startsWith('\\"""', index)) {
+      index += 4;
       continue;
     }
     index++;
   }
-  return types;
 }
 
-/** The document without its comments and strings, to look for field names. */
-export function documentWords(document: string): string {
-  return document
-    .replace(/"""[\s\S]*?"""/g, ' ')
-    .replace(/"(?:[^"\\\n]|\\.)*"/g, ' ')
-    .replace(/#[^\n\r]*/g, ' ');
+/** The tokens of a document, without its ignored parts (white space, line breaks, commas, comments). */
+function tokenize(source: string): Token[] {
+  const tokens: Token[] = [];
+  let index = 0;
+  while (index < source.length) {
+    const char = source[index] as string;
+    if (char === ' ' || char === '\t' || char === '\n' || char === '\r' || char === ',' || char === '﻿') {
+      index++;
+    } else if (char === '#') {
+      while (index < source.length && source[index] !== '\n' && source[index] !== '\r') index++;
+    } else if (char === '"') {
+      const end = source.startsWith('"""', index) ? readBlockString(source, index) : readString(source, index);
+      tokens.push({ kind: 'string', value: '' });
+      index = end;
+    } else if (isNameStart(char)) {
+      let end = index + 1;
+      while (end < source.length && /^[A-Za-z0-9_]$/.test(source[end] as string)) end++;
+      tokens.push({ kind: 'name', value: source.slice(index, end) });
+      index = end;
+    } else if (char === '-' || isDigit(char)) {
+      const end = readNumber(source, index);
+      tokens.push({ kind: 'number', value: source.slice(index, end) });
+      index = end;
+    } else if (source.startsWith('...', index)) {
+      tokens.push({ kind: 'punctuator', value: '...' });
+      index += 3;
+    } else if (PUNCTUATORS.has(char)) {
+      tokens.push({ kind: 'punctuator', value: char });
+      index++;
+    } else {
+      throw new NotGraphql(`the character ${JSON.stringify(char)}`);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Reads a GraphQL document the way the server does: its operations (type and
+ * name), its fragments, and every name in it. It refuses what is not an
+ * executable document of queries, mutations, subscriptions and fragments.
+ */
+export function parseDocument(source: string): { ok: true; document: GraphqlDocument } | { ok: false; problem: string } {
+  let tokens: Token[];
+  try {
+    tokens = tokenize(source);
+  } catch (error) {
+    if (error instanceof NotGraphql) return { ok: false, problem: `it has ${error.message}` };
+    throw error;
+  }
+  let index = 0;
+  const is = (kind: Token['kind'], value?: string): boolean => tokens[index]?.kind === kind && (value === undefined || tokens[index]?.value === value);
+  /** Steps over a (...), [...] or {...} group and everything inside it; false when the brackets do not match. */
+  const skipGroup = (): boolean => {
+    const open: string[] = [];
+    do {
+      const token = tokens[index];
+      if (!token) return false;
+      if (token.kind === 'punctuator') {
+        if (token.value === '{' || token.value === '(' || token.value === '[') open.push(token.value);
+        else if (CLOSERS[token.value] && open.pop() !== CLOSERS[token.value]) return false;
+      }
+      index++;
+    } while (open.length);
+    return true;
+  };
+  const skipDirectives = (): boolean => {
+    while (is('punctuator', '@')) {
+      index++;
+      if (!is('name')) return false;
+      index++;
+      if (is('punctuator', '(') && !skipGroup()) return false;
+    }
+    return true;
+  };
+  const operations: GraphqlOperation[] = [];
+  let fragments = 0;
+  const broken = (what: string) => ({ ok: false as const, problem: what });
+  while (index < tokens.length) {
+    if (is('punctuator', '{')) {
+      if (!skipGroup()) return broken('its brackets do not match');
+      operations.push({ type: 'query' });
+    } else if (is('name', 'query') || is('name', 'mutation') || is('name', 'subscription')) {
+      const type = (tokens[index] as Token).value as GraphqlOperation['type'];
+      index++;
+      let name: string | undefined;
+      if (is('name')) {
+        name = (tokens[index] as Token).value;
+        index++;
+      }
+      if (is('punctuator', '(') && !skipGroup()) return broken('its brackets do not match');
+      if (!skipDirectives()) return broken('a directive is cut short');
+      if (!is('punctuator', '{')) return broken(`the ${type}${name ? ` ${name}` : ''} has no selection set`);
+      if (!skipGroup()) return broken('its brackets do not match');
+      operations.push({ type, ...(name ? { name } : {}) });
+    } else if (is('name', 'fragment')) {
+      index++;
+      if (!is('name') || is('name', 'on')) return broken('a fragment has no name');
+      index++;
+      if (!is('name', 'on')) return broken('a fragment has no type condition (on Type)');
+      index++;
+      if (!is('name')) return broken('a fragment has no type condition (on Type)');
+      index++;
+      if (!skipDirectives()) return broken('a directive is cut short');
+      if (!is('punctuator', '{') || !skipGroup()) return broken('a fragment has no selection set');
+      fragments++;
+    } else {
+      return broken('a definition that is not a query, mutation, subscription or fragment');
+    }
+  }
+  const names = new Set(tokens.filter((token) => token.kind === 'name').map((token) => token.value));
+  return { ok: true, document: { operations, fragments, names } };
 }
 
 /** A generic GraphQL answer that fits the 32 KB limit: long strings cut first, then the text itself. */
