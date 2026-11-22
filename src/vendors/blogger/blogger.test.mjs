@@ -180,6 +180,44 @@ test('get_post returns the body, in parts when it is long', async () => {
   assert.equal(parts.join(''), long);
 });
 
+test('a body full of quotes with many long image URLs comes in parts that join up, none cut to fit', async () => {
+  const body = `${'<p class="note" style="margin:0">"Quoted" words\\ and a line\n</p>\t'.repeat(1200)}<img src="https://images.example.com/${'q'.repeat(400)}.jpg" alt="a &quot;view&quot;">`;
+  const images = Array.from({ length: 60 }, (_, index) => ({ url: `https://blogger.googleusercontent.com/img/b/${'A'.repeat(450)}/${index}/photo.jpg` }));
+  const { module, ctx } = setup(() => jsonResponse(200, { ...fx('post.json'), content: body, images }));
+  const parts = [];
+  let offset = 0;
+  for (let round = 0; round < 50; round++) {
+    const { payload, result, isError } = await callTool(module, 'get_post', { post_id: '3342298867103948312', content_offset: offset }, ctx);
+    assert.equal(isError, false, payload.error);
+    assert.ok(textBytes(result) <= 32 * 1024, `part ${round} is ${textBytes(result)} bytes`);
+    assert.equal(payload.truncated, undefined, `part ${round} was cut to fit`);
+    if (round === 0) {
+      assert.ok(payload.images.length > 0 && payload.images.length <= 20);
+      assert.equal(payload.images[0], images[0].url, 'image URLs are never cut');
+    } else {
+      assert.equal(payload.images, undefined, 'image URLs come with the first part only');
+    }
+    parts.push(payload.content);
+    if (payload.next_content_offset === undefined) break;
+    assert.ok(payload.next_content_offset > offset);
+    offset = payload.next_content_offset;
+  }
+  assert.ok(parts.length > 3);
+  assert.equal(parts.join(''), body, 'the parts join up to the whole body, so an edit of it loses nothing');
+
+  const page = setup(() => jsonResponse(200, { ...fx('pages.json').items[0], content: body }));
+  const pageParts = [];
+  offset = 0;
+  for (let round = 0; round < 50; round++) {
+    const { payload, result } = await callTool(page.module, 'get_page', { page_id: '5512345678901234567', content_offset: offset }, page.ctx);
+    assert.ok(textBytes(result) <= 32 * 1024);
+    pageParts.push(payload.content);
+    if (payload.next_content_offset === undefined) break;
+    offset = payload.next_content_offset;
+  }
+  assert.equal(pageParts.join(''), body);
+});
+
 test('search_posts and list_labels', async () => {
   const { module, fetch, ctx } = setup((request) => (request.path.endsWith('/search')
     ? jsonResponse(200, { items: fx('posts.json').items.slice(2) })
@@ -195,6 +233,12 @@ test('search_posts and list_labels', async () => {
   assert.equal(fetch.calls[1].query.fields, 'items(labels)');
   assert.deepEqual(labels.payload.labels, [{ label: 'travel', posts: 3 }, { label: 'lisbon', posts: 2 }, { label: 'food', posts: 1 }, { label: 'porto', posts: 1 }]);
   assert.equal(labels.payload.posts_scanned, 5);
+
+  // Without order_by, Blogger sorts by published time, newest first, and the tool says so.
+  await callTool(module, 'search_posts', { query: 'sintra' }, ctx);
+  assert.equal(fetch.calls[2].query.orderBy, undefined);
+  const search = module.tools.find((tool) => tool.name === 'search_posts');
+  assert.match(search.inputSchema.properties.order_by.description, /published time \(default\)/);
 });
 
 test('create_draft_post saves a draft and returns its editor link', async () => {

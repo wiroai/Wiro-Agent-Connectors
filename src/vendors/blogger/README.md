@@ -42,7 +42,7 @@ With a choice in place (`CONNECTOR_ACCOUNTS={"blogs":["4967929378133675647"]}` i
 | `list_blogs` | read | The blogs the account owns or writes for: id, name, URL and the number of posts and pages. The `blogs` picker. |
 | `list_posts` | read | Draft, scheduled and live posts, newest first, with status, labels, times, URL, editor link and comment count. Filters for labels and a time range. |
 | `get_post` | read | One post with its HTML body; a long body comes in parts (`content_offset`). |
-| `search_posts` | read | Live posts that match some words. |
+| `search_posts` | read | Live posts that match some words, newest first (by published time, or by last update). |
 | `list_labels` | read | The labels of the newest live posts, most used first. |
 | `create_draft_post` | create | Saves a new post as a draft (title, HTML body, labels). Nothing becomes public. |
 | `update_post` | update | Changes the title, the body or the labels; only the fields given change. |
@@ -65,5 +65,5 @@ With a choice in place (`CONNECTOR_ACCOUNTS={"blogs":["4967929378133675647"]}` i
 - Labels replace the post's whole list, and Blogger refuses labels that together run past about 200 characters. The search description and a custom permalink are set in Blogger's editor; the API has no field for them.
 - Times are RFC 3339; the connector sends them in UTC. A `publish_at` in the past back-dates the post and publishes it at once.
 - A Google account that is only an author on a blog gets HTTP 403 on admin reads: pass `view: "author"`.
-- Lists return at most 50 items per call; bodies come in parts of about 24 KB. Every result stays under 32 KB.
+- Lists return at most 50 items per call. A long body comes in parts, each as large as the 32 KB result allows (about 16 KB or more), and the parts join up to the whole body: join them before editing it. A post's image URLs (up to 20) come with the first part. Every result stays under 32 KB.
 - Google applies the Blogger API quota of the Cloud project behind the OAuth client. Nothing is retried: a write with an unclear outcome comes back as unknown, with the read tool to check.

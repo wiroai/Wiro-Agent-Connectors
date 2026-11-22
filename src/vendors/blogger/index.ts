@@ -14,6 +14,7 @@ import {
   allowedAccounts,
   apiTools,
   defineConnector,
+  jsonSize,
   requireAccounts,
   ToolFailure,
   truncate,
@@ -22,14 +23,18 @@ import {
   type ToolDefinition,
   type ToolHelpers,
 } from '../../core/index.js';
-import { compact, count, googleApi, sliceText, utcTime } from './google.js';
+import { compact, count, cursorNumber, fitTextPart, googleApi, utcTime } from './google.js';
 
 type Schema = ToolDefinition['inputSchema'];
 type Kind = 'post' | 'page';
 
 const BASE = '/blogger/v3';
-/** The most body text get_post and get_page return in one call, in UTF-8 bytes. */
-const CONTENT_BYTES = 24_000;
+/** The most room the fields besides the body take in a get_post or get_page result, so every part carries at least 16 KB of body. */
+const REST_BYTES = 16 * 1024;
+/** The most image URLs get_post lists (with the first part of the body). */
+const MAX_IMAGES = 20;
+/** The highest offset a list cursor may carry. */
+const MAX_OFFSET = 100_000;
 const ID = '^[0-9]{1,30}$';
 const TIME = '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(:\\d{2}(\\.\\d{1,9})?)?(Z|[+-]\\d{2}:\\d{2})$';
 const POST_STATUSES = { draft: 'DRAFT', scheduled: 'SCHEDULED', live: 'LIVE' } as const;
@@ -214,8 +219,8 @@ function listTool(kind: Kind): ToolDefinition {
     }, h) {
       const state = h.cursor(args.cursor);
       const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
-      const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-      const max = typeof state?.['n'] === 'number' ? state['n'] : args.max_results;
+      const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
+      const max = cursorNumber(state, 'n', args.max_results, 1, 50);
       const blogId = await resolveBlog(h, args.blog_id);
       const query: ApiRequest['query'] = {
         status: args.status.map((status) => (statuses as Record<string, string>)[status] as string),
@@ -255,8 +260,8 @@ function getTool(kind: Kind): ToolDefinition {
     title: kind === 'post' ? 'Get a Blogger post' : 'Get a Blogger page',
     description:
       `Reads one ${kind} of a Blogger blog with its HTML body: id, title, status, ${kind === 'post' ? 'labels, ' : ''}times, public URL, `
-      + `editor link and the body. A long body comes in parts: when next_content_offset is set, call again with content_offset set to it `
-      + `and join the parts before editing the body.`,
+      + `editor link${kind === 'post' ? ', the image URLs (with the first part)' : ''} and the body. A long body comes in parts: when `
+      + 'next_content_offset is set, call again with content_offset set to it and join the parts before editing the body.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -280,17 +285,24 @@ function getTool(kind: Kind): ToolDefinition {
         query,
         errors: { 403: VIEW_HELP, 404: `Blogger found no ${kind} ${id} on this blog` },
       });
-      const result: Record<string, unknown> = { blog_id: blogId, ...trimEntry(data, blogId, kind) };
-      if (kind === 'post' && Array.isArray(data?.images) && data.images.length) {
-        result['images'] = data.images.map((image: any) => image?.url).filter((url: unknown) => typeof url === 'string').slice(0, 20);
-      }
-      if (includeBody && typeof data?.content === 'string') {
-        const part = sliceText(data.content, Number(args['content_offset'] ?? 0), CONTENT_BYTES);
-        result['content_length'] = data.content.length;
-        result['content'] = part.text;
-        if (part.next !== undefined) result['next_content_offset'] = part.next;
-      }
-      return result;
+      const entry: Record<string, unknown> = { blog_id: blogId, ...trimEntry(data, blogId, kind) };
+      const offset = Number(args['content_offset'] ?? 0);
+      let images: string[] = kind === 'post' && offset === 0 && Array.isArray(data?.images)
+        ? data.images.map((image: any) => image?.url).filter((url: unknown): url is string => typeof url === 'string').slice(0, MAX_IMAGES)
+        : [];
+      const content = includeBody && typeof data?.content === 'string' ? data.content as string : undefined;
+      const build = (part: string, next: number | undefined): Record<string, unknown> => ({
+        ...entry,
+        ...(images.length ? { images } : {}),
+        ...(content !== undefined
+          ? { content_length: content.length, content: part, ...(next !== undefined ? { next_content_offset: next } : {}) }
+          : {}),
+      });
+      if (content === undefined) return build('', undefined);
+      // The fields besides the body keep to REST_BYTES (fewer image URLs if need be); the body part gets the rest of
+      // the 32 KB, counted as JSON, so the parts join up to the whole body.
+      while (images.length && jsonSize(build('', content.length)) > REST_BYTES) images = images.slice(0, -1);
+      return fitTextPart(content, offset, build);
     },
   };
 }
@@ -503,7 +515,7 @@ const connector = defineConnector({
       },
       async run(args: { cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         const allowed = allowedAccounts(h.ctx.accounts, 'blogs');
         const blogs = (await userBlogs(h))
           .map((blog) => compact({
@@ -538,7 +550,7 @@ const connector = defineConnector({
         properties: {
           blog_id: BLOG_ID,
           query: { type: 'string', minLength: 1, maxLength: 500, description: 'The words to search for.' },
-          order_by: { type: 'string', enum: ['published', 'updated'], description: 'Sort by published time or last update (default: relevance).' },
+          order_by: { type: 'string', enum: ['published', 'updated'], description: 'Sort by published time (default) or last update, newest first.' },
           cursor: CURSOR,
         },
         required: ['query'],
@@ -546,7 +558,7 @@ const connector = defineConnector({
       },
       async run(args: { blog_id?: string; query: string; order_by?: string; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         const blogId = await resolveBlog(h, args.blog_id);
         const { data } = await googleApi(h, {
           path: `${blogPath(blogId)}/posts/search`,
@@ -584,7 +596,7 @@ const connector = defineConnector({
       },
       async run(args: { blog_id?: string; posts_to_scan: number; cursor?: string }, h) {
         const state = h.cursor(args.cursor);
-        const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
+        const skip = cursorNumber(state, 'o', 0, 0, MAX_OFFSET);
         const blogId = await resolveBlog(h, args.blog_id);
         const { data } = await googleApi(h, {
           path: `${blogPath(blogId)}/posts`,
