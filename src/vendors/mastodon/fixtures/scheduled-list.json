@@ -1,0 +1,4 @@
+[
+  { "id": "3221", "scheduled_at": "2026-12-01T18:00:00.000Z", "params": { "text": "Scheduled hello", "visibility": "public", "poll": null, "spoiler_text": null, "in_reply_to_id": null }, "media_attachments": [] },
+  { "id": "3220", "scheduled_at": "2026-12-02T09:00:00.000Z", "params": { "text": "Poll time", "visibility": "unlisted", "poll": { "options": ["A", "B"], "expires_in": "86400" }, "spoiler_text": "", "in_reply_to_id": null }, "media_attachments": [] }
+]

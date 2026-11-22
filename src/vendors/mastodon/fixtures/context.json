@@ -1,0 +1,6 @@
+{
+  "ancestors": [],
+  "descendants": [
+    { "id": "113500000000000020", "created_at": "2026-11-21T10:00:00.000Z", "in_reply_to_id": "113500000000000003", "spoiler_text": "", "visibility": "public", "url": "https://social.example/@bob@other.example/113500000000000020", "replies_count": 0, "reblogs_count": 0, "favourites_count": 1, "content": "<p>Congrats!</p>", "account": { "id": "109000000000000077", "acct": "bob@other.example" }, "media_attachments": [] }
+  ]
+}
