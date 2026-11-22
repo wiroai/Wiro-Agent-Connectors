@@ -54,6 +54,29 @@ export function queryLiteral(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 }
 
+const PARENT_TERM = /^'([A-Za-z0-9_-]{1,200})'\s+in\s+parents$/;
+const PLAIN_TERMS = [/^trashed\s*=\s*(true|false)$/, /^mimeType\s*(=|!=)\s*'[A-Za-z0-9.+\/-]*'$/, /^mimeType\s+contains\s+'[A-Za-z0-9.+\/-]*'$/];
+
+/**
+ * The folder a files.list query keeps to: one "'<id>' in parents" term,
+ * joined with "and" only to trashed and mimeType terms, as in "'<id>' in
+ * parents and trashed=false". Any other query gives undefined.
+ */
+export function oneFolderQuery(values: readonly string[] | undefined): string | undefined {
+  if (values?.length !== 1) return undefined;
+  let folder: string | undefined;
+  for (const term of (values[0] as string).trim().split(/\s+and\s+/i)) {
+    const parent = PARENT_TERM.exec(term);
+    if (parent) {
+      if (folder !== undefined) return undefined;
+      folder = parent[1];
+    } else if (!PLAIN_TERMS.some((pattern) => pattern.test(term))) {
+      return undefined;
+    }
+  }
+  return folder;
+}
+
 function startsWith(bytes: Uint8Array, signature: number[], offset = 0): boolean {
   return signature.every((byte, index) => bytes[offset + index] === byte);
 }

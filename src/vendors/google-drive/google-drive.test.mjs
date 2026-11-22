@@ -52,9 +52,15 @@ function scopesOf(fetch) {
 
 const field = (item, path) => path.split('.').reduce((value, name) => value?.[name], item);
 
-test('the folders picker: with no lock, list_folders lists the folders shared with the service account, then its shared drives', async () => {
+test('the folders picker: with no lock, list_folders lists every folder the service account can reach, labeled with its parent, then its shared drives', async () => {
+  const WEEK_CREATIVES = '5Folder2026Creatives000000000000';
+  const AD_ASSETS = '2CyiNWAdAssetsFolder000000000000';
+  const MARKETING = '0AMarketingSharedDriveUk9PVA';
   const { module, fetch, ctx, apiCalls } = setup({
-    'GET /drive/v3/files': jsonResponse(200, fixture(import.meta.url, 'folders-shared.json')),
+    'GET /drive/v3/files': jsonResponse(200, fixture(import.meta.url, 'folders-all.json')),
+    // The owner's own folder above a shared folder: the service account cannot see it.
+    'GET /drive/v3/files/0AJaneRootFolder0000000000000000': jsonResponse(404, fixture(import.meta.url, 'error-404.json')),
+    [`GET /drive/v3/drives/${MARKETING}`]: jsonResponse(200, { id: MARKETING, name: 'Marketing' }),
     'GET /drive/v3/drives': jsonResponse(200, fixture(import.meta.url, 'drives.json')),
   });
   const [picker] = module.accountPickers;
@@ -65,39 +71,59 @@ test('the folders picker: with no lock, list_folders lists the folders shared wi
     multiple: true,
     tool: 'list_folders',
     idField: 'id',
-    nameField: 'name',
+    nameField: 'label',
     legacyField: 'folders',
   });
   const { payload, isError } = await callTool(module, picker.tool, {}, ctx);
   assert.equal(isError, false, payload.error);
   assert.equal(scopesOf(fetch), 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/documents');
-  const [list, drives] = apiCalls();
-  assert.equal(list.query.q, "mimeType='application/vnd.google-apps.folder' and trashed=false and sharedWithMe");
+  const [list] = apiCalls();
+  assert.equal(list.query.q, "mimeType='application/vnd.google-apps.folder' and trashed=false");
+  assert.equal(list.query.corpora, 'allDrives');
+  assert.equal(list.query.includeItemsFromAllDrives, 'true');
   assert.equal(list.query.supportsAllDrives, 'true');
+  assert.equal(list.query.orderBy, 'name');
   assert.equal(list.headers.authorization, `Bearer ${ACCESS_TOKEN}`);
-  assert.equal(drives.path, '/drive/v3/drives');
   assert.deepEqual(payload.folders.map((item) => [field(item, picker.idField), field(item, picker.nameField), item.type]), [
+    [WEEK_CREATIVES, '2026 (in Creatives)', 'folder'],
+    ['6Folder2026AdAssets0000000000000', '2026 (in Ad Assets)', 'folder'],
+    [AD_ASSETS, 'Ad Assets', 'folder'],
+    ['7BrandFolder00000000000000000000', 'Brand (in Marketing)', 'folder'],
     [CREATIVES, 'Creatives', 'folder'],
-    ['2CyiNWAdAssetsFolder000000000000', 'Ad Assets', 'folder'],
-    ['0AMarketingSharedDriveUk9PVA', 'Marketing', 'shared_drive'],
+    [MARKETING, 'Marketing (shared drive)', 'shared_drive'],
   ]);
-  assert.equal(payload.folders[0].owner, 'Jane Doe');
+  // A subfolder is a candidate: a selection inside a shared folder stays valid when the selection is checked again.
+  assert.deepEqual(payload.folders[0], { id: WEEK_CREATIVES, name: '2026', label: '2026 (in Creatives)', type: 'folder', parentId: CREATIVES, modifiedTime: '2026-04-03T10:00:00.000Z' });
+  // Parents on the page need no lookup; the others are looked up once each.
+  assert.deepEqual(apiCalls().slice(1).map((call) => call.path).sort(), ['/drive/v3/drives', `/drive/v3/drives/${MARKETING}`, '/drive/v3/files/0AJaneRootFolder0000000000000000']);
   assert.equal(payload.nextCursor, undefined);
 });
 
-test('list_folders pages through shared folders before the shared drives', async () => {
+test('list_folders pages through the folders before the shared drives', async () => {
   const { module, ctx, apiCalls } = setup({
     'GET /drive/v3/files': (request) => jsonResponse(200, request.query.pageToken
-      ? { files: [{ id: 'f3', name: 'Third' }] }
-      : { ...fixture(import.meta.url, 'folders-shared.json'), nextPageToken: 'page-2' }),
+      ? { files: [{ id: 'f3', name: 'Third', parents: [CREATIVES] }] }
+      : { files: [{ id: CREATIVES, name: 'Creatives' }, { id: 'f2', name: 'Second', parents: [CREATIVES] }], nextPageToken: 'page-2' }),
+    [`GET /drive/v3/files/${CREATIVES}`]: jsonResponse(200, { id: CREATIVES, name: 'Creatives' }),
     'GET /drive/v3/drives': jsonResponse(200, fixture(import.meta.url, 'drives.json')),
   });
   const first = await callTool(module, 'list_folders', {}, ctx);
-  assert.equal(first.payload.folders.length, 2);
-  assert.equal(apiCalls().length, 1, 'drives wait for the last folder page');
+  assert.deepEqual(first.payload.folders.map((item) => item.label), ['Creatives', 'Second (in Creatives)']);
+  assert.equal(apiCalls().length, 1, 'drives wait for the last folder page, and a parent on the page needs no lookup');
   const second = await callTool(module, 'list_folders', { cursor: first.payload.nextCursor }, ctx);
   assert.equal(apiCalls()[1].query.pageToken, 'page-2');
-  assert.deepEqual(second.payload.folders.map((item) => item.id), ['f3', '0AMarketingSharedDriveUk9PVA']);
+  assert.deepEqual(second.payload.folders.map((item) => [item.id, item.label]), [['f3', 'Third (in Creatives)'], ['0AMarketingSharedDriveUk9PVA', 'Marketing (shared drive)']]);
+});
+
+test('a parent name that cannot be read leaves the folder\'s own name, and a usage limit there does not fail the list', async () => {
+  const { module, ctx } = setup({
+    'GET /drive/v3/files': jsonResponse(200, { files: [{ id: 'f1', name: 'Reports', parents: ['p1'] }] }),
+    'GET /drive/v3/files/p1': jsonResponse(403, { error: { code: 403, message: 'Rate Limit Exceeded', errors: [{ reason: 'rateLimitExceeded' }] } }),
+    'GET /drive/v3/drives': jsonResponse(200, { drives: [] }),
+  });
+  const { payload, isError } = await callTool(module, 'list_folders', {}, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(payload.folders, [{ id: 'f1', name: 'Reports', label: 'Reports', type: 'folder', parentId: 'p1' }]);
 });
 
 test('with a lock, list_folders lists the chosen folders by name, and subfolders only inside them', async () => {
@@ -108,7 +134,7 @@ test('with a lock, list_folders lists the chosen folders by name, and subfolders
     ...parentsOf({ elsewhere: ['root0'], root0: [] }),
   }, { accounts: { folders: [CREATIVES] } });
   const chosen = await callTool(module, 'list_folders', {}, ctx);
-  assert.deepEqual(chosen.payload, { chosen: true, folders: [{ id: CREATIVES, name: 'Creatives', type: 'folder' }] });
+  assert.deepEqual(chosen.payload, { chosen: true, folders: [{ id: CREATIVES, name: 'Creatives', label: 'Creatives', type: 'folder' }] });
 
   const inside = await callTool(module, 'list_folders', { parent_id: 'sub1' }, ctx);
   assert.deepEqual(inside.payload.folders, [{ id: 'sub2', name: 'Week 1', type: 'folder' }]);
@@ -163,6 +189,23 @@ test('with a lock, list_files without a folder lists the chosen folders, and a r
   const open = setup({ 'GET /drive/v3/files': jsonResponse(200, { files: [] }) });
   await callTool(open.module, 'list_files', { query: 'starred = true' }, open.ctx);
   assert.equal(open.apiCalls()[0].query.q, 'trashed=false and (starred = true)');
+});
+
+test('a full-text search goes without a sort order, which Google Drive refuses for it; order_by with it is refused first', async () => {
+  const { module, fetch, ctx, apiCalls } = setup({ 'GET /drive/v3/files': jsonResponse(200, fixture(import.meta.url, 'files.json')) });
+  const found = await callTool(module, 'list_files', { folder_id: CREATIVES, full_text: 'summer sale' }, ctx);
+  assert.equal(found.isError, false, found.payload.error);
+  assert.equal(apiCalls()[0].query.q, `trashed=false and '${CREATIVES}' in parents and fullText contains 'summer sale'`);
+  assert.equal('orderBy' in apiCalls()[0].query, false);
+  await callTool(module, 'list_files', { query: "fullText contains 'banner'" }, ctx);
+  assert.equal('orderBy' in apiCalls()[1].query, false);
+  await callTool(module, 'list_files', { order_by: 'name' }, ctx);
+  assert.equal(apiCalls()[2].query.orderBy, 'name');
+
+  const before = fetch.calls.length;
+  const sorted = await callTool(module, 'list_files', { full_text: 'summer', order_by: 'name' }, ctx);
+  assert.equal(sorted.payload.error, 'order_by does not go with full_text or a fullText query: Google Drive returns full-text matches by relevance. Leave order_by out.');
+  assert.equal(fetch.calls.length, before);
 });
 
 test('get_file returns the details, export formats and sharing, without the export links', async () => {
@@ -238,7 +281,7 @@ test('read_file reads text files as they are, a Sheet as CSV, and returns links 
   assert.equal(image.isError, false);
   assert.equal(image.payload.binary, true);
   assert.equal(image.payload.webContentLink, 'https://drive.google.com/uc?id=4UploadedBannerImage00000000000&export=download');
-  assert.match(image.payload.note, /share it publicly \(share_file, type anyone, role reader\)/);
+  assert.match(image.payload.note, /share_file with type anyone and role reader returns its downloadUrl; .* unshare_file with permission_id anyoneWithLink/);
 });
 
 test('upload_file sends a small file from a URL as one multipart request, typed from its bytes', async () => {
@@ -412,22 +455,72 @@ test('replace_file_content uploads new media to the same file id', async () => {
   assert.equal(payload.size, 8);
 });
 
-test('share_file adds one permission; the arguments must fit the type', async () => {
-  const { module, fetch, ctx, apiCalls } = setup({ 'POST /drive/v3/files/file1/permissions': jsonResponse(200, fixture(import.meta.url, 'permission.json')) });
+test('share_file adds one permission and, shared with anyone, returns the download link; the arguments must fit the type', async () => {
+  const uploaded = fixture(import.meta.url, 'uploaded.json');
+  const { module, fetch, ctx, apiCalls } = setup({
+    'GET /drive/v3/files/file1': jsonResponse(200, uploaded),
+    'POST /drive/v3/files/file1/permissions': jsonResponse(200, fixture(import.meta.url, 'permission.json')),
+  });
+  const posts = () => apiCalls().filter((call) => call.method === 'POST');
   const { payload } = await callTool(module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone' }, ctx);
-  assert.deepEqual(apiCalls()[0].json, { role: 'reader', type: 'anyone' });
-  assert.equal(apiCalls()[0].query.sendNotificationEmail, undefined);
-  assert.deepEqual(payload, { fileId: 'file1', permissionId: 'anyoneWithLink', type: 'anyone', role: 'reader' });
+  assert.deepEqual(apiCalls().map((call) => call.method), ['GET', 'POST'], 'the links are read before the change');
+  assert.match(apiCalls()[0].query.fields, /webContentLink,exportLinks/);
+  assert.deepEqual(posts()[0].json, { role: 'reader', type: 'anyone' });
+  assert.equal(posts()[0].query.sendNotificationEmail, undefined);
+  assert.deepEqual(payload, {
+    fileId: 'file1',
+    permissionId: 'anyoneWithLink',
+    type: 'anyone',
+    role: 'reader',
+    webViewLink: uploaded.webViewLink,
+    downloadUrl: uploaded.webContentLink,
+    note: 'Anyone with these links can open the file until unshare_file removes permission anyoneWithLink.',
+  });
 
-  await callTool(module, 'share_file', { file_id: 'file1', role: 'writer', type: 'user', email: 'jane@example.com', notify: false }, ctx);
-  assert.deepEqual(apiCalls()[1].json, { role: 'writer', type: 'user', emailAddress: 'jane@example.com' });
-  assert.equal(apiCalls()[1].query.sendNotificationEmail, 'false');
+  const person = await callTool(module, 'share_file', { file_id: 'file1', role: 'writer', type: 'user', email: 'jane@example.com', notify: false }, ctx);
+  assert.deepEqual(posts()[1].json, { role: 'writer', type: 'user', emailAddress: 'jane@example.com' });
+  assert.equal(posts()[1].query.sendNotificationEmail, 'false');
+  assert.equal(person.payload.downloadUrl, undefined, 'a person opens it with webViewLink');
 
   const before = fetch.calls.length;
   assert.match((await callTool(module, 'share_file', { file_id: 'file1', role: 'reader', type: 'user' }, ctx)).payload.error, /email is required for type user/);
   assert.match((await callTool(module, 'share_file', { file_id: 'file1', role: 'reader', type: 'domain' }, ctx)).payload.error, /domain is required/);
   assert.match((await callTool(module, 'share_file', { file_id: 'file1', role: 'reader', type: 'anyone', email: 'a@example.com' }, ctx)).payload.error, /go with type user or group only/);
   assert.equal(fetch.calls.length, before);
+});
+
+test('a Google Doc shared with anyone comes with its export links by format, for PDF and Office copies', async () => {
+  const { module, ctx } = setup({
+    [`GET /drive/v3/files/${DOC}`]: jsonResponse(200, fixture(import.meta.url, 'file.json')),
+    [`POST /drive/v3/files/${DOC}/permissions`]: jsonResponse(200, fixture(import.meta.url, 'permission.json')),
+  });
+  const { payload, isError } = await callTool(module, 'share_file', { file_id: DOC, role: 'reader', type: 'anyone' }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(payload.exportUrls, {
+    pdf: `https://docs.google.com/feeds/download/documents/export/Export?id=${DOC}&exportFormat=pdf`,
+    md: `https://docs.google.com/feeds/download/documents/export/Export?id=${DOC}&exportFormat=md`,
+    txt: `https://docs.google.com/feeds/download/documents/export/Export?id=${DOC}&exportFormat=txt`,
+  });
+  assert.equal(payload.downloadUrl, undefined);
+});
+
+test('unshare_file removes one sharing, once; a sharing already gone says so', async () => {
+  const route = 'DELETE /drive/v3/files/file1/permissions/anyoneWithLink';
+  const { module, ctx, apiCalls } = setup({ [route]: new Response(null, { status: 204 }) });
+  const { payload, isError } = await callTool(module, 'unshare_file', { file_id: 'file1', permission_id: 'anyoneWithLink' }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(payload, { removed: true, fileId: 'file1', permissionId: 'anyoneWithLink' });
+  assert.equal(apiCalls()[0].query.supportsAllDrives, 'true');
+
+  const gone = setup({ [route]: jsonResponse(404, { error: { code: 404, message: 'Permission not found: anyoneWithLink.' } }) });
+  const missing = await callTool(gone.module, 'unshare_file', { file_id: 'file1', permission_id: 'anyoneWithLink' }, gone.ctx);
+  assert.equal(missing.payload.error, 'Google Drive found no such sharing on the file (it may be removed already), or no such file (HTTP 404). Google Drive said: "Permission not found: anyoneWithLink.". Nothing was changed.');
+
+  const unclear = setup({ [route]: jsonResponse(503, { error: { code: 503, message: 'Backend Error' } }) });
+  const unknown = await callTool(unclear.module, 'unshare_file', { file_id: 'file1', permission_id: 'anyoneWithLink' }, unclear.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'get_file');
+  assert.equal(unclear.apiCalls().length, 1);
 });
 
 test('Sheets: sheets, a paged range read, append, overwrite and clear go to the Sheets API with the range encoded', async () => {
@@ -496,11 +589,34 @@ test('Google\'s storage refusal for service accounts and a missing file come bac
   const refused = await callTool(quota.module, 'upload_file', { name: 'a.txt', content: 'a', folder_id: CREATIVES }, quota.ctx);
   assert.equal(refused.payload.status, 403);
   assert.match(refused.payload.error, /Service Accounts do not have storage quota/);
-  assert.match(refused.payload.error, /Nothing was changed\.$/);
+  assert.match(refused.payload.error, /A service account has no Drive storage of its own: use a folder in a shared drive, where files belong to the drive\. Nothing was changed\.$/);
+  assert.doesNotMatch(refused.payload.error, /Share the file/);
 
   const missing = setup({ 'GET /drive/v3/files/9MissingFile': jsonResponse(404, fixture(import.meta.url, 'error-404.json')) });
   const notFound = await callTool(missing.module, 'get_file', { file_id: '9MissingFile' }, missing.ctx);
   assert.equal(notFound.payload.error, `Google Drive found no such file, or it is not shared with the service account ${KEY.client_email} (HTTP 404). Google Drive said: "File not found: 9MissingFile.".`);
+});
+
+test('a 403 gets the advice that fits Google\'s reason: a usage limit is waited out, missing access is shared', async () => {
+  const rateLimit = { error: { code: 403, message: 'User Rate Limit Exceeded', errors: [{ domain: 'usageLimits', reason: 'userRateLimitExceeded', message: 'User Rate Limit Exceeded' }] } };
+  const limited = setup({ 'GET /drive/v3/files/file1': jsonResponse(403, rateLimit) });
+  const limit = await callTool(limited.module, 'get_file', { file_id: 'file1' }, limited.ctx);
+  assert.equal(limit.payload.status, 403);
+  assert.equal(limit.payload.error, 'Google Drive refused the request (HTTP 403): User Rate Limit Exceeded. That is a Google Drive usage limit, not a sharing problem: wait a minute and try again.');
+
+  const permission = { error: { code: 403, message: 'The user does not have sufficient permissions for this file.', errors: [{ reason: 'insufficientFilePermissions' }] } };
+  const unshared = setup({ 'PATCH /drive/v3/files/file1': jsonResponse(403, permission) });
+  const refused = await callTool(unshared.module, 'update_file', { file_id: 'file1', name: 'x.txt' }, unshared.ctx);
+  assert.equal(
+    refused.payload.error,
+    'Google Drive refused the request (HTTP 403): The user does not have sufficient permissions for this file. Share the file or folder with '
+      + `the service account ${KEY.client_email} (Editor, or Content manager in a shared drive), and check that the Google Drive, Sheets and Docs APIs are enabled for the key's project. Nothing was changed.`,
+  );
+
+  // Under a lock, a usage limit while looking up a parent is passed on, not taken for "outside the chosen folders".
+  const locked = setup({ ...parentsOf({ file1: ['mid1'] }), 'GET /drive/v3/files/mid1': jsonResponse(403, rateLimit) }, { accounts: { folders: [CREATIVES] } });
+  const lookup = await callTool(locked.module, 'get_file', { file_id: 'file1' }, locked.ctx);
+  assert.match(lookup.payload.error, /usage limit, not a sharing problem/);
 });
 
 test('api_get and api_request keep to the Drive, Sheets and Docs APIs, and to the chosen folders under a lock', async () => {
@@ -528,10 +644,57 @@ test('api_get and api_request keep to the Drive, Sheets and Docs APIs, and to th
     [{ path: '/drive/v3/drives' }, /only files paths/],
   ]) assert.match((await callTool(locked.module, 'api_get', args, locked.ctx)).payload.error, message);
   for (const [args, message] of [
-    [{ method: 'POST', path: '/drive/v3/files', json: { name: 'x' } }, /a new file needs parents naming a chosen folder/],
+    [{ method: 'POST', path: '/drive/v3/files', json: { name: 'x' } }, /a new file needs json with parents naming a chosen folder/],
     [{ method: 'POST', origin: 'https://sheets.googleapis.com', path: '/v4/spreadsheets', json: {} }, /create spreadsheets and documents with create_spreadsheet/],
     [{ method: 'PATCH', path: '/drive/v3/files/file1', query: { addParents: 'other' } }, /The folder other is not inside/],
   ]) assert.match((await callTool(locked.module, 'api_request', args, locked.ctx)).payload.error, message);
+});
+
+test('under a lock, a copy, a move on an upload path, a sheet copy and a listing must stay inside the chosen folders', async () => {
+  const sheets = 'https://sheets.googleapis.com';
+  const { module, ctx, apiCalls } = setup({
+    ...parentsOf({ file1: [CREATIVES], week1: [CREATIVES], other: ['root0'], root0: [], sheet1: [CREATIVES], sheet2: [CREATIVES], sheet9: ['root0'] }),
+    'POST /drive/v3/files/file1/copy': jsonResponse(200, { id: 'copy1', name: 'Copy of banner' }),
+    'PATCH /upload/drive/v3/files/file1': jsonResponse(200, { id: 'file1' }),
+    [`POST ${sheets}/v4/spreadsheets/sheet1/sheets/0:copyTo`]: jsonResponse(200, { sheetId: 7, title: 'Copy of Sheet1' }),
+    'GET /drive/v3/files': jsonResponse(200, { files: [] }),
+  }, { accounts: { folders: [CREATIVES] } });
+  const writes = () => apiCalls().filter((call) => call.method !== 'GET');
+
+  for (const [tool, args, message] of [
+    // A raw body cannot be checked: a copy names its parents in json.
+    ['api_request', { method: 'POST', path: '/drive/v3/files/file1/copy', body: '{"parents":["other"]}', content_type: 'application/json' }, /a copy needs json with parents naming a chosen folder/],
+    ['api_request', { method: 'POST', path: '/drive/v3/files/file1/copy' }, /a copy needs json with parents naming a chosen folder/],
+    ['api_request', { method: 'POST', path: '/drive/v3/files/file1/copy', json: { parents: ['other'] } }, /The folder other is not inside the folders chosen/],
+    ['api_request', { method: 'PATCH', path: '/upload/drive/v3/files/file1', query: { uploadType: 'media', addParents: 'other', removeParents: CREATIVES }, body: 'x', content_type: 'text/plain' }, /The folder other is not inside/],
+    ['api_request', { method: 'PATCH', path: '/upload/drive/v3/files/file1', query: { uploadType: 'resumable' }, json: { parents: ['other'] } }, /The folder other is not inside/],
+    ['api_request', { method: 'POST', origin: sheets, path: '/v4/spreadsheets/sheet1/sheets/0:copyTo', json: { destinationSpreadsheetId: 'sheet9' } }, /The spreadsheet sheet9 is not inside/],
+    ['api_request', { method: 'POST', origin: sheets, path: '/v4/spreadsheets/sheet1/sheets/0:copyTo', body: '{"destinationSpreadsheetId":"sheet9"}', content_type: 'application/json' }, /copyTo needs json with destinationSpreadsheetId/],
+    ['api_request', { method: 'DELETE', path: '/drive/v3/files/trash' }, /emptying the trash is not available/],
+    ['api_get', { path: '/drive/v3/files', query: { q: "'other' in parents and trashed=false" } }, /The folder other is not inside/],
+    ['api_get', { path: '/drive/v3/files', query: { q: `'${CREATIVES}' in parents or trashed=false` } }, /list files with list_files, or with a q naming one chosen folder/],
+    ['api_get', { path: '/drive/v3/files', query: { q: `'${CREATIVES}' in parents and 'other' in parents` } }, /list files with list_files/],
+  ]) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, message);
+    assert.match(payload.error, /Nothing was (sent|changed)\.$/);
+  }
+  assert.deepEqual(writes(), [], 'nothing outside the folders was written');
+
+  const copy = await callTool(module, 'api_request', { method: 'POST', path: '/drive/v3/files/file1/copy', json: { name: 'Copy of banner', parents: ['week1'] } }, ctx);
+  assert.equal(copy.payload.status, 200);
+  const moved = await callTool(module, 'api_request', { method: 'PATCH', path: '/upload/drive/v3/files/file1', query: { uploadType: 'media', addParents: 'week1', removeParents: CREATIVES }, body: 'x', content_type: 'text/plain' }, ctx);
+  assert.equal(moved.payload.status, 200);
+  const sheetCopy = await callTool(module, 'api_request', { method: 'POST', origin: sheets, path: '/v4/spreadsheets/sheet1/sheets/0:copyTo', json: { destinationSpreadsheetId: 'sheet2' } }, ctx);
+  assert.equal(sheetCopy.payload.data.sheetId, 7);
+  assert.deepEqual(writes().map((call) => `${call.method} ${call.path}`), ['POST /drive/v3/files/file1/copy', 'PATCH /upload/drive/v3/files/file1', 'POST /v4/spreadsheets/sheet1/sheets/0:copyTo']);
+
+  // A listing of one chosen folder, as the agent's own instructions write it.
+  const listing = await callTool(module, 'api_get', { path: '/drive/v3/files', query: { q: `'${CREATIVES}' in parents and trashed=false`, fields: 'files(id,name)', supportsAllDrives: true, includeItemsFromAllDrives: true } }, ctx);
+  assert.equal(listing.payload.status, 200);
+  const sub = await callTool(module, 'api_get', { path: '/drive/v3/files', query: { q: "trashed = false and 'week1' in parents and mimeType != 'application/vnd.google-apps.folder'" } }, ctx);
+  assert.equal(sub.payload.status, 200);
 });
 
 test('a 429 carries retryAfter, and log lines carry no key, token or content', async () => {

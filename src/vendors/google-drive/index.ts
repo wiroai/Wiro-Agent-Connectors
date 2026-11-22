@@ -9,8 +9,14 @@
 // The service account sees only what is shared with its email: folders shared
 // with it (Editor, or Content manager in a shared drive) and shared drives it
 // is a member of. A host can limit the connection to chosen folders (the
-// `folders` account picker): the tools then reach those folders, their
-// subfolders and the files in them, and nothing else.
+// `folders` account picker, which lists every folder the service account can
+// reach): the tools then reach those folders, their subfolders and the files
+// in them, and nothing else.
+//
+// Modules hand results back as text, so a binary file (an image, a video, a
+// PDF export) leaves Drive by link: share_file with type anyone returns a
+// download link for the service that needs the file, and unshare_file takes
+// the link back afterwards.
 
 import {
   allowedAccounts,
@@ -33,6 +39,7 @@ import {
   isTextType,
   kindOf,
   multipartBody,
+  oneFolderQuery,
   queryLiteral,
   textPage,
   toCsv,
@@ -61,9 +68,14 @@ const SIMPLE_UPLOAD_MAX = 5 * 1024 * 1024;
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 const MAX_TEXT_BYTES = 4 * 1024 * 1024;
 const MAX_PARENT_LOOKUPS = 20;
+/** Folders per page of the picker's list, and the parent names looked up for one page (a few at a time). */
+const FOLDER_PAGE_SIZE = 150;
+const MAX_NAME_LOOKUPS = 25;
+const LOOKUP_BATCH = 5;
 const FILE_FIELDS = 'id,name,mimeType,size,parents,driveId,createdTime,modifiedTime,webViewLink,webContentLink';
 const LIST_FIELDS = 'nextPageToken,incompleteSearch,files(id,name,mimeType,size,parents,createdTime,modifiedTime,webViewLink,shortcutDetails/targetId)';
 const ID_PATTERN = '^[A-Za-z0-9_-]{1,200}$';
+const NOTHING_CHANGED = ' Nothing was changed.';
 
 const ID: JsonSchema = { type: 'string', pattern: ID_PATTERN, description: 'A Drive file or folder id (the part after /d/ or /folders/ in its link).' };
 
@@ -71,16 +83,40 @@ function enc(id: string): string {
   return encodeURIComponent(id);
 }
 
-function drive(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
-  const who = serviceAccountWords(h);
-  return googleApi(h, SCOPES, {
-    ...request,
-    errors: {
-      403: `Google Drive refused the request: share the file or folder with ${who} (Editor, or Content manager in a shared drive) and check that the API is enabled for the key's project`,
-      404: `Google Drive found no such file, or it is not shared with ${who}`,
-      ...request.errors,
-    },
-  });
+/** A 403 that is one of Google's usage limits: waiting helps, sharing does not. */
+class UsageLimit extends ToolFailure {}
+
+/** Google's words for a usage limit (rateLimitExceeded, userRateLimitExceeded, quotaExceeded) and for full storage (storageQuotaExceeded). */
+const USAGE_LIMIT = /rate limit|usage limit|quota exceeded|too many requests/i;
+const STORAGE_FULL = /storage quota/i;
+
+/** Google Drive answers 403 for missing sharing, usage limits and storage: the advice follows the reason Google gave. */
+function explainRefusal(h: ToolHelpers, error: unknown): unknown {
+  if (!(error instanceof ToolFailure) || error.details.status !== 403) return error;
+  const ending = error.message.endsWith(NOTHING_CHANGED) ? NOTHING_CHANGED : '';
+  const text = error.message.slice(0, error.message.length - ending.length);
+  if (STORAGE_FULL.test(text)) {
+    return new ToolFailure(`${text} A service account has no Drive storage of its own: use a folder in a shared drive, where files belong to the drive.${ending}`, error.details);
+  }
+  if (USAGE_LIMIT.test(text)) {
+    return new UsageLimit(`${text} That is a Google Drive usage limit, not a sharing problem: wait a minute and try again.${ending}`, error.details);
+  }
+  return new ToolFailure(
+    `${text} Share the file or folder with ${serviceAccountWords(h)} (Editor, or Content manager in a shared drive), and check that the `
+      + `Google Drive, Sheets and Docs APIs are enabled for the key's project.${ending}`,
+    error.details,
+  );
+}
+
+async function drive(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
+  try {
+    return await googleApi(h, SCOPES, {
+      ...request,
+      errors: { 404: `Google Drive found no such file, or it is not shared with ${serviceAccountWords(h)}`, ...request.errors },
+    });
+  } catch (error) {
+    throw explainRefusal(h, error);
+  }
 }
 
 /** The folders a host chose for the connection, or null when it applies no lock. */
@@ -117,8 +153,8 @@ async function checkInside(h: ToolHelpers, allowed: string[], id: string, data: 
     try {
       item = (await drive(h, { path: `/drive/v3/files/${enc(next as string)}`, query: { fields: 'id,parents,driveId', supportsAllDrives: true } })).data;
     } catch (error) {
-      // A parent the service account cannot see is outside every folder shared with it.
-      if (error instanceof ToolFailure && (error.details.status === 403 || error.details.status === 404)) refuse();
+      // A parent the service account cannot see is outside every folder shared with it; a usage limit says nothing about that.
+      if (error instanceof ToolFailure && !(error instanceof UsageLimit) && (error.details.status === 403 || error.details.status === 404)) refuse();
       throw error;
     }
   }
@@ -252,6 +288,12 @@ function trimFolder(folder: any): Record<string, unknown> {
   });
 }
 
+/** A shared drive in a folder list: its label says what it is. */
+function sharedDriveItem(id: unknown, name: unknown): Record<string, unknown> {
+  const shown = typeof name === 'string' && name ? name : id;
+  return compact({ id, name: shown, label: `${String(shown)} (shared drive)`, type: 'shared_drive' });
+}
+
 /** The chosen folders themselves (a host's lock), with their names. */
 async function chosenFolderList(h: ToolHelpers, allowed: string[], cursor: string | undefined) {
   const state = h.cursor(cursor);
@@ -263,13 +305,14 @@ async function chosenFolderList(h: ToolHelpers, allowed: string[], cursor: strin
       const { data } = await drive(h, { path: `/drive/v3/files/${enc(id)}`, query: { fields: 'id,name,mimeType,driveId,modifiedTime', supportsAllDrives: true } });
       if (data?.driveId === id) {
         const shared = await drive(h, { path: `/drive/v3/drives/${enc(id)}`, query: { fields: 'id,name' } }).catch(() => null);
-        items.push(compact({ id, name: shared?.data?.name ?? data?.name, type: 'shared_drive' }));
+        items.push(sharedDriveItem(id, shared?.data?.name ?? data?.name));
       } else {
-        items.push({ ...trimFolder(data), id });
+        const folder = trimFolder(data);
+        items.push({ ...folder, id, label: folder['name'] ?? id });
       }
     } catch (error) {
       if (!(error instanceof ToolFailure)) throw error;
-      items.push({ id, name: id, type: 'folder', error: truncate(error.message, 300) });
+      items.push({ id, name: id, label: id, type: 'folder', error: truncate(error.message, 300) });
     }
   }
   return h.page({
@@ -281,44 +324,124 @@ async function chosenFolderList(h: ToolHelpers, allowed: string[], cursor: strin
   });
 }
 
-/** Folders shared with the service account, then the shared drives it is a member of. */
-async function sharedFolderList(h: ToolHelpers, cursor: string | undefined) {
+/**
+ * The names of the folders' parents, to tell same-named folders apart: from
+ * the page itself, then by a few lookups (a shared drive by its own name). A
+ * parent the service account cannot see (the owner's own folder) has none.
+ */
+async function parentNames(h: ToolHelpers, folders: any[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  for (const folder of folders) if (typeof folder?.id === 'string' && typeof folder?.name === 'string') names.set(folder.id, folder.name);
+  const driveIds = new Set(folders.map((folder) => folder?.driveId).filter((id): id is string => typeof id === 'string'));
+  const missing = [...new Set(folders.map((folder) => (Array.isArray(folder?.parents) ? folder.parents[0] : undefined)))]
+    .filter((id): id is string => typeof id === 'string' && !names.has(id))
+    .slice(0, MAX_NAME_LOOKUPS);
+  for (let start = 0; start < missing.length; start += LOOKUP_BATCH) {
+    const batch = missing.slice(start, start + LOOKUP_BATCH);
+    const found = await Promise.all(batch.map(async (id) => {
+      try {
+        const { data } = driveIds.has(id)
+          ? await drive(h, { path: `/drive/v3/drives/${enc(id)}`, query: { fields: 'id,name' } })
+          : await drive(h, { path: `/drive/v3/files/${enc(id)}`, query: { fields: 'id,name', supportsAllDrives: true } });
+        return typeof data?.name === 'string' && data.name ? (data.name as string) : undefined;
+      } catch (error) {
+        // A label is a convenience: a parent that cannot be read leaves the folder's own name.
+        if (error instanceof ToolFailure) return undefined;
+        throw error;
+      }
+    }));
+    batch.forEach((id, index) => {
+      const name = found[index];
+      if (name) names.set(id, name);
+    });
+  }
+  return names;
+}
+
+/** A folder of the picker's list: its own name, and a label with its parent's name. */
+function reachableFolder(folder: any, names: Map<string, string>): Record<string, unknown> {
+  const parentId = Array.isArray(folder?.parents) && typeof folder.parents[0] === 'string' ? (folder.parents[0] as string) : undefined;
+  const parentName = parentId ? names.get(parentId) : undefined;
+  const name = typeof folder?.name === 'string' && folder.name ? folder.name : folder?.id;
+  return compact({
+    id: folder?.id,
+    name,
+    label: parentName ? `${name} (in ${parentName})` : name,
+    type: 'folder',
+    parentId,
+    driveId: folder?.driveId,
+    modifiedTime: folder?.modifiedTime,
+  });
+}
+
+/**
+ * Every folder the service account can reach, by name: folders shared with
+ * it, their subfolders, and the folders of its shared drives. Then the shared
+ * drives it is a member of.
+ */
+async function reachableFolderList(h: ToolHelpers, cursor: string | undefined) {
   const state = h.cursor(cursor);
   const phase = state?.['ph'] === 'd' ? 'd' : 'f';
   const pageToken = typeof state?.['p'] === 'string' ? state['p'] : undefined;
   const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
   const items: Record<string, unknown>[] = [];
   let nextPage: string | undefined;
-  let drivesToken = phase === 'd' ? pageToken : undefined;
+  let incompleteSearch: boolean | undefined;
   let listDrives = phase === 'd';
   if (phase === 'f') {
     const { data } = await drive(h, {
       path: '/drive/v3/files',
       query: {
-        q: `mimeType='${FOLDER_TYPE}' and trashed=false and sharedWithMe`,
-        fields: 'nextPageToken,files(id,name,modifiedTime,owners(displayName,emailAddress))',
-        pageSize: 100,
-        pageToken,
-        supportsAllDrives: true,
+        q: `mimeType='${FOLDER_TYPE}' and trashed=false`,
+        corpora: 'allDrives',
         includeItemsFromAllDrives: true,
+        supportsAllDrives: true,
+        orderBy: 'name',
+        pageSize: FOLDER_PAGE_SIZE,
+        pageToken,
+        fields: 'nextPageToken,incompleteSearch,files(id,name,parents,driveId,modifiedTime)',
       },
     });
-    for (const folder of Array.isArray(data?.files) ? data.files : []) items.push(trimFolder(folder));
+    const folders: any[] = Array.isArray(data?.files) ? data.files : [];
+    const names = await parentNames(h, folders);
+    for (const folder of folders) items.push(reachableFolder(folder, names));
+    if (data?.incompleteSearch === true) incompleteSearch = true;
     if (typeof data?.nextPageToken === 'string' && data.nextPageToken) nextPage = h.makeCursor({ ph: 'f', p: data.nextPageToken, o: 0 });
     else listDrives = true;
   }
   if (listDrives) {
-    const { data } = await drive(h, { path: '/drive/v3/drives', query: { pageSize: 100, pageToken: drivesToken, fields: 'nextPageToken,drives(id,name)' } });
-    for (const shared of Array.isArray(data?.drives) ? data.drives : []) items.push(compact({ id: shared?.id, name: shared?.name, type: 'shared_drive' }));
-    drivesToken = typeof data?.nextPageToken === 'string' && data.nextPageToken ? data.nextPageToken : undefined;
-    if (drivesToken) nextPage = h.makeCursor({ ph: 'd', p: drivesToken, o: 0 });
+    const { data } = await drive(h, {
+      path: '/drive/v3/drives',
+      query: { pageSize: 100, pageToken: phase === 'd' ? pageToken : undefined, fields: 'nextPageToken,drives(id,name)' },
+    });
+    for (const shared of Array.isArray(data?.drives) ? data.drives : []) items.push(sharedDriveItem(shared?.id, shared?.name));
+    if (typeof data?.nextPageToken === 'string' && data.nextPageToken) nextPage = h.makeCursor({ ph: 'd', p: data.nextPageToken, o: 0 });
   }
   return h.page({
     key: 'folders',
     items: items.slice(skip),
+    extra: compact({ incompleteSearch }),
     resumeAt: (index) => h.makeCursor({ ph: phase, ...(pageToken ? { p: pageToken } : {}), o: skip + index }),
     ...(nextPage ? { nextPage } : {}),
   });
+}
+
+/** Where a file shared with anyone downloads without signing in: the file itself, or a Google file's exports by format. */
+function downloadLinks(file: any): Record<string, unknown> {
+  if (typeof file?.webContentLink === 'string' && file.webContentLink) return { downloadUrl: file.webContentLink };
+  const links = file?.exportLinks && typeof file.exportLinks === 'object' ? (file.exportLinks as Record<string, unknown>) : {};
+  const exportUrls: Record<string, string> = {};
+  for (const [type, url] of Object.entries(links)) {
+    if (typeof url !== 'string') continue;
+    let format: string | null = null;
+    try {
+      format = new URL(url).searchParams.get('exportFormat');
+    } catch {
+      // keyed by its type instead
+    }
+    exportUrls[format || type] = url;
+  }
+  return Object.keys(exportUrls).length ? { exportUrls } : {};
 }
 
 const EXPORTS: Record<string, Record<string, string>> = {
@@ -346,6 +469,8 @@ const RANGE: JsonSchema = {
   type: 'string',
   minLength: 1,
   maxLength: 500,
+  // The range is one path segment: "." or ".." would change the path itself.
+  pattern: '^(?!\\.{1,2}$)',
   description: 'A range in A1 notation, e.g. Sheet1!A1:D50, Sheet1!A:A or Sheet1 (a sheet name with spaces in quotes: \'My sheet\'!A1).',
 };
 
@@ -359,15 +484,33 @@ function idOfSegment(segment: string | undefined): string | undefined {
   return id ? id : undefined;
 }
 
+const LOCK_NOTE = 'This connection is limited to its chosen folders:';
+
+/**
+ * The parents a request's JSON body names, all inside the chosen folders.
+ * A raw body never gets here (only json can be checked), so a request that
+ * must name parents and has none in json is refused.
+ */
+async function assertParents(h: ToolHelpers, parents: unknown, problem: string): Promise<void> {
+  if (!Array.isArray(parents) || !parents.length || !parents.every((parent) => typeof parent === 'string' && parent)) {
+    throw new ToolFailure(`${LOCK_NOTE} ${problem} Nothing was sent.`);
+  }
+  for (const parent of new Set(parents as string[])) await assertInside(h, parent, 'folder');
+}
+
 /**
  * The generic tools keep to the Drive, Sheets and Docs APIs, and, while a host
- * limits the connection to chosen folders, to items inside them.
+ * limits the connection to chosen folders, to items inside them: the file a
+ * path names, every folder a request moves or copies something into (the
+ * addParents query, parents in the JSON body), the spreadsheet a sheet is
+ * copied to, and the folder a file listing's query names.
  */
 async function driveGuard(request: ApiToolRequest, h: ToolHelpers): Promise<void> {
   const refuse = (sentence: string): never => {
     throw new ToolFailure(`${sentence} Nothing was sent.`);
   };
-  const [first, second, third, fourth] = request.segments;
+  const { segments } = request;
+  const [first, second, third] = segments;
   let area: 'drive' | 'upload' | 'sheets' | 'docs';
   if (request.origin === DRIVE_ORIGIN && first === 'drive' && second === 'v3') area = 'drive';
   else if (request.origin === DRIVE_ORIGIN && first === 'upload' && second === 'drive' && third === 'v3') area = 'upload';
@@ -380,37 +523,57 @@ async function driveGuard(request: ApiToolRequest, h: ToolHelpers): Promise<void
   const allowed = chosenFolders(h);
   if (allowed === null) return;
 
-  const lockNote = 'This connection is limited to its chosen folders:';
   if (area === 'sheets' || area === 'docs') {
     const id = idOfSegment(third);
-    if (!id) return refuse(`${lockNote} create spreadsheets and documents with create_spreadsheet and create_document, in a chosen folder.`);
+    if (!id) return refuse(`${LOCK_NOTE} create spreadsheets and documents with create_spreadsheet and create_document, in a chosen folder.`);
     await assertInside(h, id);
+    // A sheet copied into another spreadsheet (sheets/{sheetId}:copyTo) writes there.
+    if (area === 'sheets' && segments.some((segment) => /:copyto$/i.test(segment))) {
+      const destination = request.json?.['destinationSpreadsheetId'];
+      if (typeof destination !== 'string' || !destination) {
+        return refuse(`${LOCK_NOTE} copyTo needs json with destinationSpreadsheetId naming a spreadsheet inside them.`);
+      }
+      if (destination !== id) await assertInside(h, destination, 'spreadsheet');
+    }
     return;
   }
-  const collection = area === 'upload' ? fourth : third;
-  const fileId = area === 'upload' ? request.segments[4] : fourth;
+  // /drive/v3/files/{fileId}/{action}, and /upload/drive/v3/files/{fileId}.
+  const shift = area === 'upload' ? 1 : 0;
+  const collection = segments[2 + shift];
+  const fileId = segments[3 + shift];
+  const action = area === 'drive' ? segments[4]?.toLowerCase() : undefined;
   if (collection === 'about' && request.method === 'GET') return;
-  if (collection !== 'files') return refuse(`${lockNote} only files paths (/drive/v3/files/...) and about are reachable.`);
-  if (area === 'upload') {
-    if (!fileId) return refuse(`${lockNote} upload new files with upload_file.`);
-    await assertInside(h, fileId);
-    return;
-  }
-  if (fileId === 'generateIds' && request.method === 'GET') return;
-  if (!fileId || fileId === 'trash') {
-    if (request.method === 'POST' && !fileId) {
-      const parents = Array.isArray(request.json?.['parents']) ? (request.json?.['parents'] as unknown[]) : [];
-      if (!parents.length || !parents.every((parent) => typeof parent === 'string')) refuse(`${lockNote} a new file needs parents naming a chosen folder.`);
-      for (const parent of parents as string[]) await assertInside(h, parent, 'folder');
+  if (collection !== 'files') return refuse(`${LOCK_NOTE} only files paths (/drive/v3/files/...) and about are reachable.`);
+  if (!fileId) {
+    if (area === 'upload') return refuse(`${LOCK_NOTE} upload new files with upload_file.`);
+    if (request.method === 'GET') {
+      const folder = oneFolderQuery(request.query['q']);
+      if (!folder) {
+        return refuse(`${LOCK_NOTE} list files with list_files, or with a q naming one chosen folder and nothing else but trashed and mimeType terms, such as "'FOLDER_ID' in parents and trashed=false".`);
+      }
+      await assertInside(h, folder, 'folder');
       return;
     }
-    return refuse(`${lockNote} list files with list_files.`);
+    if (request.method === 'POST') return assertParents(h, request.json?.['parents'], 'a new file needs json with parents naming a chosen folder.');
+    return refuse(`${LOCK_NOTE} only file listings and new files go to /drive/v3/files itself.`);
   }
+  if (fileId === 'generateIds' && request.method === 'GET') return;
+  if (fileId === 'trash') return refuse(`${LOCK_NOTE} emptying the trash is not available.`);
   await assertInside(h, fileId);
-  const moved = [...(request.query['addParents'] ?? []).flatMap((value) => value.split(',')), ...(Array.isArray(request.json?.['parents']) ? (request.json?.['parents'] as unknown[]) : [])];
+  const checked = new Set<string>();
+  // A copy lands in the parents its body names: they must be given, in json, and inside the chosen folders.
+  if (action === 'copy') {
+    await assertParents(h, request.json?.['parents'], 'a copy needs json with parents naming a chosen folder.');
+    for (const parent of request.json?.['parents'] as string[]) checked.add(parent);
+  }
+  // A move (addParents, or parents in a body) must stay inside them, on upload paths too.
+  const moved = [...(request.query['addParents'] ?? []).flatMap((value) => value.split(',')), ...(Array.isArray(request.json?.['parents']) ? (request.json['parents'] as unknown[]) : [])];
   for (const parent of moved) {
-    if (typeof parent !== 'string' || !parent) refuse(`${lockNote} parents must be folder ids.`);
-    await assertInside(h, parent as string, 'folder');
+    if (typeof parent !== 'string' || !parent.trim()) refuse(`${LOCK_NOTE} parents must be folder ids.`);
+    const id = (parent as string).trim();
+    if (checked.has(id)) continue;
+    checked.add(id);
+    await assertInside(h, id, 'folder');
   }
 }
 
@@ -428,7 +591,7 @@ const connector = defineConnector({
       multiple: true,
       tool: 'list_folders',
       idField: 'id',
-      nameField: 'name',
+      nameField: 'label',
       legacyField: 'folders',
     },
   ],
@@ -438,8 +601,9 @@ const connector = defineConnector({
       kind: 'read',
       title: 'List Google Drive folders',
       description:
-        'Lists folders: without parent_id, the folders chosen for this connection, or, with no choice made, the folders shared with the '
-        + 'service account and the shared drives it is a member of; with parent_id, the subfolders of that folder. Each has its id and name. '
+        'Lists folders: without parent_id, the folders chosen for this connection, or, with no choice made, every folder the service account '
+        + 'can reach (folders shared with it, their subfolders and the folders of its shared drives, each labeled with its parent folder\'s '
+        + 'name), then the shared drives it is a member of; with parent_id, the subfolders of that folder. Each has its id and name. '
         + 'Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
@@ -460,7 +624,7 @@ const connector = defineConnector({
           }, args.cursor, 'folders', trimFolder, { parentId: args.parent_id });
         }
         const allowed = chosenFolders(h);
-        return allowed === null ? sharedFolderList(h, args.cursor) : chosenFolderList(h, allowed, args.cursor);
+        return allowed === null ? reachableFolderList(h, args.cursor) : chosenFolderList(h, allowed, args.cursor);
       },
     },
     {
@@ -469,18 +633,23 @@ const connector = defineConnector({
       title: 'List Google Drive files',
       description:
         'Lists the files in a folder (or, without folder_id, in the chosen folders, or everything the service account can see), newest change '
-        + 'first: id, name, kind (folder, document, spreadsheet, presentation or file), type, size, times and link. Filter by name, text, type '
-        + 'or change time. Subfolders are listed too; list one with its id for its files. Pass nextCursor back as cursor for more.',
+        + 'first (full-text matches by relevance): id, name, kind (folder, document, spreadsheet, presentation or file), type, size, times and '
+        + 'link. Filter by name, text, type or change time. Subfolders are listed too; list one with its id for its files. Pass nextCursor '
+        + 'back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           folder_id: { ...ID, description: 'The folder to list.' },
           name_contains: { type: 'string', maxLength: 200, description: 'Only names containing this text.' },
-          full_text: { type: 'string', maxLength: 200, description: 'Only files whose name or content contains this text.' },
+          full_text: { type: 'string', maxLength: 200, description: 'Only files whose name or content contains this text; they come back by relevance.' },
           mime_type: { type: 'string', maxLength: 200, pattern: '^[A-Za-z0-9.+-]+/([A-Za-z0-9.+-]+|\\*)$', description: 'Only this type, e.g. image/png, or a family such as image/* or video/*.' },
           modified_after: { type: 'string', maxLength: 40, description: 'Only files changed after this time (RFC 3339), e.g. 2026-05-01T00:00:00Z.' },
           include_folders: { type: 'boolean', default: true, description: 'List subfolders too (default true).' },
-          order_by: { type: 'string', enum: ['modifiedTime desc', 'createdTime desc', 'name', 'folder,name'], default: 'modifiedTime desc', description: 'Order (default newest change first).' },
+          order_by: {
+            type: 'string',
+            enum: ['modifiedTime desc', 'createdTime desc', 'name', 'folder,name'],
+            description: 'Order (default newest change first). Not with full_text or a fullText query: Google Drive sorts those by relevance.',
+          },
           query: { type: 'string', maxLength: 1000, description: 'A raw Drive search query, e.g. "starred = true"; not available while the connection is limited to chosen folders.' },
           page_size: { type: 'integer', minimum: 1, maximum: 1000, default: 100, description: 'Files per page, 1 to 1000 (default 100).' },
           cursor: { type: 'string', description: 'nextCursor from the previous result.' },
@@ -489,8 +658,13 @@ const connector = defineConnector({
       },
       async run(args: {
         folder_id?: string; name_contains?: string; full_text?: string; mime_type?: string; modified_after?: string;
-        include_folders: boolean; order_by: string; query?: string; page_size: number; cursor?: string;
+        include_folders: boolean; order_by?: string; query?: string; page_size: number; cursor?: string;
       }, h) {
+        // Google Drive refuses a sort order for a query with a fullText term: those come back by relevance.
+        const fullText = Boolean(args.full_text) || (args.query !== undefined && /\bfullText\s+contains\b/i.test(args.query));
+        if (fullText && args.order_by !== undefined) {
+          throw new ToolFailure('order_by does not go with full_text or a fullText query: Google Drive returns full-text matches by relevance. Leave order_by out.');
+        }
         const allowed = chosenFolders(h);
         const clauses = ['trashed=false'];
         if (args.folder_id !== undefined) {
@@ -521,7 +695,7 @@ const connector = defineConnector({
           q: clauses.join(' and '),
           fields: LIST_FIELDS,
           pageSize: args.page_size,
-          orderBy: args.order_by,
+          orderBy: fullText ? undefined : args.order_by ?? 'modifiedTime desc',
         }, args.cursor, 'files', trimFile, compact({ folderId: args.folder_id }));
       },
     },
@@ -559,8 +733,9 @@ const connector = defineConnector({
       description:
         'Returns the text of a file, in pages of about 25 KB: a Google Doc as Markdown (or plain text or HTML), a Google Sheet\'s first sheet '
         + 'as CSV (read_sheet reads any sheet and range), a Slides file as plain text, and text files (TXT, CSV, JSON, HTML, XML and similar) '
-        + 'as they are, up to 4 MB. A binary file (an image, a video, a PDF) is not read: its details and links come back instead. '
-        + 'Pass nextCursor back as cursor for the next page.',
+        + 'as they are, up to 4 MB. A binary file (an image, a video, a PDF) is not read: its details and links come back instead. To hand '
+        + 'a file, or a PDF, Word, Excel or PowerPoint export of a Google file, to a service that downloads by URL, use share_file (type '
+        + 'anyone) and unshare_file afterwards. Pass nextCursor back as cursor for the next page.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -600,8 +775,9 @@ const connector = defineConnector({
           return compact({
             ...trimFile(file),
             binary: true,
-            note: 'This is a binary file, so it is not returned as text. Open it with webViewLink; for another tool to download it, share it '
-              + 'publicly (share_file, type anyone, role reader): webContentLink then downloads it.',
+            note: 'This is a binary file, so it is not returned as text. Open it with webViewLink. For a service that downloads files by URL, '
+              + 'share_file with type anyone and role reader returns its downloadUrl; once the service has the file, unshare_file with '
+              + 'permission_id anyoneWithLink takes the link back.',
           });
         }
         const { data } = await drive(h, request);
@@ -790,7 +966,9 @@ const connector = defineConnector({
       description:
         'Gives a person, a group, a whole domain or anyone with the link access to a file or folder, as reader, commenter or writer (Editor; '
         + 'Content manager in a shared drive). Files the service account creates belong to it: share them with the people who need to edit them. '
-        + 'type anyone with role reader makes the file public, so other tools can download it from its webContentLink.',
+        + 'type anyone with role reader is how a file reaches a service that downloads by URL: the result then has downloadUrl (the file '
+        + 'itself) or, for a Google Doc, Sheet or Slides file, exportUrls by format (pdf, docx, xlsx, pptx and more). Anyone with the link '
+        + 'can open the file until unshare_file removes permission anyoneWithLink: do that once the service has the file.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -810,7 +988,8 @@ const connector = defineConnector({
         if (person && !args.email) throw new ToolFailure(`email is required for type ${args.type}. Nothing was changed.`);
         if (args.type === 'domain' && !args.domain) throw new ToolFailure('domain is required for type domain. Nothing was changed.');
         if (!person && (args.email || args.notify !== undefined || args.message)) throw new ToolFailure('email, notify and message go with type user or group only. Nothing was changed.');
-        await assertInside(h, args.file_id);
+        // The links are read before the change, so nothing after it can fail.
+        const file = await getChecked(h, args.file_id, 'id,webViewLink,webContentLink,exportLinks');
         const { data } = await drive(h, {
           method: 'POST',
           path: `/drive/v3/files/${enc(args.file_id)}/permissions`,
@@ -823,7 +1002,48 @@ const connector = defineConnector({
           json: compact({ role: args.role, type: args.type, emailAddress: args.email, domain: args.domain }),
           write: true,
         });
-        return compact({ fileId: args.file_id, permissionId: data?.id, type: data?.type, role: data?.role, email: data?.emailAddress, domain: data?.domain });
+        const anyone = args.type === 'anyone';
+        return compact({
+          fileId: args.file_id,
+          permissionId: data?.id,
+          type: data?.type,
+          role: data?.role,
+          email: data?.emailAddress,
+          domain: data?.domain,
+          webViewLink: file?.webViewLink,
+          ...(anyone ? downloadLinks(file) : {}),
+          note: anyone ? `Anyone with these links can open the file until unshare_file removes permission ${String(data?.id ?? 'anyoneWithLink')}.` : undefined,
+        });
+      },
+    },
+    {
+      name: 'unshare_file',
+      kind: 'delete',
+      check: 'get_file',
+      title: 'Remove a sharing from a Google Drive file',
+      description:
+        'Removes one sharing from a file or folder by its permission id: the permissionId share_file returned, or an id from get_file\'s '
+        + 'sharedWith. anyoneWithLink takes back a link shared with anyone, once the service that needed the file has it. Sharing inherited '
+        + 'from a folder is removed on the folder, and the owner\'s cannot be removed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          file_id: ID,
+          permission_id: { type: 'string', pattern: ID_PATTERN, description: 'The permission id, e.g. anyoneWithLink.' },
+        },
+        required: ['file_id', 'permission_id'],
+        additionalProperties: false,
+      },
+      async run(args: { file_id: string; permission_id: string }, h) {
+        await assertInside(h, args.file_id);
+        await drive(h, {
+          method: 'DELETE',
+          path: `/drive/v3/files/${enc(args.file_id)}/permissions/${enc(args.permission_id)}`,
+          query: { supportsAllDrives: true },
+          write: true,
+          errors: { 404: 'Google Drive found no such sharing on the file (it may be removed already), or no such file' },
+        });
+        return { removed: true, fileId: args.file_id, permissionId: args.permission_id };
       },
     },
     {
@@ -997,11 +1217,12 @@ const connector = defineConnector({
     ...apiTools({
       label: LABEL,
       description:
-        'The Google Drive API v3 (https://www.googleapis.com, paths /drive/v3/... and /upload/drive/v3/...), the Google Sheets API v4 '
-        + '(https://sheets.googleapis.com, /v4/spreadsheets/...) and the Google Docs API v1 (https://docs.googleapis.com, /v1/documents/...), '
-        + 'as the service account; pass origin for Sheets or Docs. Add supportsAllDrives=true for shared drives. While the connection is '
-        + 'limited to chosen folders, paths must name a file inside them. References: https://developers.google.com/workspace/drive/api/reference/rest/v3, '
-        + 'https://developers.google.com/workspace/sheets/api/reference/rest, https://developers.google.com/workspace/docs/api/reference/rest.',
+        'The Google Drive API v3 (https://www.googleapis.com: /drive/v3/..., /upload/drive/v3/...), Sheets API v4 (https://sheets.googleapis.com: '
+        + '/v4/spreadsheets/...) and Docs API v1 (https://docs.googleapis.com: /v1/documents/...), as the service account; pass origin for '
+        + 'Sheets or Docs, and supportsAllDrives=true for shared drives. While the connection is limited to chosen folders, paths must name a '
+        + 'file inside them, and a file listing needs a q such as "\'FOLDER_ID\' in parents and trashed=false". Reference: '
+        + 'https://developers.google.com/workspace/drive/api/reference/rest/v3 (Sheets and Docs: /workspace/sheets/api/reference/rest, '
+        + '/workspace/docs/api/reference/rest).',
       originArgument: 'https://www.googleapis.com for Drive (default), https://sheets.googleapis.com for Sheets, https://docs.googleapis.com for Docs.',
       guard: driveGuard,
       send: (request, h) => drive(h, request),
