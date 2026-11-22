@@ -10,6 +10,8 @@
 - `h.api` takes lists as query values and repeats the parameter.
 - `devto` and `bluesky` gain `api_get` and `api_request` for the rest of their APIs: dev.to under `/api/` (POST, PUT, DELETE), Bluesky any XRPC query or procedure with the account's session, its account, session and identity methods left out. `serper` has none: its one endpoint is `web_search`.
 
+- JWT signing in the core, with WebCrypto only: `signJwt` (RS256 or ES256 from a PEM PKCS#8 key, ES256 as the raw r||s signature), `googleServiceAccountToken` (the jwt-bearer exchange at `https://oauth2.googleapis.com/token`, cached in memory until 5 minutes before expiry, keyed by a hash of the key) and `appStoreConnectToken` (ES256 with `kid`, `iss`, `aud: "appstoreconnect-v1"` and a 20-minute expiry).
+
 ## 0.1.0
 
 The first release: three connectors, and the stdio CLI that runs them.

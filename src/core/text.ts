@@ -33,6 +33,22 @@ export function base64UrlDecode(text: string): Uint8Array {
   return bytes;
 }
 
+/** Standard base64 (as in PEM files) to bytes; throws on anything else. Whitespace is ignored. */
+export function base64Decode(text: string): Uint8Array {
+  const clean = text.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean) || clean.length % 4 === 1) throw new Error('not base64');
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** The SHA-256 of a text, as lower-case hex: a cache key that never holds the secret itself. */
+export async function sha256Hex(text: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8Bytes(text)));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** Cuts a string to at most `max` code points, ending with an ellipsis when cut. */
 export function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
