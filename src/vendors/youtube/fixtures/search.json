@@ -1,0 +1,23 @@
+{
+  "nextPageToken": "CBkQAA",
+  "pageInfo": {
+    "totalResults": 31,
+    "resultsPerPage": 25
+  },
+  "items": [
+    {
+      "kind": "youtube#searchResult",
+      "id": {
+        "kind": "youtube#video",
+        "videoId": "vid0000001a"
+      },
+      "snippet": {
+        "publishedAt": "2026-11-20T09:00:00Z",
+        "channelId": "UCabcdefghijklmnopqrstuv",
+        "title": "How we edit a short film",
+        "description": "About editing.",
+        "channelTitle": "Example Studio"
+      }
+    }
+  ]
+}

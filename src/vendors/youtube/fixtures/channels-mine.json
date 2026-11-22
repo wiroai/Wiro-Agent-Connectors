@@ -1,0 +1,37 @@
+{
+  "kind": "youtube#channelListResponse",
+  "pageInfo": {
+    "totalResults": 1,
+    "resultsPerPage": 50
+  },
+  "items": [
+    {
+      "kind": "youtube#channel",
+      "id": "UCabcdefghijklmnopqrstuv",
+      "snippet": {
+        "title": "Example Studio",
+        "description": "Short films and how-tos.",
+        "customUrl": "@examplestudio",
+        "publishedAt": "2019-04-02T10:00:00Z",
+        "thumbnails": {
+          "default": {
+            "url": "https://yt3.ggpht.com/example=s88"
+          }
+        },
+        "country": "TR"
+      },
+      "contentDetails": {
+        "relatedPlaylists": {
+          "likes": "",
+          "uploads": "UUabcdefghijklmnopqrstuv"
+        }
+      },
+      "statistics": {
+        "viewCount": "1234567",
+        "subscriberCount": "8900",
+        "hiddenSubscriberCount": false,
+        "videoCount": "142"
+      }
+    }
+  ]
+}

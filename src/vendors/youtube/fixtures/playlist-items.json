@@ -1,0 +1,23 @@
+{
+  "items": [
+    {
+      "id": "UExleGFtcGxlUGxheWxpc3RPbmUwMDAw1",
+      "snippet": {
+        "title": "How we edit a short film",
+        "position": 0,
+        "resourceId": {
+          "kind": "youtube#video",
+          "videoId": "vid0000001a"
+        },
+        "videoOwnerChannelId": "UCabcdefghijklmnopqrstuv"
+      },
+      "contentDetails": {
+        "videoId": "vid0000001a",
+        "videoPublishedAt": "2026-11-20T09:00:00Z"
+      },
+      "status": {
+        "privacyStatus": "public"
+      }
+    }
+  ]
+}

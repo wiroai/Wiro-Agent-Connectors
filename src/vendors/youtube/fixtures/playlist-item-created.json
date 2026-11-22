@@ -1,0 +1,11 @@
+{
+  "id": "UExuZXdQbGF5bGlzdDAwMDAwMDAwMDAwMDA1",
+  "snippet": {
+    "playlistId": "PLnewPlaylist00000000000",
+    "position": 0,
+    "resourceId": {
+      "kind": "youtube#video",
+      "videoId": "vid0000001a"
+    }
+  }
+}

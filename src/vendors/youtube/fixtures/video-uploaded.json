@@ -1,0 +1,55 @@
+{
+  "kind": "youtube#video",
+  "id": "vid0000009z",
+  "snippet": {
+    "publishedAt": "2026-11-20T09:00:00Z",
+    "channelId": "UCabcdefghijklmnopqrstuv",
+    "title": "Launch film",
+    "description": "About Launch film.",
+    "thumbnails": {
+      "default": {
+        "url": "https://i.ytimg.com/vi/vid0000009z/default.jpg",
+        "width": 120,
+        "height": 90
+      },
+      "high": {
+        "url": "https://i.ytimg.com/vi/vid0000009z/hqdefault.jpg",
+        "width": 480,
+        "height": 360
+      }
+    },
+    "channelTitle": "Example Studio",
+    "tags": [
+      "demo",
+      "how to"
+    ],
+    "categoryId": "28",
+    "defaultLanguage": "tr",
+    "defaultAudioLanguage": "tr",
+    "liveBroadcastContent": "none"
+  },
+  "contentDetails": {
+    "duration": "P0D",
+    "dimension": "2d",
+    "definition": "hd",
+    "caption": "false",
+    "licensedContent": false,
+    "projection": "rectangular"
+  },
+  "status": {
+    "uploadStatus": "uploaded",
+    "privacyStatus": "private",
+    "license": "youtube",
+    "embeddable": true,
+    "publicStatsViewable": true,
+    "madeForKids": false,
+    "selfDeclaredMadeForKids": false,
+    "containsSyntheticMedia": true
+  },
+  "statistics": {
+    "viewCount": "0",
+    "likeCount": "0",
+    "favoriteCount": "0",
+    "commentCount": "0"
+  }
+}

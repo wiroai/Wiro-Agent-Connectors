@@ -1,0 +1,170 @@
+{
+  "items": [
+    {
+      "kind": "youtube#video",
+      "id": "vid0000001a",
+      "snippet": {
+        "publishedAt": "2026-11-20T09:00:00Z",
+        "channelId": "UCabcdefghijklmnopqrstuv",
+        "title": "How we edit a short film",
+        "description": "About How we edit a short film.",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/vid0000001a/default.jpg",
+            "width": 120,
+            "height": 90
+          },
+          "high": {
+            "url": "https://i.ytimg.com/vi/vid0000001a/hqdefault.jpg",
+            "width": 480,
+            "height": 360
+          }
+        },
+        "channelTitle": "Example Studio",
+        "tags": [
+          "demo",
+          "how to"
+        ],
+        "categoryId": "28",
+        "defaultLanguage": "tr",
+        "defaultAudioLanguage": "tr",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": {
+        "duration": "PT2M30S",
+        "dimension": "2d",
+        "definition": "hd",
+        "caption": "false",
+        "licensedContent": false,
+        "projection": "rectangular"
+      },
+      "status": {
+        "uploadStatus": "processed",
+        "privacyStatus": "public",
+        "license": "youtube",
+        "embeddable": true,
+        "publicStatsViewable": true,
+        "madeForKids": false,
+        "selfDeclaredMadeForKids": false,
+        "containsSyntheticMedia": true
+      },
+      "statistics": {
+        "viewCount": "15400",
+        "likeCount": "770",
+        "favoriteCount": "0",
+        "commentCount": "154"
+      }
+    },
+    {
+      "kind": "youtube#video",
+      "id": "vid0000002b",
+      "snippet": {
+        "publishedAt": "2026-11-20T09:00:00Z",
+        "channelId": "UCabcdefghijklmnopqrstuv",
+        "title": "Winter teaser",
+        "description": "About Winter teaser.",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/vid0000002b/default.jpg",
+            "width": 120,
+            "height": 90
+          },
+          "high": {
+            "url": "https://i.ytimg.com/vi/vid0000002b/hqdefault.jpg",
+            "width": 480,
+            "height": 360
+          }
+        },
+        "channelTitle": "Example Studio",
+        "tags": [
+          "demo",
+          "how to"
+        ],
+        "categoryId": "28",
+        "defaultLanguage": "tr",
+        "defaultAudioLanguage": "tr",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": {
+        "duration": "PT14S",
+        "dimension": "2d",
+        "definition": "hd",
+        "caption": "false",
+        "licensedContent": false,
+        "projection": "rectangular"
+      },
+      "status": {
+        "uploadStatus": "processed",
+        "privacyStatus": "private",
+        "license": "youtube",
+        "embeddable": true,
+        "publicStatsViewable": true,
+        "madeForKids": false,
+        "selfDeclaredMadeForKids": false,
+        "containsSyntheticMedia": true,
+        "publishAt": "2026-12-01T07:00:00Z"
+      },
+      "statistics": {
+        "viewCount": "0",
+        "likeCount": "0",
+        "favoriteCount": "0",
+        "commentCount": "0"
+      }
+    },
+    {
+      "kind": "youtube#video",
+      "id": "vid0000003c",
+      "snippet": {
+        "publishedAt": "2026-11-20T09:00:00Z",
+        "channelId": "UCabcdefghijklmnopqrstuv",
+        "title": "Bumper: logo sting",
+        "description": "About Bumper: logo sting.",
+        "thumbnails": {
+          "default": {
+            "url": "https://i.ytimg.com/vi/vid0000003c/default.jpg",
+            "width": 120,
+            "height": 90
+          },
+          "high": {
+            "url": "https://i.ytimg.com/vi/vid0000003c/hqdefault.jpg",
+            "width": 480,
+            "height": 360
+          }
+        },
+        "channelTitle": "Example Studio",
+        "tags": [
+          "demo",
+          "how to"
+        ],
+        "categoryId": "28",
+        "defaultLanguage": "tr",
+        "defaultAudioLanguage": "tr",
+        "liveBroadcastContent": "none"
+      },
+      "contentDetails": {
+        "duration": "PT5S",
+        "dimension": "2d",
+        "definition": "hd",
+        "caption": "false",
+        "licensedContent": false,
+        "projection": "rectangular"
+      },
+      "status": {
+        "uploadStatus": "processed",
+        "privacyStatus": "unlisted",
+        "license": "youtube",
+        "embeddable": true,
+        "publicStatsViewable": true,
+        "madeForKids": true,
+        "selfDeclaredMadeForKids": true,
+        "containsSyntheticMedia": true
+      },
+      "statistics": {
+        "viewCount": "3200",
+        "likeCount": "160",
+        "favoriteCount": "0",
+        "commentCount": "32"
+      }
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "read": { "tool": "list_channels", "args": {} },
+  "write": {
+    "tool": "create_playlist",
+    "args": {
+      "title": "Connector smoke test {{timestamp}}",
+      "description": "A private playlist from the connector smoke test.",
+      "privacy_status": "private"
+    },
+    "note": "Creates a private playlist on the connected channel. Delete it in YouTube Studio (Content, Playlists), or with api_request DELETE /youtube/v3/playlists?id=<playlist id>."
+  }
+}
