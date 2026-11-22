@@ -1,0 +1,22 @@
+{
+  "read": { "tool": "list_accounts", "args": {} },
+  "write": {
+    "tool": "insert_product",
+    "args": {
+      "account_id": "123456789",
+      "data_source": "987654321",
+      "offer_id": "connector-smoke-test",
+      "content_language": "en",
+      "feed_label": "US",
+      "product_attributes": {
+        "title": "Connector smoke test {{timestamp}}",
+        "link": "https://example.com/connector-smoke-test",
+        "imageLink": "https://example.com/connector-smoke-test.jpg",
+        "availability": "OUT_OF_STOCK",
+        "condition": "NEW",
+        "price": { "amountMicros": "1000000", "currencyCode": "USD" }
+      }
+    },
+    "note": "Put your own account ID and the ID of an API data source (list_data_sources) in the arguments first. It inserts an out-of-stock test product: remove it with delete_product and the same account_id, data_source, offer_id, content_language and feed_label."
+  }
+}

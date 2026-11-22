@@ -1,0 +1,65 @@
+{
+  "products": [
+    {
+      "name": "accounts/5550001/products/en~US~SKU123",
+      "offerId": "SKU123",
+      "contentLanguage": "en",
+      "feedLabel": "US",
+      "dataSource": "accounts/5550001/dataSources/9990001",
+      "versionNumber": "12",
+      "productAttributes": {
+        "title": "Trail Running Shoes",
+        "description": "Lightweight trail running shoes with a breathable mesh upper.",
+        "link": "https://shop.example.com/p/SKU123",
+        "imageLink": "https://shop.example.com/i/SKU123.jpg",
+        "availability": "IN_STOCK",
+        "condition": "NEW",
+        "price": { "amountMicros": "129990000", "currencyCode": "USD" },
+        "brand": "Example Outdoor",
+        "gtins": ["01234567890128"]
+      },
+      "productStatus": {
+        "destinationStatuses": [
+          { "reportingContext": "SHOPPING_ADS", "approvedCountries": ["US"] },
+          { "reportingContext": "FREE_LISTINGS", "approvedCountries": ["US"] }
+        ],
+        "creationDate": "2026-05-02T10:21:44Z",
+        "lastUpdateDate": "2026-11-20T07:12:00Z",
+        "googleExpirationDate": "2026-12-20T07:12:00Z"
+      }
+    },
+    {
+      "name": "accounts/5550001/products/en~US~SKU456",
+      "offerId": "SKU456",
+      "contentLanguage": "en",
+      "feedLabel": "US",
+      "dataSource": "accounts/5550001/dataSources/9990001",
+      "productAttributes": {
+        "title": "Hiking Socks (3 pairs)",
+        "link": "https://shop.example.com/p/SKU456",
+        "imageLink": "https://shop.example.com/i/SKU456.jpg",
+        "availability": "IN_STOCK",
+        "price": { "amountMicros": "19990000", "currencyCode": "USD" },
+        "salePrice": { "amountMicros": "14990000", "currencyCode": "USD" },
+        "brand": "Example Outdoor"
+      },
+      "productStatus": {
+        "destinationStatuses": [{ "reportingContext": "SHOPPING_ADS", "disapprovedCountries": ["US"] }],
+        "itemLevelIssues": [
+          {
+            "code": "missing_gtin",
+            "severity": "DISAPPROVED",
+            "resolution": "merchant_action",
+            "attribute": "gtin",
+            "reportingContext": "SHOPPING_ADS",
+            "description": "Missing value [gtin]",
+            "detail": "Add a GTIN for this branded product.",
+            "documentation": "https://support.google.com/merchants/answer/6324461",
+            "applicableCountries": ["US"]
+          }
+        ]
+      }
+    }
+  ],
+  "nextPageToken": "products-page-2"
+}

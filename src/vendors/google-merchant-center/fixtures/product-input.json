@@ -1,0 +1,12 @@
+{
+  "name": "accounts/5550001/productInputs/en~US~SKU789",
+  "product": "accounts/5550001/products/en~US~SKU789",
+  "offerId": "SKU789",
+  "contentLanguage": "en",
+  "feedLabel": "US",
+  "productAttributes": {
+    "title": "Camping Lantern",
+    "availability": "IN_STOCK",
+    "price": { "amountMicros": "34990000", "currencyCode": "USD" }
+  }
+}

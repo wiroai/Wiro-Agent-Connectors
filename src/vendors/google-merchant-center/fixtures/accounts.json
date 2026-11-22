@@ -1,0 +1,21 @@
+{
+  "accounts": [
+    {
+      "name": "accounts/5550001",
+      "accountId": "5550001",
+      "accountName": "Example Outdoor Store",
+      "adultContent": false,
+      "timeZone": { "id": "America/New_York", "version": "" },
+      "languageCode": "en-US"
+    },
+    {
+      "name": "accounts/5550002",
+      "accountId": "5550002",
+      "accountName": "Example Outdoor EU",
+      "testAccount": true,
+      "timeZone": { "id": "Europe/Berlin", "version": "" },
+      "languageCode": "de-DE"
+    }
+  ],
+  "nextPageToken": "accounts-page-2"
+}

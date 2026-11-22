@@ -1,0 +1,12 @@
+{
+  "results": [
+    {
+      "priceCompetitivenessProductView": {
+        "offerId": "SKU123",
+        "price": { "amountMicros": "129990000", "currencyCode": "USD" },
+        "benchmarkPrice": { "amountMicros": "119990000", "currencyCode": "USD" },
+        "reportCountryCode": "US"
+      }
+    }
+  ]
+}
