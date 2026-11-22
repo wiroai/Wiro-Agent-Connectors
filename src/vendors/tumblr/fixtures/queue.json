@@ -1,0 +1,1 @@
+{ "meta": { "status": 200, "msg": "OK" }, "response": { "posts": [ { "object_type": "post", "type": "blocks", "id_string": "1234567891235000", "state": "queued", "scheduled_publish_time": 1796119200, "tags": [], "summary": "Friday drop", "note_count": 0, "content": [{ "type": "text", "text": "Friday drop" }] } ] } }

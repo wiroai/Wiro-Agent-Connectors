@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "get_account", "args": {} },
+  "write": {
+    "tool": "create_post",
+    "args": { "text": "Connector smoke test {{timestamp}}", "visibility": "direct" },
+    "note": "Posts a direct post that mentions no one, so only the account sees it. Delete it with delete_post or in Mastodon."
+  }
+}

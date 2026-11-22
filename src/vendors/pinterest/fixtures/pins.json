@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "813744226420795884",
+      "created_at": "2026-11-20T09:00:00",
+      "link": "https://www.example.com/prints/sunset",
+      "title": "Sunset print",
+      "description": "A warm sunset print for the living room.",
+      "dominant_color": "#6E7874",
+      "alt_text": "An orange sunset over the sea, framed",
+      "creative_type": "REGULAR",
+      "board_id": "549755885175",
+      "board_section_id": null,
+      "board_owner": { "username": "acmestudio" },
+      "is_owner": true,
+      "media": { "media_type": "image", "images": { "150x150": { "width": 150, "height": 150, "url": "https://i.pinimg.com/150x150/aa/sunset.jpg" }, "600x": { "width": 600, "height": 900, "url": "https://i.pinimg.com/600x/aa/sunset.jpg" } } },
+      "parent_pin_id": null,
+      "is_standard": true,
+      "has_been_promoted": false,
+      "note": "",
+      "pin_metrics": { "90d": { "pin_click": 7, "impression": 200, "clickthrough": 3 }, "lifetime_metrics": { "pin_click": 7, "impression": 200, "clickthrough": 3, "reaction": 10, "comment": 2 } }
+    },
+    {
+      "id": "813744226420795885",
+      "created_at": "2026-11-18T09:00:00",
+      "link": null,
+      "title": "",
+      "description": "",
+      "alt_text": null,
+      "board_id": "549755885175",
+      "is_owner": true,
+      "media": { "media_type": "video", "cover_image_url": "https://i.pinimg.com/videos/thumbnails/originals/aa/clip.jpg", "video_url": "https://v1.pinimg.com/videos/aa/clip.mp4", "duration": 5000, "height": 1920, "width": 1080 }
+    }
+  ],
+  "bookmark": "Ym9va21hcmstcGlucy0y"
+}

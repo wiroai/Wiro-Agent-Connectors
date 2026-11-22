@@ -1,0 +1,1 @@
+{ "meta": { "status": 200, "msg": "OK" }, "response": { "posts": [ { "object_type": "post", "type": "blocks", "id_string": "1234567891234999", "state": "draft", "date": "2026-11-21 10:00:00 GMT", "tags": ["prints"], "summary": "Draft of the winter series", "note_count": 0, "content": [{ "type": "text", "text": "Draft of the winter series" }] } ] } }

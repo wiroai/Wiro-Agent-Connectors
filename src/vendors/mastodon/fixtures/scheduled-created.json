@@ -1,0 +1,6 @@
+{
+  "id": "3221",
+  "scheduled_at": "2026-12-01T18:00:00.000Z",
+  "params": { "text": "Scheduled hello", "visibility": "public", "poll": null, "media_ids": null, "sensitive": null, "spoiler_text": null, "idempotency": null, "in_reply_to_id": null, "language": "en", "application_id": 7, "scheduled_at": null, "with_rate_limit": false },
+  "media_attachments": []
+}

@@ -1,0 +1,28 @@
+{
+  "domain": "social.example",
+  "title": "Example Social",
+  "version": "4.5.0",
+  "source_url": "https://github.com/mastodon/mastodon",
+  "description": "A test server.",
+  "usage": { "users": { "active_month": 1200 } },
+  "api_versions": { "mastodon": 6 },
+  "configuration": {
+    "urls": { "streaming": "wss://social.example" },
+    "accounts": { "max_featured_tags": 10, "max_pinned_statuses": 5 },
+    "statuses": { "max_characters": 500, "max_media_attachments": 4, "characters_reserved_per_url": 23 },
+    "media_attachments": {
+      "supported_mime_types": ["image/jpeg", "image/png", "image/gif", "image/heic", "image/heif", "image/webp", "image/avif", "video/webm", "video/mp4", "video/quicktime", "video/ogg", "audio/wave", "audio/wav", "audio/x-wav", "audio/x-pn-wave", "audio/vnd.wave", "audio/ogg", "audio/vorbis", "audio/mpeg", "audio/mp3", "audio/webm", "audio/flac", "audio/aac", "audio/m4a", "audio/x-m4a", "audio/mp4", "audio/3gpp", "video/x-ms-asf"],
+      "description_limit": 1500,
+      "image_size_limit": 16777216,
+      "image_matrix_limit": 33177600,
+      "video_size_limit": 103809024,
+      "video_frame_rate_limit": 120,
+      "video_matrix_limit": 8294400
+    },
+    "polls": { "max_options": 4, "max_characters_per_option": 50, "min_expiration": 300, "max_expiration": 2629746 },
+    "translation": { "enabled": false }
+  },
+  "registrations": { "enabled": false, "approval_required": false },
+  "contact": { "email": "admin@social.example" },
+  "rules": []
+}

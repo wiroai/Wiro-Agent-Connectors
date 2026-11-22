@@ -1,0 +1,20 @@
+{
+  "meta": { "status": 200, "msg": "OK" },
+  "response": {
+    "blog": { "name": "acme", "title": "Acme Prints", "uuid": "t:0aY0xL2Fi1OFJg4YxpmegQ" },
+    "posts": [
+      {
+        "object_type": "post", "type": "blocks", "id": 1234567891234567, "id_string": "1234567891234567", "blog_name": "acme",
+        "post_url": "https://www.tumblr.com/acme/1234567891234567/new-print-series", "slug": "new-print-series", "date": "2026-11-20 09:00:00 GMT", "timestamp": 1795165200,
+        "state": "published", "tags": ["prints", "illustration"], "summary": "New print series is out.", "note_count": 42,
+        "content": [{ "type": "text", "text": "New print series is out." }], "layout": []
+      },
+      {
+        "object_type": "post", "type": "blocks", "id": 1234567891230000, "id_string": "1234567891230000", "blog_name": "acme",
+        "post_url": "https://www.tumblr.com/acme/1234567891230000", "date": "2026-11-18 09:00:00 GMT", "state": "published", "tags": [], "summary": "", "note_count": 3,
+        "content": [{ "type": "text", "text": "Studio day." }, { "type": "image", "media": [{ "url": "https://64.media.tumblr.com/aa/s640x960/studio.jpg", "type": "image/jpeg", "width": 640, "height": 960 }], "alt_text": "A desk with brushes" }]
+      }
+    ],
+    "total_posts": 45
+  }
+}

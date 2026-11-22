@@ -1,0 +1,14 @@
+{
+  "2026-11-19": {
+    "comments": { "total": 1 },
+    "follows": { "total": 0 },
+    "reactions": { "total": 4, "like": 3, "readinglist": 1, "unicorn": 0, "exploding_head": 0, "raised_hands": 0, "fire": 0, "unique_reactors": 3 },
+    "page_views": { "total": 120, "average_read_time_in_seconds": 95, "total_read_time_in_seconds": 11400 }
+  },
+  "2026-11-18": {
+    "comments": { "total": 0 },
+    "follows": { "total": 2 },
+    "reactions": { "total": 1 },
+    "page_views": { "total": 40, "average_read_time_in_seconds": 60, "total_read_time_in_seconds": 2400 }
+  }
+}

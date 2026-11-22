@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "list_boards", "args": { "page_size": 5 } },
+  "write": {
+    "tool": "create_board",
+    "args": { "name": "Connector smoke test {{timestamp}}", "description": "A test board from the connector smoke test." },
+    "note": "Creates a public board on the account (an app with Trial access is refused with code 29). Delete the board on Pinterest."
+  }
+}

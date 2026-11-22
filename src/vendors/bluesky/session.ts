@@ -27,8 +27,8 @@ const sessions = new Map<string, Session>();
 const pending = new Map<string, Promise<Session>>();
 const signIns = new Map<string, number[]>();
 
-async function credentialKey(identifier: string, password: string): Promise<string> {
-  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8Bytes(`${identifier}\n${password}`)));
+async function credentialKey(handle: string, password: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', utf8Bytes(`${handle}\n${password}`)));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
@@ -101,7 +101,7 @@ async function signIn(h: ToolHelpers, key: string): Promise<Session> {
     response = await h.api({
       method: 'POST',
       path: '/xrpc/com.atproto.server.createSession',
-      json: { identifier: h.credentials['identifier'], password: h.credentials['app_password'] },
+      json: { identifier: h.credentials['handle'], password: h.credentials['apppassword'] },
       safe: true,
     });
   } catch (error) {
@@ -118,7 +118,7 @@ async function signIn(h: ToolHelpers, key: string): Promise<Session> {
   const expiry = jwtExpiry(data.accessJwt);
   const session: Session = {
     did: data.did,
-    handle: typeof data.handle === 'string' ? data.handle : String(h.credentials['identifier']),
+    handle: typeof data.handle === 'string' ? data.handle : String(h.credentials['handle']),
     accessJwt: data.accessJwt,
     expiresAt: Math.min(now + SESSION_TTL_MS, expiry !== undefined ? expiry - MINUTE : Infinity),
   };
@@ -128,7 +128,7 @@ async function signIn(h: ToolHelpers, key: string): Promise<Session> {
 
 /** The cached session for these credentials, or a new one. Parallel calls share one sign-in. */
 export async function getSession(h: ToolHelpers): Promise<Session> {
-  const key = await credentialKey(String(h.credentials['identifier']), String(h.credentials['app_password']));
+  const key = await credentialKey(String(h.credentials['handle']), String(h.credentials['apppassword']));
   const cached = sessions.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached;
   sessions.delete(key);

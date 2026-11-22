@@ -3,7 +3,7 @@ import test from 'node:test';
 import { callTool, fakeFetch, fixture, jsonResponse, loadModuleFor, makeContext, refusal, textBytes, textResponse } from '../../../tests/helpers.mjs';
 
 const KEY = 'AbCdEfGhJkLmNpQrStUvWxYz';
-const credentials = { api_key: KEY };
+const credentials = { apikey: KEY };
 const list = fixture(import.meta.url, 'list.json');
 const created = fixture(import.meta.url, 'create.json');
 const updated = fixture(import.meta.url, 'update.json');
@@ -66,6 +66,10 @@ test('status picks the endpoint, and a full page gives a cursor to the next one'
   assert.equal(fetch.calls[0].url, 'https://dev.to/api/articles/me/unpublished?page=1&per_page=2');
   await callTool(module, 'list_my_articles', { status: 'unpublished', cursor: first.payload.nextCursor }, ctx);
   assert.equal(fetch.calls[1].url, 'https://dev.to/api/articles/me/unpublished?page=2&per_page=2');
+  // The cursor keeps the list it came from: passed back alone, it still pages the drafts.
+  const alone = await callTool(module, 'list_my_articles', { cursor: first.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[2].url, 'https://dev.to/api/articles/me/unpublished?page=2&per_page=2');
+  assert.equal(alone.payload.status, 'unpublished');
 });
 
 test('a page over 32 KB is cut and continues after the last article returned', async () => {
@@ -263,4 +267,139 @@ test('api_request sends POST, PUT or DELETE once, and an unclear outcome is unkn
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(down.fetch.calls.length, 1);
+});
+
+test('the connection needs the apikey credential, and says so before sending anything', async () => {
+  const { module } = loadModuleFor(import.meta.url);
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  assert.deepEqual(plain(module.credentials), ['apikey']);
+  assert.deepEqual(plain(module.requiredCredentials), [['apikey']]);
+  assert.deepEqual(plain(module.accountPickers), []);
+  const fetch = fakeFetch(() => jsonResponse(200, []));
+  const { ctx } = makeContext({ credentials: {}, fetch });
+  const { payload, isError } = await callTool(module, 'list_my_articles', {}, ctx);
+  assert.equal(isError, true);
+  assert.equal(payload.error, 'dev.to is not connected: the dev.to API key is missing.');
+  assert.equal(fetch.calls.length, 0);
+});
+
+test('get_article returns a published article with its Markdown body', async () => {
+  const article = fixture(import.meta.url, 'article.json');
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, article));
+  const { payload, isError } = await callTool(module, 'get_article', { id: 100 }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(fetch.calls.length, 1);
+  assert.equal(fetch.calls[0].url, 'https://dev.to/api/articles/100');
+  assert.equal(fetch.calls[0].headers['api-key'], KEY);
+  assert.equal(payload.id, 100);
+  assert.equal(payload.published, true);
+  assert.equal(payload.author, 'alice');
+  assert.equal(payload.edit_url, 'https://dev.to/alice/published-one-abc/edit');
+  assert.equal(payload.ai_disclosure_level, 'some_ai');
+  assert.equal(payload.body_markdown, '## Why\n\nBecause.');
+  assert.deepEqual(payload.body_part, { start: 0, end: 16, length: 16 });
+  assert.equal(payload.nextCursor, undefined);
+  assert.equal('body_html' in payload, false);
+});
+
+test('get_article finds a draft among the account\'s unpublished articles when dev.to has no published one', async () => {
+  const drafts = Array.from({ length: 100 }, (_, index) => ({ id: 500 + index, title: `Draft ${index}`, published: false, body_markdown: `Body ${index}` }));
+  const { module, fetch, ctx } = setup((request) => {
+    if (request.path === '/api/articles/777') return jsonResponse(404, { error: 'not found', status: 404 });
+    if (request.query.page === '1') return jsonResponse(200, drafts);
+    return jsonResponse(200, [{ id: 777, title: 'The draft', published: false, url: 'https://dev.to/alice/the-draft-temp-slug-1', body_markdown: 'Draft body' }]);
+  });
+  const { payload, isError } = await callTool(module, 'get_article', { id: 777 }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.deepEqual(fetch.calls.map((call) => call.url), [
+    'https://dev.to/api/articles/777',
+    'https://dev.to/api/articles/me/unpublished?page=1&per_page=100',
+    'https://dev.to/api/articles/me/unpublished?page=2&per_page=100',
+  ]);
+  assert.equal(payload.published, false);
+  assert.equal(payload.body_markdown, 'Draft body');
+
+  const none = setup((request) => (request.path === '/api/articles/9' ? jsonResponse(404, { error: 'not found', status: 404 }) : jsonResponse(200, [])));
+  const missing = await callTool(none.module, 'get_article', { id: 9 }, none.ctx);
+  assert.equal(missing.isError, true);
+  assert.match(missing.payload.error, /dev\.to has no published article 9, and it is not among the account's drafts/);
+});
+
+test('a long body comes in parts under 32 KB, and the cursor continues where the part ended', async () => {
+  const body = Array.from({ length: 3000 }, (_, index) => `Line ${index} with "quotes" and a tab\tin it`).join('\n');
+  const article = { ...fixture(import.meta.url, 'article.json'), body_markdown: body };
+  const { module, ctx } = setup(() => jsonResponse(200, article));
+  let cursor;
+  let text = '';
+  let parts = 0;
+  do {
+    const { result, payload, isError } = await callTool(module, 'get_article', { id: 100, ...(cursor ? { cursor } : {}) }, ctx);
+    assert.equal(isError, false, payload.error);
+    assert.ok(textBytes(result) <= 32 * 1024);
+    assert.equal(payload.body_part.start, text.length);
+    text += payload.body_markdown;
+    cursor = payload.nextCursor;
+    parts++;
+  } while (cursor && parts < 20);
+  assert.ok(parts > 1, 'the body needed more than one part');
+  assert.equal(text, body);
+
+  const other = await callTool(module, 'get_article', { id: 101, cursor: (await callTool(module, 'get_article', { id: 100 }, ctx)).payload.nextCursor }, ctx);
+  assert.match(other.payload.error, /The cursor belongs to another article/);
+});
+
+test('get_analytics adds up the days of a range and lists them in date order', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'analytics-historical.json')));
+  const { payload, isError } = await callTool(module, 'get_analytics', { start: '2026-11-18', end: '2026-11-19', article_id: 100 }, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(fetch.calls[0].url, 'https://dev.to/api/analytics/historical?start=2026-11-18&end=2026-11-19&article_id=100');
+  assert.deepEqual(payload.scope, { article_id: 100 });
+  assert.deepEqual(payload.range, { start: '2026-11-18', end: '2026-11-19' });
+  assert.deepEqual(payload.totals, { page_views: 160, reactions: 5, comments: 1, follows: 2, average_read_time_seconds: 86 });
+  assert.deepEqual(payload.days, [
+    { date: '2026-11-18', page_views: 40, reactions: 1, comments: 0, follows: 2, average_read_time_seconds: 60 },
+    { date: '2026-11-19', page_views: 120, reactions: 4, comments: 1, follows: 0, average_read_time_seconds: 95 },
+  ]);
+});
+
+test('get_analytics without start reads the lifetime totals; a range needs its start; 404 says analytics are not available', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, fixture(import.meta.url, 'analytics-totals.json')));
+  const { payload } = await callTool(module, 'get_analytics', { organization_id: 7 }, ctx);
+  assert.equal(fetch.calls[0].url, 'https://dev.to/api/analytics/totals?organization_id=7');
+  assert.deepEqual(payload, {
+    scope: { organization_id: 7 },
+    period: 'lifetime',
+    totals: { page_views: 900, reactions: 20, comments: 4, follows: 2, average_read_time_seconds: 80 },
+  });
+
+  const noStart = await callTool(module, 'get_analytics', { end: '2026-11-19' }, ctx);
+  assert.match(noStart.payload.error, /end needs start/);
+  const both = await callTool(module, 'get_analytics', { start: '2026-11-01', article_id: 1, organization_id: 2 }, ctx);
+  assert.match(both.payload.error, /article_id or organization_id, not both/);
+  const badDate = await callTool(module, 'get_analytics', { start: '1 Nov 2026' }, ctx);
+  assert.match(badDate.payload.error, /`start` does not have the expected format/);
+  assert.equal(fetch.calls.length, 1);
+
+  const unavailable = setup(() => jsonResponse(404, { error: 'not found', status: 404 }));
+  const missing = await callTool(unavailable.module, 'get_analytics', { start: '2026-11-01' }, unavailable.ctx);
+  assert.match(missing.payload.error, /dev\.to's analytics are not available here/);
+  assert.equal(missing.payload.status, 404);
+});
+
+test('a long range is cut under 32 KB and the cursor carries the range to the next page', async () => {
+  const days = {};
+  for (let day = 0; day < 400; day++) {
+    const date = new Date(Date.UTC(2025, 0, 1) + day * 86400000).toISOString().slice(0, 10);
+    days[date] = { comments: { total: day % 3 }, follows: { total: 0 }, reactions: { total: 1 }, page_views: { total: 10, average_read_time_in_seconds: 30, total_read_time_in_seconds: 300 } };
+  }
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, days));
+  const first = await callTool(module, 'get_analytics', { start: '2025-01-01', end: '2026-02-04' }, ctx);
+  assert.ok(textBytes(first.result) <= 32 * 1024);
+  assert.equal(first.payload.truncated, true);
+  assert.equal(first.payload.days_count, 400);
+  assert.equal(first.payload.totals.page_views, 4000);
+  const shown = first.payload.days.length;
+  const second = await callTool(module, 'get_analytics', { cursor: first.payload.nextCursor }, ctx);
+  assert.equal(fetch.calls[1].url, 'https://dev.to/api/analytics/historical?start=2025-01-01&end=2026-02-04');
+  assert.equal(second.payload.days[0].date, new Date(Date.UTC(2025, 0, 1) + shown * 86400000).toISOString().slice(0, 10));
 });

@@ -1,0 +1,8 @@
+{
+  "read": { "tool": "list_blogs", "args": {} },
+  "write": {
+    "tool": "create_post",
+    "args": { "text": "Connector smoke test {{timestamp}}", "state": "draft", "tags": ["test"] },
+    "note": "Saves a draft on the blog chosen in CONNECTOR_ACCOUNTS (or pass blog_id). Nothing is published; delete the draft with delete_post or on Tumblr."
+  }
+}
