@@ -545,7 +545,8 @@ const connector = defineConnector({
           }));
         } catch (error) {
           if (error instanceof OutcomeUnknown) {
-            throw new OutcomeUnknown(`${error.message} Sending the same post again within an hour, with idempotency_key "${key}", cannot post it twice.`);
+            const where = scheduledAt ? ' A scheduled post shows in list_scheduled_posts, not in list_my_posts.' : '';
+            throw new OutcomeUnknown(`${error.message} Sending the same post again within an hour, with idempotency_key "${key}", cannot post it twice.${where}`);
           }
           throw error;
         }

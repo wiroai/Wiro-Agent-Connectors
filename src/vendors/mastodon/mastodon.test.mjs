@@ -364,8 +364,15 @@ test('an unclear post is unknown, sent once, and names the key that keeps a rese
     assert.equal(payload.outcome, 'unknown');
     assert.equal(payload.check, 'list_my_posts');
     assert.match(payload.error, /Sending the same post again within an hour, with idempotency_key "[0-9a-f]{64}", cannot post it twice\./);
+    assert.doesNotMatch(payload.error, /list_scheduled_posts/);
     assert.equal(callsTo(fetch, 'POST', '/api/v1/statuses').length, 1);
   }
+  // A scheduled post is not in the account's posts yet: the result says where it shows.
+  const { module, ctx } = setup({ 'POST /api/v1/statuses': () => jsonResponse(503, { error: 'Unavailable' }) });
+  const at = new Date(Date.now() + 86400_000).toISOString();
+  const scheduled = await callTool(module, 'create_post', { text: 'Later', scheduled_at: at }, ctx);
+  assert.equal(scheduled.payload.outcome, 'unknown');
+  assert.match(scheduled.payload.error, /cannot post it twice\. A scheduled post shows in list_scheduled_posts, not in list_my_posts\. Call list_my_posts/);
 });
 
 test('Mastodon\'s refusals keep its words: a 422, a revoked token, a missing scope, a rate limit', async () => {
