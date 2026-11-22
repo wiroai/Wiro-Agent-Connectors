@@ -5,6 +5,10 @@
 - Credential origins: a module may name, in `originFields`, the credentials that hold a site or instance URL (a Mastodon instance, a WordPress site, a shop). Each call may then reach the https origin of that value, resolved by `parseSiteUrl` the same way in the module and in the host, and the host checks it like a media URL: https only, public addresses only, connected to the checked address, redirects not followed. Modules export `originFields` (an empty list when unused) and may leave `origins` empty when `originFields` names the API's address; `h.origins` and `h.originOf()` give a tool the call's origins.
 - Hosts: `createGuardedFetch` takes `credentialOrigins`, `originsFromCredentials` computes them for a call, and `parseSiteUrl` and `siteOrigin` are exported for hosts with their own fetch. The test hook `mediaTransport` is now `transport` (the old name still works), and it also carries API requests to credential origins.
 
+- Generic API tools: `apiTools()` builds `api_get` (read, GET only) and `api_request` (POST, PUT, PATCH or DELETE, never retried, `check: "api_get"`) for a connector, with its auth headers, its origins and base path, an optional account lock (`accounts`), a `guard` and a `send` hook for session tokens. Replies come back as the status and the JSON or text, cut to fit 32 KB.
+- A fifth tool kind, `write`, for a tool whose effect depends on its arguments: destructive and not idempotent, MCP's own defaults. `api_request` uses it.
+- `h.api` takes lists as query values and repeats the parameter.
+
 ## 0.1.0
 
 The first release: three connectors, and the stdio CLI that runs them.

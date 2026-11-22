@@ -14,7 +14,7 @@
 //   module must run on web-standard globals only;
 // - tool texts name only the service ("Example"), never any other product.
 
-import { defineConnector, requireAccounts } from '../../core/index.js';
+import { apiTools, defineConnector, requireAccounts } from '../../core/index.js';
 
 // The trimmed shape an agent gets back: only the fields it needs.
 function trimItem(item: any) {
@@ -110,6 +110,19 @@ const connector = defineConnector({
         return trimItem(data);
       },
     },
+    // api_get and api_request: the rest of the API, for what the tools above
+    // do not cover. They send the auth headers and keep to basePath. With an
+    // account lock, a path must name one of the chosen workspaces as a whole
+    // segment; give accounts.ids when a path can name more than one account.
+    // api_request is never retried, and api_get is its check tool.
+    ...apiTools({
+      label: 'Example',
+      description:
+        'The Example API v1 at https://api.example.com/v1, with the connected API key: paths start with /v1/, '
+        + 'such as /v1/items or /v1/workspaces/ws_1/items, and parameters go in query. Reference: https://docs.example.com/api.',
+      basePath: '/v1/',
+      accounts: { key: 'workspaces', label: 'workspace' },
+    }),
   ],
 });
 

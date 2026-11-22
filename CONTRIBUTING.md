@@ -37,13 +37,14 @@ By contributing you agree that your work is released under the [MIT License](./L
    - `authHeaders`: how the credentials go on each API request.
 
 4. **Write the tools.** Each tool is one API call, or a short fixed sequence such as upload then publish.
-   - Pick its `kind`: `read`, `create` (adds something; twice adds two), `update` (overwrites; twice changes nothing more) or `delete`. The MCP annotations follow from it, so they are true.
+   - Pick its `kind`: `read`, `create` (adds something; twice adds two), `update` (overwrites; twice changes nothing more), `delete`, or `write` when what it does depends on its arguments, as with a raw API request (destructive and not idempotent). The MCP annotations follow from it, so they are true.
    - Give it an `inputSchema` with `additionalProperties: false`, a clear title, and a description that says what it does, what it returns, and any limit or cost the user should know.
    - In `run(args, h)`, send requests with `h.api({ method, path, query, json })`. Errors become clear tool errors on their own (a 429 carries `retryAfter`); `errors: { 404: "..." }` gives a status a better sentence.
    - On a write tool, mark the one request that makes the change with `write: true` and name a read tool in `check`. When that request gets no clear answer, the result says the outcome is unknown and points at `check`.
    - Return only the fields an agent needs. Return lists with `h.page({ key, items, resumeAt, nextPage })` and take a `cursor` argument: results stay under 32 KB and continue where they were cut.
    - Files by URL (an image to post) come through `h.media(url, { what, maxBytes })`. Check the vendor's own type and size limits, and tell file types from the bytes, not the server's Content-Type.
    - Arguments that pick one of several accounts (a page, an ad account) go through `requireAccounts(h.ctx.accounts, key, id)` before any request.
+   - For the endpoints your own tools do not cover, add the generic tools: `...apiTools({ label, description, basePath })` in `tools` gives `api_get` (GET only) and `api_request` (POST, PUT, PATCH, DELETE; never retried, checked with `api_get`), as the template shows. `description` is one paragraph naming the API, its base path and its reference. Pass `accounts: { key, label }` when the service has accounts (a path must then name a chosen one; give `ids` when a path or body can name more than one), `methods` when the API takes fewer methods, `guard` to keep endpoints out of reach (account or session settings, say), and `send` when requests need a session token. A read the API takes by POST, such as a report or a search, gets its own read tool with `safe: true`, since `api_get` sends GET only.
    - If the service needs a sign-in, keep the session in memory for a short time, keyed by a hash of the credentials, and respect its sign-in limits. `src/vendors/bluesky/session.ts` does this.
 
 5. **Record responses.** Save real responses of the service under `src/vendors/acme/fixtures/`, with personal data, ids and tokens replaced by examples.

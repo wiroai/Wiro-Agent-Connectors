@@ -20,14 +20,18 @@ import { validateArguments } from './schema.js';
  * - create: adds something; calling it twice adds two.
  * - update: overwrites something; calling it twice with the same arguments changes nothing more.
  * - delete: removes something.
+ * - write: any of these, depending on its arguments, like a generic API
+ *   request (api_request). It carries MCP's own cautious defaults:
+ *   destructive, and not idempotent.
  */
-export type ToolKind = 'read' | 'create' | 'update' | 'delete';
+export type ToolKind = 'read' | 'create' | 'update' | 'delete' | 'write';
 
 const ANNOTATIONS: Record<ToolKind, ToolAnnotations> = {
   read: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   create: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   update: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   delete: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  write: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 };
 
 export const VENDOR_PATTERN = /^[a-z][a-z0-9-]{1,29}$/;
@@ -134,7 +138,7 @@ function assertDefinition(def: ConnectorDefinition): void {
     names.add(tool.name);
     if (!tool.title?.trim() || !tool.description?.trim()) problem(`tool ${tool.name} needs a title and a description`);
     if (tool.description.length > 1024) problem(`tool ${tool.name} has a description over 1024 characters`);
-    if (!(tool.kind in ANNOTATIONS)) problem(`tool ${tool.name} has an unknown kind`);
+    if (!Object.hasOwn(ANNOTATIONS, tool.kind)) problem(`tool ${tool.name} has an unknown kind`);
     if (tool.inputSchema.type !== 'object' || tool.inputSchema.additionalProperties !== false) {
       problem(`tool ${tool.name} needs an object input schema with additionalProperties: false`);
     }

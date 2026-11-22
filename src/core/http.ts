@@ -10,6 +10,9 @@ const SAFE_METHODS = new Set(['GET', 'HEAD']);
 
 export type HttpMethod = 'GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
+/** One query parameter value; a list repeats the parameter (?id=1&id=2). */
+export type QueryValue = string | number | boolean;
+
 export interface ApiRequest {
   method?: HttpMethod;
   /** A path on the origin, starting with "/". */
@@ -20,7 +23,7 @@ export interface ApiRequest {
    * module origin, or the first credential origin when the module has none.
    */
   origin?: string;
-  query?: Record<string, string | number | boolean | undefined | null>;
+  query?: Record<string, QueryValue | ReadonlyArray<QueryValue> | undefined | null>;
   headers?: Record<string, string>;
   /** Sent as application/json. */
   json?: unknown;
@@ -240,7 +243,13 @@ export function createHttp(env: HttpEnvironment) {
     const url = new URL(request.path, origin);
     if (url.origin !== origin || !request.path.startsWith('/')) throw new Error('path outside the origin');
     for (const [key, value] of Object.entries(request.query ?? {})) {
-      if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) {
+        url.searchParams.delete(key);
+        for (const item of value) url.searchParams.append(key, String(item));
+      } else {
+        url.searchParams.set(key, String(value));
+      }
     }
 
     const headers: Record<string, string> = {

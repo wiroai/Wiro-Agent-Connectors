@@ -69,3 +69,23 @@ test('a 429 carries retryAfter, and an unclear write outcome names the check too
   assert.equal(unknown.payload.check, 'list_items');
   assert.equal(broken.fetch.calls.length, 1);
 });
+
+test('api_get and api_request reach the rest of the API, inside the base path and the account lock', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, { id: 'ws_1', name: 'Main' }));
+  const read = await callTool(module, 'api_get', { path: '/v1/workspaces/ws_1', query: { expand: 'members' } }, ctx);
+  assert.deepEqual(read.payload, { status: 200, data: { id: 'ws_1', name: 'Main' } });
+  assert.equal(fetch.calls[0].url, 'https://api.example.com/v1/workspaces/ws_1?expand=members');
+  assert.equal(fetch.calls[0].headers.authorization, 'Bearer example-key-123');
+
+  const outside = await callTool(module, 'api_request', { method: 'DELETE', path: '/v1/workspaces/ws_9' }, ctx);
+  assert.match(outside.payload.error, /names none of the workspaces chosen for this connection\. It must name one of: ws_1\. Nothing was sent\./);
+  const elsewhere = await callTool(module, 'api_get', { path: '/admin/users' }, ctx);
+  assert.match(elsewhere.payload.error, /The path must start with \/v1\//);
+  assert.equal(fetch.calls.length, 1);
+
+  const broken = setup(() => jsonResponse(502, { message: 'bad gateway' }));
+  const unknown = await callTool(broken.module, 'api_request', { method: 'POST', path: '/v1/workspaces/ws_1/items', json: { name: 'New' } }, broken.ctx);
+  assert.equal(unknown.payload.outcome, 'unknown');
+  assert.equal(unknown.payload.check, 'api_get');
+  assert.equal(broken.fetch.calls.length, 1);
+});

@@ -94,7 +94,7 @@ Run several connectors side by side by adding one entry per connector.
 
 ## Tools
 
-Every tool carries honest MCP annotations, derived from what it does: a read tool can only send GET requests (or a request that changes nothing, such as a sign-in or a search sent by POST), and each write tool says whether it adds, overwrites or removes.
+Every tool carries honest MCP annotations, derived from what it does: a read tool can only send GET requests (or a request that changes nothing, such as a sign-in or a search sent by POST), and each write tool says whether it adds, overwrites or removes. `api_request`, which can do any of these, claims neither read-only nor idempotent.
 
 ### serper
 
@@ -165,6 +165,15 @@ Some services live at an address the user chooses: a Mastodon instance, a WordPr
 - the usual timeout and size cap.
 
 The CLI's guarded fetch does all of this. Every other host must do the same, whether it runs connectors for an agent or on a server; with this package, resolve the origins from the call's credentials and pass them in, as above: `createGuardedFetch({ origins: module.origins, credentialOrigins: originsFromCredentials(module, credentials) })`. A host may refuse more than this, for example its own public addresses.
+
+### Generic API tools
+
+A connector's own tools do the common jobs; the rest of a vendor's API is reachable through two generic tools that the core builds for a module:
+
+- `api_get` (read) sends one GET to a path of the API, with query parameters, and returns the HTTP status and the reply, JSON or text, cut to fit 32 KB.
+- `api_request` (write) sends one POST, PUT, PATCH or DELETE with a JSON or a raw body, and returns the same. It is never retried: an unclear outcome comes back as unknown, with `api_get` to check.
+
+Both send the connection's credentials, keep to the module's origins and its base path (checked after `.` and `..` are resolved), and, when the host applies an account lock, only reach paths that name a chosen account. Their descriptions name the vendor's API, its base path and its reference.
 
 ### Account lock
 
