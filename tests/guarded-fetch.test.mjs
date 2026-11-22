@@ -191,6 +191,82 @@ test('a media download connects to the checked address, sends no credentials, an
   await refusedWith(fetch('https://cdn.test/declared'), 'TOO_LARGE');
 });
 
+test('a media download passes one byte range on and hands back the 206 reply, capped per request', async () => {
+  const file = Uint8Array.from({ length: 64 }, (_, index) => index);
+  const transport = fakeTransport({
+    'https://cdn.test/film.mp4': (request) => {
+      const match = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range ?? '');
+      if (!match) return { status: 200, headers: { 'content-length': String(file.length) }, body: file };
+      const [first, last] = [Number(match[1]), Number(match[2])];
+      return { status: 206, headers: { 'content-range': `bytes ${first}-${last}/${file.length}`, 'content-length': String(last - first + 1) }, body: file.subarray(first, last + 1) };
+    },
+  });
+  const fetch = createGuardedFetch({ origins: ORIGINS, maxMediaBytes: 32, mediaTransport: transport, resolve: fakeResolve({ 'cdn.test': ['93.184.216.34'] }) });
+  const response = await fetch('https://cdn.test/film.mp4', { headers: { Range: 'bytes=40-47', accept: 'video/*', authorization: 'Bearer secret' } });
+  assert.equal(response.status, 206);
+  assert.equal(response.headers.get('content-range'), 'bytes 40-47/64');
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), file.subarray(40, 48));
+  assert.deepEqual(transport.requests[0].headers, { range: 'bytes=40-47', accept: 'video/*' }, 'the range goes on, credentials do not');
+
+  // Without a range the whole file comes back, and the cap still applies to it.
+  await refusedWith(fetch('https://cdn.test/film.mp4'), 'TOO_LARGE');
+  assert.equal(transport.requests.length, 2);
+
+  // Anything but one byte range is refused before it is sent.
+  for (const range of ['bytes=0-1,4-7', 'bytes=-8', 'items=0-7', 'bytes=0-7\r\nx-api-key: secret']) {
+    await refusedWith(fetch('https://cdn.test/film.mp4', { headers: { range } }), 'URL_REFUSED', /one byte range only/);
+  }
+  assert.equal(transport.requests.length, 2, 'nothing more was sent');
+});
+
+test('a module behind the guard uploads a video over the download limit in parts it reads by byte range', async () => {
+  const { module } = loadModule('youtube');
+  const MIB = 1024 * 1024;
+  const file = Uint8Array.from({ length: 3 * MIB + 5 }, (_, index) => (index * 7 + (index >> 16)) & 0xff);
+  file.set([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x69, 0x73, 0x6f, 0x6d, 0x00, 0x00, 0x02, 0x00]);
+  const ranges = [];
+  // The file in one chunk per reply: a large file in fakeTransport's small chunks would only slow the test down.
+  const transport = async (request) => {
+    ranges.push(request.headers.range);
+    const match = /^bytes=(\d+)-(\d+)$/.exec(request.headers.range ?? '');
+    const [first, last] = match ? [Number(match[1]), Math.min(Number(match[2]), file.length - 1)] : [0, file.length - 1];
+    const headers = match
+      ? { 'content-range': `bytes ${first}-${last}/${file.length}`, 'content-length': String(last - first + 1) }
+      : { 'content-length': String(file.length) };
+    const body = file.subarray(first, last + 1);
+    return { status: match ? 206 : 200, headers, body: (async function* reply() { yield body; })(), destroy() {} };
+  };
+  const session = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=u1';
+  const parts = [];
+  let received = 0;
+  const fetch = createGuardedFetch({
+    origins: module.origins,
+    maxMediaBytes: 2 * MIB,
+    mediaTransport: transport,
+    resolve: fakeResolve({ 'cdn.test': ['93.184.216.34'] }),
+    apiFetch: async (url, init) => {
+      if (init.method === 'POST') return new Response(null, { status: 200, headers: { location: session } });
+      assert.equal(String(url), session);
+      const [first, last] = /^bytes (\d+)-(\d+)\/\d+$/.exec(init.headers['content-range']).slice(1).map(Number);
+      assert.equal(first, received, 'each part starts where the last one ended');
+      assert.deepEqual(new Uint8Array(init.body), file.subarray(first, last + 1));
+      parts.push([first, last]);
+      received = last + 1;
+      return received < file.length
+        ? new Response(null, { status: 308, headers: { range: `bytes=0-${last}` } })
+        : new Response(JSON.stringify({ id: 'vid0000009z', snippet: { title: 'Film' }, status: { uploadStatus: 'uploaded' } }), { status: 201 });
+    },
+  });
+  const { ctx } = makeContext({ credentials: { access_token: 'token-1' }, accounts: null, fetch });
+  const args = { video_url: 'https://cdn.test/film.mp4', title: 'Film', privacy_status: 'unlisted', contains_synthetic_media: false, part_mb: 1 };
+  const { payload, isError } = await callTool(module, 'upload_video', args, ctx);
+  assert.equal(isError, false, payload.error);
+  assert.equal(payload.done, true);
+  assert.equal(payload.bytes, file.length);
+  assert.deepEqual(ranges, ['bytes=0-1048575', 'bytes=1048576-2097151', 'bytes=2097152-3145727', 'bytes=3145728-3145732']);
+  assert.deepEqual(parts, [[0, 1048575], [1048576, 2097151], [2097152, 3145727], [3145728, 3145732]]);
+});
+
 test('a module behind the guard reports a refused image plainly and posts nothing', async () => {
   const { module } = loadModule('bluesky');
   const apiCalls = [];

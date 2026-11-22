@@ -1187,7 +1187,7 @@ module.exports = {
 // ctx = { credentials, accounts, fetch, signal, log }
 ```
 
-`ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call, and so is a request to a [credential origin](#credential-origins). Any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address. A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
+`ctx.fetch` is the host's guarded fetch. A request to one of the module's `origins` is an API call, and so is a request to a [credential origin](#credential-origins). Any other URL is a media download (for example an image to post), which the host allows only as a GET to a public https address, with no headers but Accept, User-Agent and one byte range (`Range: bytes=FIRST-LAST`, for a module that reads a large file in parts: the `206` reply comes back as it is, and the host's size cap applies to each request). A host refuses anything else before sending it and rejects with `code: "URL_REFUSED"`, which tells the module nothing was sent.
 
 The stdio CLI is one such host. You can be another: the package exports the modules and the CLI's building blocks.
 

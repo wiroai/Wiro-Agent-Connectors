@@ -66,8 +66,11 @@ export interface ConnectorRequestInit {
  * or instance URL the user gave) is an API call too, checked like a media URL:
  * https, public addresses only, connected to the checked address, and its
  * redirects are not followed. Any other URL is a media download (GET only,
- * public https addresses only). It resolves to a standard Response or rejects;
- * a rejection whose `code` is "URL_REFUSED" means nothing was sent.
+ * public https addresses only, no headers but Accept, User-Agent and one byte
+ * range as `Range: bytes=FIRST-LAST`, whose 206 reply comes back as it is; the
+ * host's size cap applies to each request). It resolves to a standard
+ * Response or rejects; a rejection whose `code` is "URL_REFUSED" means nothing
+ * was sent.
  */
 export type ConnectorFetch = (url: string, init?: ConnectorRequestInit) => Promise<Response>;
 

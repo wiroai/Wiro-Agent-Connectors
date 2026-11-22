@@ -17,9 +17,11 @@ import { isPublicAddress } from './ip.js';
 //   name resolves to must be public, the connection goes to the address that
 //   was checked, and redirects are not followed.
 // - Any other URL is a media download: GET or HEAD without a body, https only,
-//   no headers but Accept and User-Agent (so credentials never leave for it),
-//   only to public addresses after DNS resolution, every redirect checked the
-//   same way, a timeout and a size cap.
+//   no headers but Accept, User-Agent and one byte range (Range: bytes=F-L, for
+//   a module that reads a large file in parts), so credentials never leave for
+//   it; only to public addresses after DNS resolution, every redirect checked
+//   the same way, a timeout and a size cap per request. A 206 reply comes back
+//   as it is, with its Content-Range.
 // - Everything else is refused before it is sent, with code "URL_REFUSED".
 
 export type ConnectorFetchErrorCode = 'URL_REFUSED' | 'TOO_LARGE' | 'TIMEOUT' | 'ABORTED' | 'NETWORK';
@@ -86,7 +88,9 @@ const DEFAULT_MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 const DEFAULT_MAX_REDIRECTS = 5;
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const NULL_BODY_STATUSES = new Set([101, 103, 204, 205, 304]);
-const MEDIA_HEADERS = new Set(['accept', 'user-agent']);
+const MEDIA_HEADERS = new Set(['accept', 'user-agent', 'range']);
+/** The Range a media download may carry: one byte range from a given first byte. */
+const BYTE_RANGE = /^bytes=\d{1,15}-\d{0,15}$/;
 
 function refuse(message: string): never {
   throw new ConnectorFetchError('URL_REFUSED', message);
@@ -313,7 +317,10 @@ export function createGuardedFetch(options: GuardedFetchOptions): ConnectorFetch
     if (init.body !== undefined) refuse('a media download cannot carry a body');
     const headers: Record<string, string> = {};
     for (const [name, value] of Object.entries(init.headers ?? {})) {
-      if (MEDIA_HEADERS.has(name.toLowerCase())) headers[name.toLowerCase()] = value;
+      const key = name.toLowerCase();
+      if (!MEDIA_HEADERS.has(key)) continue;
+      if (key === 'range' && !BYTE_RANGE.test(value)) refuse('a media download may ask for one byte range only, as bytes=FIRST-LAST');
+      headers[key] = value;
     }
 
     const timer = timeoutSignal(timeoutMs, init.signal);
