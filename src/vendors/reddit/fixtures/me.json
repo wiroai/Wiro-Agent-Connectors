@@ -1,0 +1,18 @@
+{
+  "is_employee": false,
+  "has_visited_new_profile": true,
+  "pref_no_profanity": true,
+  "is_suspended": false,
+  "name": "acme_social",
+  "id": "abc12de",
+  "created_utc": 1600000000.0,
+  "link_karma": 120,
+  "comment_karma": 45,
+  "total_karma": 165,
+  "has_verified_email": true,
+  "verified": true,
+  "over_18": false,
+  "icon_img": "https://styles.redditmedia.com/t5_example/styles/profileIcon_example.png",
+  "features": { "chat": true, "mod_awards": true },
+  "subreddit": { "display_name": "u_acme_social", "public_description": "" }
+}

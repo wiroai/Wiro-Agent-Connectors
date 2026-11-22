@@ -1,0 +1,10 @@
+{
+  "kind": "Listing",
+  "data": {
+    "after": "t3_0zzzzz",
+    "dist": 1,
+    "children": [
+      { "kind": "t3", "data": { "name": "t3_1abcde", "id": "1abcde", "author": "acme_social", "subreddit": "test", "title": "Connector smoke test", "is_self": true, "selftext": "Hello", "permalink": "/r/test/comments/1abcde/connector_smoke_test/", "url": "https://www.reddit.com/r/test/comments/1abcde/connector_smoke_test/", "score": 1, "num_comments": 0, "over_18": false, "spoiler": false, "locked": false, "removed_by_category": null, "created_utc": 1795290000.0, "edited": false } }
+    ]
+  }
+}
