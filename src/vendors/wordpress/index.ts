@@ -27,9 +27,13 @@ import {
   editLink,
   fieldText,
   installPath,
+  isJsonBody,
+  phpFieldName,
   plainText,
   rest,
   siteAddress,
+  termKey,
+  termSearch,
   totalItems,
   totalPages,
   withHint,
@@ -240,22 +244,30 @@ function savedPost(h: ToolHelpers, post: any): Record<string, unknown> {
   });
 }
 
+function refuseRequest(sentence: string): never {
+  throw new ToolFailure(`${sentence} Nothing was sent.`);
+}
+
 /** Refuses REST routes and parameters the generic tools must not reach. */
 function restGuard(request: ApiToolRequest): void {
-  const refuse = (sentence: string): never => {
-    throw new ToolFailure(`${sentence} Nothing was sent.`);
-  };
   for (const key of Object.keys(request.query)) {
-    // WordPress lets these override the route and the HTTP method of a request.
-    if (/^(?:_method|rest_route)$/i.test(key)) refuse(`The query parameter ${key} is not allowed: give the route as the path and the method as method.`);
+    // WordPress takes a request's method from _method and its route from rest_route, under the names PHP gives fields.
+    if (/^(?:_method|rest_route)/i.test(phpFieldName(key))) {
+      refuseRequest(`The query parameter ${JSON.stringify(key)} is not allowed: WordPress would read it as _method or rest_route, which change a request's method or route. Give the route as the path and the method as method.`);
+    }
+  }
+  // WordPress decodes the route once more, so an encoded slash would start a new segment there.
+  if (request.segments.some((segment) => /[/\\]/.test(segment))) {
+    refuseRequest('A path segment must not hold an encoded slash or backslash (%2F, %5C): give each part of the route as its own segment.');
   }
   const segments = request.segments.map((segment) => segment.toLowerCase());
-  if (segments.includes('application-passwords')) refuse('Application passwords cannot be listed or changed through this connector.');
+  if (segments[0] === 'batch') refuseRequest('Batch requests (/batch/v1) cannot be sent through this connector: send each request on its own.');
+  if (segments.includes('application-passwords')) refuseRequest('Application passwords cannot be listed or changed through this connector.');
   if (request.method === 'GET' || segments[0] !== 'wp' || segments[1] !== 'v2') return;
   const resource = segments[2];
-  if (resource === 'plugins' || resource === 'themes') refuse('Plugins and themes cannot be installed, changed or removed through this connector.');
-  if (resource === 'settings') refuse('Site settings cannot be changed through this connector.');
-  if (resource === 'users' && segments[3] !== 'me') refuse('Users cannot be created, changed or deleted through this connector, except the connected user (/wp/v2/users/me).');
+  if (resource === 'plugins' || resource === 'themes') refuseRequest('Plugins and themes cannot be installed, changed or removed through this connector.');
+  if (resource === 'settings') refuseRequest('Site settings cannot be changed through this connector.');
+  if (resource === 'users') refuseRequest('Users cannot be created, changed or deleted through this connector.');
 }
 
 const LIST_POSTS_SCHEMA: JsonSchema = {
@@ -314,12 +326,18 @@ const LIST_TERMS_SCHEMA: JsonSchema = {
   additionalProperties: false,
 };
 
-async function findTerm(h: ToolHelpers, taxonomy: string, name: string, slug: string | undefined): Promise<any> {
-  const query: Record<string, string | number> = slug ? { slug, per_page: 10 } : { search: name, per_page: 100 };
-  const { data } = await rest(h, `/wp/v2/${taxonomy}`, { query: { ...query, _fields: 'id,name,slug,count,parent,description,link' } });
+/**
+ * The term WordPress said exists: by its slug, or by its name. A category is
+ * looked for under the parent it was to have (0, the top level, by default),
+ * since another category may have the same name under another parent.
+ */
+async function findTerm(h: ToolHelpers, taxonomy: string, name: string, slug: string | undefined, parent: number | undefined): Promise<any> {
+  const query = slug ? { slug, per_page: 10 } : { search: termSearch(name), per_page: 100 };
+  const { data } = await rest(h, `/wp/v2/${taxonomy}`, { query: { ...query, parent, _fields: 'id,name,slug,count,parent,description,link' } });
   const terms: any[] = Array.isArray(data) ? data : [];
-  const wanted = name.trim().toLowerCase();
-  return terms.find((term) => (slug && term?.slug === slug) || decodeEntities(String(term?.name ?? '')).trim().toLowerCase() === wanted);
+  const wanted = termKey(name);
+  return terms.find((term) => (parent === undefined || Number(term?.parent ?? 0) === parent)
+    && ((slug !== undefined && term?.slug === slug) || termKey(String(term?.name ?? '')) === wanted));
 }
 
 const connector = defineConnector({
@@ -676,7 +694,7 @@ const connector = defineConnector({
         } catch (error) {
           if (!(error instanceof ToolFailure) || error.details.vendorCode !== 'term_exists') throw error;
         }
-        const existing = await findTerm(h, args.taxonomy, args.name, args.slug);
+        const existing = await findTerm(h, args.taxonomy, args.name, args.slug, args.taxonomy === 'categories' ? args.parent ?? 0 : undefined);
         if (!existing) {
           throw new ToolFailure(`WordPress says this ${args.taxonomy === 'tags' ? 'tag' : 'category'} already exists, but it was not found by name: look for it with list_terms. Nothing was changed.`);
         }
@@ -743,10 +761,14 @@ const connector = defineConnector({
       description:
         'The REST API of the connected WordPress site, as the connected user: a path is a REST route after /wp-json, such as '
         + '/wp/v2/comments, /wp/v2/posts/12/revisions, /wp/v2/media/34 or a plugin\'s own namespace; _fields and context=edit go in '
-        + 'query. DELETE moves posts to the trash unless force is true. Application passwords, plugins, themes, users other than '
-        + '/wp/v2/users/me and site settings cannot be changed here. Reference: https://developer.wordpress.org/rest-api/reference/.',
+        + 'query; bodies are JSON (json, or body with a JSON content_type). DELETE moves posts to the trash unless force is true. '
+        + 'Application passwords, plugins, themes, users, site settings and batch requests are out of reach. Reference: '
+        + 'https://developer.wordpress.org/rest-api/reference/.',
       guard: restGuard,
       send: async (request, h) => {
+        if (!isJsonBody(request)) {
+          refuseRequest('The body must be JSON: give it as json, or as body with a JSON content_type. A form body is refused, since WordPress could read a route from it.');
+        }
         try {
           return await h.api({ ...request, origin: h.originOf('url'), path: `${installPath(h.credentials['url'])}/wp-json${request.path}` });
         } catch (error) {

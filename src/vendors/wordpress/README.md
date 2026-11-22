@@ -50,7 +50,7 @@ Application passwords need the site to be served over https. If WordPress answer
 | `create_term` | create | A category or tag; when one with that name or slug exists, returns it with `existing: true` instead of making a second. |
 | `set_seo_meta` | update | The SEO title, meta description and focus keyword of a post or page through the Rank Math SEO plugin's own endpoint; `applied: false` when the site does not run it. |
 | `api_get` | read | Any other GET of the site's REST API, by route after `/wp-json`, such as `/wp/v2/comments` or `/wp/v2/posts/12/revisions`. |
-| `api_request` | write | A POST, PUT, PATCH or DELETE to a REST route, such as a comment reply or moving a post to the trash. Sent once, never retried. |
+| `api_request` | write | A POST, PUT, PATCH or DELETE to a REST route, with a JSON body, such as a comment reply or moving a post to the trash. Sent once, never retried. |
 
 ## Limits
 
@@ -59,7 +59,9 @@ Application passwords need the site to be served over https. If WordPress answer
 - `upload_media` sends the alt text, title, caption and description with the upload itself (alt text up to 300 characters, caption up to 500, description up to 1,000); `update_media` takes longer ones.
 - A date with `Z` or an offset (`+03:00`) is a fixed moment; a date without one is in the site's own time zone.
 - `set_seo_meta` writes only on sites running Rank Math with its REST API; WordPress itself cannot read those fields back.
-- `api_get` and `api_request` refuse application passwords (any method), changes to plugins, themes, site settings and users other than `/wp/v2/users/me`, and the `_method` and `rest_route` query parameters, which would change a request's method or route.
+- `api_get` and `api_request` refuse application passwords (any method); changes to plugins, themes, site settings and users, the connected user included; batch requests (`/batch/v1`); query parameters PHP reads as `_method` or `rest_route` (such as `.method` or `rest[route`), which would change a request's method or route; path segments holding an encoded slash or backslash; and bodies other than JSON.
+- `api_get` and `api_request` also reach plugin routes, with the rights of the connector's user: give it an Author or Editor account, not an Administrator.
+- `create_term` looks for an existing category under the parent it was to have (the top level by default), so a category of the same name elsewhere in the tree is never taken for it.
 - Writes are never retried: a create or update whose outcome is unclear comes back as unknown, with the read tool to check first.
 
 ## README rows

@@ -357,7 +357,8 @@ test('list_terms lists categories; create_term returns an existing term instead 
   assert.equal(created.isError, false);
   assert.equal(fetch.calls[1].method, 'POST');
   assert.deepEqual(fetch.calls[1].json, { name: 'Brewing & Gear' });
-  assert.equal(fetch.calls[2].query.search, 'Brewing & Gear');
+  assert.equal(fetch.calls[2].query.search, 'Brewing');
+  assert.equal(fetch.calls[2].query.parent, '0');
   assert.deepEqual(created.payload, { id: 3, name: 'Brewing & Gear', slug: 'brewing-gear', count: 14, link: 'https://example.com/blog/category/brewing-gear/', existing: true });
 });
 
@@ -402,14 +403,15 @@ test('api_get and api_request reach REST routes under the install path, and refu
   await callTool(module, 'api_request', { method: 'DELETE', path: '/wp/v2/posts/415', query: { force: true } }, ctx);
   assert.equal(fetch.calls[1].method, 'DELETE');
   assert.equal(fetch.calls[1].url, `${API}/wp/v2/posts/415?force=true`);
-  await callTool(module, 'api_request', { method: 'POST', path: '/wp/v2/users/me', json: { description: 'Writes about coffee' } }, ctx);
-  assert.equal(fetch.calls[2].url, `${API}/wp/v2/users/me`);
   await callTool(module, 'api_get', { path: '/wp/v2/plugins' }, ctx);
-  assert.equal(fetch.calls[3].url, `${API}/wp/v2/plugins`);
+  assert.equal(fetch.calls[2].url, `${API}/wp/v2/plugins`);
+  await callTool(module, 'api_request', { method: 'PATCH', path: '/wp/v2/comments/9', json: { status: 'approved' }, content_type: 'application/merge-patch+json' }, ctx);
+  assert.equal(fetch.calls[3].headers['content-type'], 'application/merge-patch+json', 'a JSON body with another JSON type is sent');
+  assert.deepEqual(JSON.parse(Buffer.from(fetch.calls[3].body).toString('utf8')), { status: 'approved' });
 
   const refusals = [
-    ['api_get', { path: '/wp/v2/posts', query: { _method: 'DELETE' } }, /_method is not allowed/],
-    ['api_get', { path: '/', query: { rest_route: '/wp/v2/plugins' } }, /rest_route is not allowed/],
+    ['api_get', { path: '/wp/v2/posts', query: { _method: 'DELETE' } }, /"_method" is not allowed/],
+    ['api_get', { path: '/', query: { rest_route: '/wp/v2/plugins' } }, /"rest_route" is not allowed/],
     ['api_get', { path: '/wp/v2/users/me/application-passwords' }, /Application passwords/],
     ['api_request', { method: 'POST', path: '/wp/v2/plugins', json: { slug: 'x', status: 'active' } }, /Plugins and themes/],
     ['api_request', { method: 'POST', path: '/wp/v2/settings', json: { email: 'a@example.com' } }, /Site settings/],
@@ -429,6 +431,78 @@ test('api_get and api_request reach REST routes under the install path, and refu
   assert.equal(unknown.payload.outcome, 'unknown');
   assert.equal(unknown.payload.check, 'api_get');
   assert.equal(broken.fetch.calls.length, 1);
+});
+
+test('the generic tools refuse what WordPress would read as another method, route or user, before sending', async () => {
+  const { module, fetch, ctx } = setup(() => jsonResponse(200, {}));
+  const refusals = [
+    // Query names PHP turns into _method or rest_route: a leading space, ".", "[", a NUL, an array field.
+    ['api_get', { path: '/wp/v2/users/2', query: { ' _method': 'DELETE', reassign: 1, force: true } }, /" _method" is not allowed/],
+    ['api_get', { path: '/wp/v2/posts/1', query: { '.method': 'DELETE' } }, /"\.method" is not allowed/],
+    ['api_get', { path: '/wp/v2/posts', query: { 'rest.route': '/wp/v2/users/me/application-passwords' } }, /"rest\.route" is not allowed/],
+    ['api_get', { path: '/wp/v2/posts', query: { 'rest[route': '/wp/v2/settings' } }, /"rest\[route" is not allowed/],
+    ['api_get', { path: '/wp/v2/posts', query: { '_method\u0000x': 'DELETE' } }, /is not allowed/],
+    ['api_request', { method: 'POST', path: '/wp/v2/posts', query: { 'rest_route[a]': '/wp/v2/users' }, json: {} }, /is not allowed/],
+    ['api_get', { path: '/wp/v2/posts', query: { _METHOD: 'DELETE' } }, /is not allowed/],
+    // A form body: PHP reads it into $_POST, where WordPress takes rest_route from.
+    ['api_request', { method: 'POST', path: '/wp/v2/posts', body: 'rest_route=/wp/v2/users/me/application-passwords&name=x', content_type: 'application/x-www-form-urlencoded' }, /The body must be JSON/],
+    ['api_request', { method: 'POST', path: '/wp/v2/posts', json: { x: '&rest_route=/wp/v2/users&' }, content_type: 'Application/X-WWW-Form-Urlencoded; charset=utf-8' }, /The body must be JSON/],
+    ['api_request', { method: 'POST', path: '/wp/v2/posts', body: '--b\r\nContent-Disposition: form-data; name="rest_route"\r\n\r\n/wp/v2/users\r\n--b--', content_type: 'multipart/form-data; boundary=b' }, /The body must be JSON/],
+    ['api_request', { method: 'POST', path: '/wp/v2/posts', body: 'title=x', content_type: 'text/plain' }, /The body must be JSON/],
+    // Batches run sub-requests on any route.
+    ['api_request', { method: 'POST', path: '/batch/v1', json: { requests: [{ method: 'POST', path: '/wp/v2/users', body: { username: 'x', roles: ['administrator'] } }] } }, /Batch requests/],
+    // An encoded slash or backslash becomes a separator when WordPress decodes the route.
+    ['api_request', { method: 'POST', path: '/wp/v2%2Fsettings', json: { title: 'x' } }, /encoded slash/],
+    ['api_get', { path: '/wp/v2/users%2Fme%2Fapplication-passwords' }, /encoded slash/],
+    ['api_request', { method: 'POST', path: '/wp/v2/posts%5C1', json: {} }, /encoded slash/],
+    // The connected user cannot be changed either: a new password or email would take the account over.
+    ['api_request', { method: 'POST', path: '/wp/v2/users/me', json: { password: 'chosen-by-the-agent', email: 'elsewhere@example.net' } }, /Users cannot be created, changed or deleted/],
+    ['api_request', { method: 'POST', path: '/wp/v2/users/me', json: { description: 'Writes about coffee' } }, /Users cannot be created, changed or deleted/],
+  ];
+  for (const [tool, args, pattern] of refusals) {
+    const { payload, isError } = await callTool(module, tool, args, ctx);
+    assert.equal(isError, true, JSON.stringify(args));
+    assert.match(payload.error, pattern, JSON.stringify(args));
+    assert.match(payload.error, /Nothing was sent/);
+  }
+  assert.equal(fetch.calls.length, 0);
+
+  // Reading the connected user stays open.
+  await callTool(module, 'api_get', { path: '/wp/v2/users/me', query: { context: 'edit' } }, ctx);
+  assert.equal(fetch.calls[0].url, `${API}/wp/v2/users/me?context=edit`);
+});
+
+test('create_term finds an existing category under the parent it was to have, by a search WordPress can match', async () => {
+  const siblings = [
+    { id: 30, name: 'Tools &amp; Kits', slug: 'tools-kits-2', count: 1, parent: 12 },
+    { id: 31, name: 'Tools &amp; Kits', slug: 'tools-kits', count: 4, parent: 0 },
+  ];
+  const { module, fetch, ctx } = setup((request) => (request.method === 'POST'
+    ? jsonResponse(400, fixture(import.meta.url, 'term-exists.json'))
+    : jsonResponse(200, siblings.filter((term) => term.parent === Number(request.query.parent)), listHeaders(1, 1))));
+  const top = await callTool(module, 'create_term', { taxonomy: 'categories', name: 'Tools & Kits' }, ctx);
+  assert.equal(fetch.calls[1].query.search, 'Tools', 'WordPress stores & as &amp;, so the search leaves it out');
+  assert.equal(fetch.calls[1].query.parent, '0');
+  assert.equal(top.payload.id, 31);
+  assert.equal(top.payload.existing, true);
+
+  const child = await callTool(module, 'create_term', { taxonomy: 'categories', name: 'tools  &  kits', parent: 12 }, ctx);
+  assert.equal(fetch.calls[3].query.parent, '12');
+  assert.equal(child.payload.id, 30);
+
+  const tags = setup((request) => (request.method === 'POST'
+    ? jsonResponse(400, fixture(import.meta.url, 'term-exists.json'))
+    : jsonResponse(200, [{ id: 44, name: 'cold brew', slug: 'cold-brew', count: 3 }], listHeaders(1, 1))));
+  const tag = await callTool(tags.module, 'create_term', { taxonomy: 'tags', name: 'Cold Brew' }, tags.ctx);
+  assert.equal(tags.fetch.calls[1].query.parent, undefined, 'tags have no parent');
+  assert.equal(tag.payload.id, 44);
+
+  const elsewhere = setup((request) => (request.method === 'POST'
+    ? jsonResponse(400, fixture(import.meta.url, 'term-exists.json'))
+    : jsonResponse(200, [siblings[0]], listHeaders(1, 1))));
+  const notFound = await callTool(elsewhere.module, 'create_term', { taxonomy: 'categories', name: 'Tools & Kits' }, elsewhere.ctx);
+  assert.equal(notFound.isError, true, 'a same-named category under another parent is not the one WordPress meant');
+  assert.match(notFound.payload.error, /already exists, but it was not found by name/);
 });
 
 test('log lines carry no credentials and no arguments', async () => {
