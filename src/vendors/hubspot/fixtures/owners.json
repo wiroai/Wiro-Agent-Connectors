@@ -1,1 +1,0 @@
-{ "results": [ { "id": "77", "email": "sales@example.com", "type": "PERSON", "firstName": "Sam", "lastName": "Seller", "userId": 12345, "userIdIncludingInactive": 12345, "createdAt": "2020-01-01T00:00:00Z", "updatedAt": "2026-01-01T00:00:00Z", "archived": false, "teams": [ { "id": "9", "name": "East", "primary": true } ] } ] }

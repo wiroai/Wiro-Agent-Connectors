@@ -1,1 +1,0 @@
-{ "statusId": "a1b2c3d4-0000-1111-2222-333344445555", "status": "COMPLETE", "sendResult": "SENT", "requestedAt": "2026-11-22T10:00:00.000Z", "startedAt": "2026-11-22T10:00:01.000Z", "completedAt": "2026-11-22T10:00:02.000Z", "eventId": { "created": "2026-11-22T10:00:02.000Z", "id": "e1" } }

@@ -44,7 +44,6 @@ Each connector links to its own page: what it does, every credential step by ste
 | [`google-play`](./src/vendors/google-play/README.md) | [Google Play](https://play.google.com/console): reviews from the last week and replies, store listings (the live one from the public store page, and changes through an edit), subscriptions with base plans, prices, offers and free trials, in-app and one-time products, and the rest of the Android Developer API for the chosen apps | Service account key | Available |
 | [`google-search-console`](./src/vendors/google-search-console/README.md) | [Google Search Console](https://search.google.com/search-console): search analytics by query, page, country, device, date and more, period comparisons with the biggest losses and gains, sitemaps and URL inspection. Read-only | Google OAuth access token | Available |
 | [`hashnode`](./src/vendors/hashnode/README.md) | [Hashnode](https://hashnode.com) blogs on Hashnode Pro: drafts first, publishing, edits to drafts and live posts, posts with views, reactions and comments, series, and any other GraphQL query or mutation | Personal access token and blog address | Available |
-| [`hubspot`](./src/vendors/hubspot/README.md) | [HubSpot](https://www.hubspot.com) CRM: contacts, companies, deals, tickets, notes, tasks and other records (search, create, update, delete, associate), pipelines, owners, lists, marketing emails, transactional sends and files | HubSpot OAuth access token | Available |
 | [`instagram`](./src/vendors/instagram/README.md) | [Instagram](https://www.instagram.com) professional accounts: images, carousels, Reels and stories through processed containers; post, story and account insights; comment moderation; the publishing limit; and the rest of the API | Instagram Login with your own app, or a system user token | Available |
 | [`kaggle`](./src/vendors/kaggle/README.md) | [Kaggle](https://www.kaggle.com): your notebooks and datasets, notebooks pushed and run on CPU, GPU or TPU with their status, logs and output files, datasets and new versions, quota, competitions, leaderboards and submissions | Username and API token | Available |
 | [`keepa`](./src/vendors/keepa/README.md) | Amazon price and sales rank history from [Keepa](https://keepa.com): prices now, averages, lows and highs, dated price and rank tables, product search, best sellers, categories and the product finder on 11 marketplaces. Read-only, with the tokens left after every call | Keepa API key | Available |
@@ -105,7 +104,6 @@ DEVTO_APIKEY=your-key npx -y @wiro-ai/wiro-agent-connectors devto
 | `google-play` | `GOOGLE_PLAY_SERVICEACCOUNTJSON` | A service account key (the JSON file, or its base64 text) from Google Cloud console, invited in Play Console ([step by step](./src/vendors/google-play/README.md)). |
 | `google-search-console` | `GOOGLE_SEARCH_CONSOLE_ACCESS_TOKEN` | An OAuth access token with the scope `https://www.googleapis.com/auth/webmasters.readonly`, from your own Google Cloud OAuth client ([step by step](./src/vendors/google-search-console/README.md)). |
 | `hashnode` | `HASHNODE_TOKEN`, `HASHNODE_PUBLICATIONHOST` | Hashnode → Account Settings → Developer → Generate new token, and the blog's host, such as `yourname.hashnode.dev`. Hashnode's API answers only for blogs on Hashnode Pro. |
-| `hubspot` | `HUBSPOT_ACCESS_TOKEN`, optionally `HUBSPOT_PORTALID` | An access token of your own HubSpot app, installed in the account by its OAuth sign-in (an existing private app's token works too). The portal ID is the account's Hub ID. |
 | `instagram` | `INSTAGRAM_ACCESS_TOKEN` (with `INSTAGRAM_ACCOUNTID` and `INSTAGRAM_IGUSERNAME`), or `INSTAGRAM_SYSTEMUSERTOKEN` | An Instagram user token from Instagram Login with your own Meta app, or a system user token from Meta Business Settings → Users → System users whose Pages are linked to the accounts ([step by step](./src/vendors/instagram/README.md)). |
 | `kaggle` | `KAGGLE_USERNAME`, `KAGGLE_APITOKEN` | Your username (the last part of your profile address) and a token from Kaggle → Settings → API → Generate New Token. |
 | `keepa` | `KEEPA_APIKEY` | The 64-character private API access key on the [Keepa API page](https://keepa.com/api), on a paid Keepa API plan. |
@@ -625,41 +623,6 @@ Every tool carries honest MCP annotations, derived from what it does: a read too
 | `submit_draft_for_review` | update | Hands a contributor's draft to a team blog's editors. |
 | `graphql_query` | read | Any other GraphQL query, such as a tag, a user, scheduled drafts or a post's comments. One query per call, with the fragments it uses. |
 | `graphql_mutation` | write | Any other GraphQL mutation, such as rejecting a submitted draft. One mutation per call, sent once, never retried. Deleting posts and drafts is not offered. |
-
-### hubspot
-
-[Credentials, setup and limits](./src/vendors/hubspot/README.md).
-
-| Tool | Kind | What it does |
-| --- | --- | --- |
-| `get_account` | read | The account: portal ID, type, time zone, currencies, data hosting location. Connection check. |
-| `list_objects` | read | Records of a type with chosen properties and associated record ids. |
-| `get_object` | read | One record by id or by a unique property (a contact by email), with property history if asked. |
-| `search_objects` | read | Records by filter groups, a text query and a sort, with the total. |
-| `create_object` | create | A record with its properties and associations: contacts, companies, deals, and engagements such as notes and tasks. |
-| `update_object` | update | Sets properties of a record (owner, lifecycle stage, deal stage...). |
-| `delete_object` | delete | Deletes a record (HubSpot keeps it in its recycling bin for 90 days). |
-| `list_properties` | read | Properties of a record type with labels, types and dropdown options. |
-| `list_pipelines` | read | Deal, ticket or other pipelines with their stages. |
-| `list_owners` | read | Users who can own records, with their owner ids. |
-| `list_associations` | read | A record's associated records of one type, with association types and labels. |
-| `create_associations` | create | Associates up to 100 pairs of records, with the default type or a label. |
-| `remove_associations` | delete | Removes associations between up to 100 pairs, all or one label. |
-| `search_lists` | read | Lists (segments) by name, with their processing type and size. |
-| `list_list_members` | read | The members of a list, optionally with their properties. |
-| `add_to_list` | update | Adds up to 1,000 records to a manual or snapshot list. |
-| `remove_from_list` | delete | Removes up to 1,000 records from a list. |
-| `list_marketing_emails` | read | Marketing emails with state and, if asked, statistics. |
-| `get_marketing_email` | read | One marketing email with its lists, statistics and, if asked, content. |
-| `create_marketing_email` | create | A draft marketing email. |
-| `update_marketing_email` | update | Changes a marketing email. |
-| `publish_marketing_email` | create | Sends or schedules a marketing email (Marketing Hub Enterprise or the transactional email add-on). |
-| `send_single_email` | create | Sends a published transactional or marketing email to one address, at most once per `send_id`. |
-| `get_send_status` | read | The status and result of a single send. |
-| `list_files` | read | Files in the file manager. |
-| `upload_file` | create | Uploads a file from a public https URL to a folder. |
-| `api_get` | read | Any other GET of the HubSpot API, such as association labels or a draft. |
-| `api_request` | write | Any POST, PUT, PATCH or DELETE of the HubSpot API, such as merging two contacts. Sent once, never retried. OAuth endpoints are left out. |
 
 ### instagram
 

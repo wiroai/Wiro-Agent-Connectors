@@ -1,7 +1,0 @@
-{
-  "results": [
-    { "updatedAt": "2026-01-01T00:00:00Z", "createdAt": "2019-08-06T02:41:52.415Z", "name": "email", "label": "Email", "type": "string", "fieldType": "text", "description": "A contact's email address", "groupName": "contactinformation", "options": [], "displayOrder": 3, "calculated": false, "externalOptions": false, "hasUniqueValue": false, "hidden": false, "hubspotDefined": true, "modificationMetadata": { "archivable": true, "readOnlyDefinition": true, "readOnlyValue": false }, "formField": true },
-    { "name": "lifecyclestage", "label": "Lifecycle Stage", "type": "enumeration", "fieldType": "radio", "description": "The qualification of contacts to sales readiness.", "groupName": "contactinformation", "options": [ { "label": "Lead", "value": "lead", "displayOrder": 1, "hidden": false }, { "label": "Customer", "value": "customer", "displayOrder": 5, "hidden": false } ], "calculated": false, "modificationMetadata": { "readOnlyValue": false } },
-    { "name": "hs_analytics_num_visits", "label": "Number of Pageviews", "type": "number", "fieldType": "number", "description": "", "groupName": "analyticsinformation", "options": [], "calculated": true, "modificationMetadata": { "readOnlyValue": true } }
-  ]
-}
