@@ -1,0 +1,96 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "ai.wiro/agent-connectors",
+  "title": "Wiro Agent Connectors",
+  "description": "MCP connectors for 45 services with no official MCP server, such as Gmail, Shopify and YouTube.",
+  "version": "0.2.1",
+  "websiteUrl": "https://github.com/wiroai/Wiro-Agent-Connectors",
+  "repository": {
+    "url": "https://github.com/wiroai/Wiro-Agent-Connectors",
+    "source": "github"
+  },
+  "icons": [
+    {
+      "src": "https://wiro.ai/images/logos/logo/icon.png",
+      "mimeType": "image/png",
+      "sizes": [
+        "1080x1080"
+      ]
+    }
+  ],
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@wiro-ai/wiro-agent-connectors",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "valueHint": "connector",
+          "description": "The connector to start, such as gmail, shopify, youtube or notion. Each one reads its credentials from <VENDOR>_<CREDENTIAL> environment variables: run the package with --list to see them.",
+          "isRequired": true,
+          "format": "string",
+          "choices": [
+            "adapty",
+            "adjust",
+            "apollo",
+            "apple-appstore",
+            "beehiiv",
+            "blogger",
+            "bluesky",
+            "brevo",
+            "calendarific",
+            "devto",
+            "facebook-pages",
+            "firebase",
+            "ga4",
+            "gmail",
+            "google-ads",
+            "google-business",
+            "google-calendar",
+            "google-drive",
+            "google-merchant-center",
+            "google-play",
+            "google-search-console",
+            "hashnode",
+            "instagram",
+            "kaggle",
+            "keepa",
+            "linkedin",
+            "mailchimp",
+            "mastodon",
+            "meta-ads",
+            "notion",
+            "pinterest",
+            "qiita",
+            "reddit",
+            "revenuecat",
+            "roasit",
+            "sendgrid",
+            "serper",
+            "shopify",
+            "threads",
+            "tiktok",
+            "tumblr",
+            "twitter",
+            "woocommerce",
+            "wordpress",
+            "youtube"
+          ]
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "CONNECTOR_ACCOUNTS",
+          "description": "Optional. JSON that limits a connector whose tools act on one of several accounts (Pages, ad accounts, channels) to the ones you choose, keyed by the account keys --list prints, such as {\"pages\":[\"123\"]}.",
+          "isRequired": false,
+          "isSecret": false,
+          "format": "string"
+        }
+      ]
+    }
+  ]
+}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1 (2026-11-25)
+
+- The package names its entry in the official MCP Registry, `ai.wiro/agent-connectors`, in `mcpName`, and `server.json` describes it there: the connector is the first argument, with every connector's name as a choice, and `CONNECTOR_ACCOUNTS` is the optional account lock.
+- A Dockerfile, and a release workflow that publishes the image `wiroai/wiro-agent-connectors` to Docker Hub for amd64 and arm64: `docker run -i --rm -e SERPER_APIKEY wiroai/wiro-agent-connectors serper`.
+- An agent skill, [`skills/wiro-agent-connectors`](./skills/wiro-agent-connectors/SKILL.md), for skills.sh and ClawHub: picking a connector and its variables, adding it to Claude Code, Claude Desktop or Cursor, account locks, how the tools behave, and loading the modules into a host of your own.
+- README: screenshots from MCP Inspector, the agent skill and the "More from Wiro AI" table. The npm keywords name more of the services.
+
 ## 0.2.0 (2026-11-25)
 
 - 42 new connectors, 45 in all. Each has its own README (what it does, every credential step by step with how to revoke it, its tools and limits), tests on recorded responses and a smoke plan; connectors whose tools act on one of several accounts declare account pickers, and most reach the rest of their service's API through generic tools (`api_get` and `api_request`, or GraphQL queries and mutations).
