@@ -16,6 +16,16 @@ MCP connectors for services that have no official MCP server. One small, depende
 
 Many services an AI agent should work with, such as a blog platform, a social network or a search API, have a good HTTP API and no MCP server. This repository closes that gap with one connector per service. Each connector is a single file with a list of tools and a `call` function, and it has no dependencies: every request goes through a `fetch` that the host hands it, so the host decides where it may connect. Run any connector locally over stdio with `npx`, or load the modules into your own MCP host. Your credentials stay with you: they come from your environment on each call, and a connector never stores or logs them.
 
+## See it run
+
+The `youtube` connector in [MCP Inspector](https://github.com/modelcontextprotocol/inspector), with its 16 tools and the description and fields of `upload_video`:
+
+<img src="https://raw.githubusercontent.com/wiroai/Wiro-Agent-Connectors/main/.github/assets/screenshots/inspector-youtube-tools.png" alt="MCP Inspector connected to the youtube connector: the list of its 16 tools, and Upload a video to YouTube open with its description and its video_url, title and description fields" width="820">
+
+The `calendarific` connector answering a real call, `list_upcoming_holidays` for the United States, with the Calendarific API's own data:
+
+<img src="https://raw.githubusercontent.com/wiroai/Wiro-Agent-Connectors/main/.github/assets/screenshots/inspector-calendarific-call.png" alt="MCP Inspector after a call to list_upcoming_holidays of the calendarific connector for the US: 65 holidays from 2026-11-26 to 2026-12-25, Thanksgiving Day first, and the tools/call message answered OK" width="820">
+
 ## Connectors
 
 Each connector links to its own page: what it does, every credential step by step (where to get it and how to revoke it), its tools and its limits.
@@ -177,6 +187,14 @@ Add to `~/.cursor/mcp.json`, or to `.cursor/mcp.json` in a project:
 ```
 
 Run several connectors side by side by adding one entry per connector.
+
+## Agent skill
+
+This repository includes an agent skill, `wiro-agent-connectors`, in [`skills/wiro-agent-connectors/SKILL.md`](./skills/wiro-agent-connectors/SKILL.md). It shows coding agents such as Claude Code and Cursor how to pick a connector, set its variables, add it to an MCP client, limit it to chosen accounts and load the modules into a host of their own. Add it to your agent with:
+
+```bash
+npx skills add wiroai/Wiro-Agent-Connectors --skill wiro-agent-connectors
+```
 
 ## Tools
 
@@ -1281,6 +1299,42 @@ npm run smoke -- devto --write    # plus one live write
 ```
 
 `npm run build` writes the CLI to `dist/` and each connector to `dist/vendors/<vendor>.js`.
+
+## More from Wiro AI
+
+| Repository | What it is |
+| --- | --- |
+| [Wiro-MCP](https://github.com/wiroai/Wiro-MCP) | Official MCP server for Wiro AI, [`@wiro-ai/wiro-mcp` on npm](https://www.npmjs.com/package/@wiro-ai/wiro-mcp) |
+| [Wiro-Plugin](https://github.com/wiroai/Wiro-Plugin) | Wiro AI plugin for Cursor, Claude Code, Gemini CLI, Devin, Antigravity and Kiro |
+| [Wiro-Skills](https://github.com/wiroai/Wiro-Skills) | Agent skills for images, image edits, video, music, speech, transcripts, 3D and model search |
+| [Wiro-LLM](https://github.com/wiroai/Wiro-LLM) | Vercel AI SDK provider for chat, images, speech, transcription and video, [`@wiro-ai/wiro-llm` on npm](https://www.npmjs.com/package/@wiro-ai/wiro-llm) |
+| [Wiro-Chromium-Extension](https://github.com/wiroai/Wiro-Chromium-Extension) | Wiro AI extension for Chrome, Edge, Opera and Brave |
+| [Wiro-Firefox-Extension](https://github.com/wiroai/Wiro-Firefox-Extension) | Wiro AI add-on for Firefox |
+| [Wiro-Safari-Extension](https://github.com/wiroai/Wiro-Safari-Extension) | Wiro AI extension for Safari on the Mac |
+| [Swift-QuickStart](https://github.com/wiroai/Swift-QuickStart) | WiroKit, the Wiro AI SDK for iOS |
+| [Kotlin-QuickStart](https://github.com/wiroai/Kotlin-QuickStart) | WiroKit, the Wiro AI SDK for Android |
+| [Dart-QuickStart](https://github.com/wiroai/Dart-QuickStart) | Wiro AI SDK for Dart and Flutter, [`wiro` on pub.dev](https://pub.dev/packages/wiro) |
+| [ReactNative-QuickStart](https://github.com/wiroai/ReactNative-QuickStart) | Wiro AI SDK for React Native and Expo, [`@wiro-ai/wiro-react-native` on npm](https://www.npmjs.com/package/@wiro-ai/wiro-react-native) |
+| [Swift-Realtime](https://github.com/wiroai/Swift-Realtime) | Realtime voice AI example for iOS |
+| [Kotlin-Realtime](https://github.com/wiroai/Kotlin-Realtime) | Realtime voice AI example for Android |
+| [Dart-Realtime](https://github.com/wiroai/Dart-Realtime) | Realtime voice AI example for Flutter |
+| [ReactNative-Realtime](https://github.com/wiroai/ReactNative-Realtime) | Realtime voice AI example for React Native |
+| [n8n-nodes-wiro](https://github.com/wiroai/n8n-nodes-wiro) | One Wiro AI node for n8n with a searchable model picker, [`@wiro-ai/n8n-nodes-wiro` on npm](https://www.npmjs.com/package/@wiro-ai/n8n-nodes-wiro) |
+| [Wiro-Dify-Plugin](https://github.com/wiroai/Wiro-Dify-Plugin) | Wiro AI plugins for Dify: the LLM gateway as a model provider, plus image, video, speech and music tools |
+| [Wiro-ComfyUI](https://github.com/wiroai/Wiro-ComfyUI) | Wiro AI nodes for ComfyUI |
+| [Wiro-Hermes](https://github.com/wiroai/Wiro-Hermes) | Wiro AI plugins for Hermes Agent: image, video, audio and 3D tools, plus the LLM gateway as a model provider |
+| [Wiro-Zed](https://github.com/wiroai/Wiro-Zed) | Wiro AI MCP server extension for Zed |
+| [Wiro-Action](https://github.com/wiroai/Wiro-Action) | GitHub Action for Wiro AI models and the LLM gateway, [on the GitHub Marketplace](https://github.com/marketplace/actions/wiro-ai-action) |
+| [Wiro-Raycast](https://github.com/wiroai/Wiro-Raycast) | Wiro AI extension for Raycast: image and video generation, LLM chat and model search |
+| [Wiro-WordPress](https://github.com/wiroai/Wiro-WordPress) | Wiro AI plugin for WordPress: featured images, image edits, alt text, narration and SEO suggestions |
+| [Wiro-Obsidian](https://github.com/wiroai/Wiro-Obsidian) | Wiro AI plugin for Obsidian: images, video, speech, music, transcription and text tools |
+| [Wiro-Blender](https://github.com/wiroai/Wiro-Blender) | Wiro AI add-on for Blender: text to 3D, image to 3D and textures |
+| [Wiro-Figma](https://github.com/wiroai/Wiro-Figma) | Wiro AI plugin for Figma: images, vectors, image edits and text |
+| [Wiro-Next-Starter](https://github.com/wiroai/Wiro-Next-Starter) | Next.js starter for Wiro AI: Playground, image, video and audio tools, and LLM chat, ready for Vercel and Railway |
+| [Wiro-Docs](https://github.com/wiroai/Wiro-Docs) | Source of the Wiro AI API docs |
+| [wiroai.github.io](https://wiroai.github.io) | Every open-source project from Wiro AI on one page, with a page for each repository |
+
+[Website](https://wiro.ai) · [Models](https://wiro.ai/models) · [Docs](https://wiro.ai/docs) · [X](https://x.com/wiroai)
 
 ## License
 
