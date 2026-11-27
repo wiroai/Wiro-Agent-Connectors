@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- `serper`: `web_search` has a shorter, clearer description (295 characters, was 397). It says that the answer box, knowledge graph, related questions and related searches come on the first page only, and a host that shows the first 300 characters of a tool description now shows all of it.
+
 ## 0.2.2 (2026-11-27)
 
 - A JSON:API error reply (App Store Connect's, for one) now gives its `detail`, or else its `title`, as the vendor's words in the error, as a `message` already did: "App Store Connect refused the request (HTTP 403): The API key in use does not allow this request."

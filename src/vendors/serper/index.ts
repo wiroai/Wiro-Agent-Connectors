@@ -171,10 +171,9 @@ const webSearch: ToolDefinition = {
   kind: 'read',
   title: 'Search the web (Google results via Serper)',
   description:
-    'Searches Google through Serper and returns the organic results (title, link, snippet, position, date), '
-    + 'plus the answer box, knowledge graph, related questions and related searches when Google shows them. '
-    + 'Options for country, language, location, freshness and the page. Read the pages themselves with a fetch tool. '
-    + 'Each call uses one Serper credit. Pass nextCursor back as cursor for the next page.',
+    'Searches Google through Serper: results with title, link, snippet, position and date, and on the first page any answer box, '
+    + 'knowledge graph, related questions and related searches. Snippets only: fetch a page to read it. '
+    + 'Each call uses one Serper credit. Pass nextCursor back as cursor for more.',
   inputSchema: {
     type: 'object',
     properties: {

@@ -20,7 +20,7 @@ Quick start table:
 
 | Tool | Kind | What it does |
 | --- | --- | --- |
-| `web_search` | read | Google results for a query: title, link, snippet, position and date of each result, plus the answer box, knowledge graph, related questions and related searches. Options for country, language, location, freshness (past hour to past year) and the page. |
+| `web_search` | read | Google results for a query: title, link, snippet, position and date of each result, plus, on the first page, the answer box, knowledge graph, related questions and related searches. Options for country, language, location, freshness (past hour to past year) and the page. |
 | `news_search` | read | Google News articles: title, link, snippet, source, date and image link, with the same options. |
 | `image_search` | read | Google Images: each image's URL, size, thumbnail, title and the page it is on, up to 100 a page. |
 | `video_search` | read | Google Videos: title, link, snippet, duration, source, channel, date and thumbnail. |
