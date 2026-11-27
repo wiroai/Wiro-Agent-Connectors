@@ -142,7 +142,12 @@ export function vendorMessage(data: unknown): string | undefined {
   }
   if (Array.isArray(record['errors'])) {
     const messages = record['errors']
-      .map((item) => (typeof item === 'string' ? item : (item as { message?: unknown } | null)?.message))
+      .map((item) => {
+        if (typeof item === 'string') return item;
+        // A JSON:API error object (App Store Connect's, for one) has no message: its words are in detail, else title.
+        const entry = item as { message?: unknown; detail?: unknown; title?: unknown } | null;
+        return [entry?.message, entry?.detail, entry?.title].find((value) => typeof value === 'string' && value.trim() !== '');
+      })
       .filter((item): item is string => typeof item === 'string' && item.trim() !== '');
     if (messages.length) return cleanVendorText(messages.join('; '));
   }
