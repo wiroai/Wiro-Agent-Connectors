@@ -191,7 +191,15 @@ test('get_store_listing says so when an app has no store page, or the page has n
   // A fresh reply per request: the module cancels a refused page's body, and a cloned body would wait for its twin.
   const missing = setup({ 'GET https://play.google.com/store/apps/details': () => textResponse(404, '<html>Not Found</html>', { 'content-type': 'text/html' }) });
   const none = await callTool(missing.module, 'get_store_listing', {}, missing.ctx);
-  assert.equal(none.payload.error, `Google Play has no public store page for ${PKG} (HTTP 404): the app is not published yet, or not in the country US.`);
+  // No public page is the answer for an unpublished app, not a failure to retry.
+  assert.equal(none.isError, false);
+  assert.deepEqual(none.payload, {
+    packageName: PKG,
+    language: 'en-US',
+    region: 'US',
+    available: false,
+    note: `Google Play has no public store page for ${PKG} in the country US (HTTP 404): the app is not published yet, or not offered there.`,
+  });
   assert.deepEqual(missing.fetch.calls[0].query, { id: PKG, hl: 'en-US', gl: 'US' });
 
   const empty = setup({ 'GET https://play.google.com/store/apps/details': textResponse(200, '<html><body>Something else</body></html>', { 'content-type': 'text/html' }) });
@@ -282,12 +290,18 @@ test('list_subscriptions still lists the subscriptions when the offers cannot be
   assert.match(payload.note, /^The offers could not be read: Google Play refused the request: invite the service account play-agent@example-project\.iam\.gserviceaccount\.com/);
 });
 
-test('list_in_app_products reads the in-app products, or the one-time products, with prices', async () => {
+test('list_in_app_products reads the one-time products by default, or the legacy in-app products, with prices', async () => {
   const { module, ctx, apiCalls } = setup({
     [`GET ${APP}/inappproducts`]: jsonResponse(200, fixture(import.meta.url, 'inappproducts.json')),
     [`GET ${APP}/oneTimeProducts`]: jsonResponse(200, fixture(import.meta.url, 'onetimeproducts.json')),
   });
-  const legacy = await callTool(module, 'list_in_app_products', { region: 'TR' }, ctx);
+  const byDefault = await callTool(module, 'list_in_app_products', {}, ctx);
+  assert.equal(byDefault.isError, false);
+  assert.equal(apiCalls()[0].path, `${APP}/oneTimeProducts`);
+  assert.equal(byDefault.payload.catalog, 'one_time_products');
+  assert.equal(byDefault.payload.products[0].productId, 'lifetime_pro');
+
+  const legacy = await callTool(module, 'list_in_app_products', { catalog: 'in_app_products', region: 'TR' }, ctx);
   assert.deepEqual(legacy.payload.products[0], {
     sku: 'credits_50',
     status: 'active',
@@ -299,8 +313,9 @@ test('list_in_app_products reads the in-app products, or the one-time products, 
     price: { amount: '1.99', currency: 'USD' },
     regionPrice: { region: 'TR', amount: '49.99', currency: 'TRY' },
   });
-  await callTool(module, 'list_in_app_products', { cursor: legacy.payload.nextCursor }, ctx);
-  assert.equal(apiCalls()[1].query.token, 'next-iap-page');
+  assert.equal(apiCalls()[1].path, `${APP}/inappproducts`);
+  await callTool(module, 'list_in_app_products', { catalog: 'in_app_products', cursor: legacy.payload.nextCursor }, ctx);
+  assert.equal(apiCalls()[2].query.token, 'next-iap-page');
 
   const modern = await callTool(module, 'list_in_app_products', { catalog: 'one_time_products' }, ctx);
   assert.deepEqual(modern.payload.products[0], {
@@ -311,7 +326,26 @@ test('list_in_app_products reads the in-app products, or the one-time products, 
     offerTags: ['lifetime'],
     purchaseOptions: [{ purchaseOptionId: 'buy', state: 'ACTIVE', type: 'buy', price: { region: 'US', amount: '99.99', currency: 'USD' } }],
   });
-  assert.equal(apiCalls()[2].query.pageSize, '100');
+  assert.equal(apiCalls()[3].query.pageSize, '100');
+});
+
+test('the legacy in-app products API refused for an app that moved on says to read the one-time products, not to invite anyone', async () => {
+  // Google Play's answer, recorded: HTTP 403 PERMISSION_DENIED, though no permission is missing.
+  const migrate = () => jsonResponse(403, { error: { code: 403, message: 'Please migrate to the new publishing API.', status: 'PERMISSION_DENIED' } });
+  const { module, ctx, apiCalls } = setup({ [`GET ${APP}/inappproducts`]: migrate });
+  const legacy = await callTool(module, 'list_in_app_products', { catalog: 'in_app_products' }, ctx);
+  assert.equal(legacy.isError, true);
+  assert.equal(legacy.payload.status, 403);
+  assert.equal(
+    legacy.payload.error,
+    'Google Play no longer answers this legacy publishing API call for the app (HTTP 403): it said "Please migrate to the new publishing API." '
+      + 'The app\'s one-time products are read with list_in_app_products (catalog one_time_products), which calls .../oneTimeProducts.',
+  );
+  const raw = await callTool(module, 'api_get', { path: `${APP}/inappproducts` }, ctx);
+  assert.equal(raw.isError, true);
+  assert.match(raw.payload.error, /^Google Play no longer answers this legacy publishing API call for the app \(HTTP 403\)/);
+  assert.doesNotMatch(raw.payload.error, /invite/);
+  assert.equal(apiCalls().length, 2);
 });
 
 test('a permission refusal says whom to invite in Play Console; a 429 carries retryAfter', async () => {
