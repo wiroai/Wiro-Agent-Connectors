@@ -2,7 +2,11 @@ name: Publish to npm
 
 # The npm trusted publisher of @wiro-ai/wiro-agent-connectors is this
 # repository and this file (.github/workflows/publish.yml), with no
-# environment. Keep the file name as it is, or publishing stops working.
+# environment. Keep the file name as it is and add no environment, or
+# publishing stops working.
+#
+# npm gets only commits that are on main: a release whose tag points anywhere
+# else publishes nothing.
 #
 # Wiro-MCP's workflow also publishes to the MCP Registry and Docker Hub. Those
 # steps are left out here for now.
@@ -20,10 +24,25 @@ jobs:
       id-token: write
 
     steps:
+      # The whole history, so the next step can tell whether the release
+      # commit is on main.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      # Before anything is installed: the commit the release tag points to must
+      # be main's tip or one of its ancestors, never a commit of another branch.
+      - name: Check the release commit is on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" FETCH_HEAD; then
+            echo "::error::The release tag $GITHUB_REF_NAME points to $GITHUB_SHA, which is not on main: merge the change into main, then release a commit of main."
+            exit 1
+          fi
+          echo "The release commit $GITHUB_SHA is on main."
 
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
