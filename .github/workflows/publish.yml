@@ -6,7 +6,7 @@ name: Publish to npm
 # publishing stops working.
 #
 # npm gets only commits that are on main: a release whose tag points anywhere
-# else publishes nothing.
+# else publishes nothing. A prerelease goes to the dist-tag next, never latest.
 #
 # Wiro-MCP's workflow also publishes to the MCP Registry and Docker Hub. Those
 # steps are left out here for now.
@@ -62,6 +62,24 @@ jobs:
             }
           '
 
+      # latest is what `npm install` and `npx` get, so a prerelease goes to next:
+      # a release marked as a pre-release on GitHub, or a version with a "-",
+      # such as 0.3.0-rc.1. Every other release becomes latest.
+      - name: Choose the npm dist-tag
+        id: dist-tag
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+          version="$(node -p 'require("./package.json").version')"
+          if [ "$PRERELEASE" = "true" ] || [[ "$version" == *-* ]]; then
+            tag=next
+          else
+            tag=latest
+          fi
+          echo "npm gets $version with the dist-tag $tag."
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
       # Trusted publishing needs npm 11.5.1 or later.
       - name: Install latest npm
         run: npm install -g npm@latest
@@ -78,4 +96,6 @@ jobs:
       # There is no npm token: npm signs this workflow in through OIDC.
       # npm refuses to publish while package.json says "private": true.
       - name: Publish with provenance
-        run: npm publish --provenance --access public
+        env:
+          DIST_TAG: ${{ steps.dist-tag.outputs.tag }}
+        run: npm publish --provenance --access public --tag "$DIST_TAG"
