@@ -117,6 +117,8 @@ export async function applePage<T>(
     path: string;
     query: Query;
     cursor?: string;
+    /** Sentences for the list read's failures by status, as in h.api. */
+    errors?: ApiRequest['errors'];
     map(item: any, data: any): T;
     enrich?(items: T[]): Promise<void>;
     extra?(data: any): Record<string, unknown>;
@@ -125,7 +127,7 @@ export async function applePage<T>(
   const state = h.cursor(options.cursor);
   const appleCursor = typeof state?.['c'] === 'string' ? state['c'] : undefined;
   const skip = typeof state?.['o'] === 'number' ? state['o'] : 0;
-  const data = await api.get(options.path, { ...options.query, ...(appleCursor ? { cursor: appleCursor } : {}) });
+  const data = await api.get(options.path, { ...options.query, ...(appleCursor ? { cursor: appleCursor } : {}) }, options.errors);
   const items: T[] = (Array.isArray(data?.data) ? data.data : []).map((item: any) => options.map(item, data)).slice(skip);
   if (options.enrich) await options.enrich(items);
   const next = nextAppleCursor(data);

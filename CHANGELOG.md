@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A JSON:API error reply (App Store Connect's, for one) now gives its `detail`, or else its `title`, as the vendor's words in the error, as a `message` already did: "App Store Connect refused the request (HTTP 403): The API key in use does not allow this request."
+- `apple-appstore`: `get_app_metadata` returns what the key's role can read and leaves out, with a line in `notes`, a part App Store Connect refuses with HTTP 403 (app info, versions, version texts); only the app's own record still fails the call. `list_subscriptions` and `list_in_app_purchases` say on a 403 that reading them needs a key with the Admin or App Manager role, instead of a bare refusal.
+- `google-play`: `list_in_app_products` reads the one-time products by default (`catalog: one_time_products`); the legacy in-app products API stays as `catalog: in_app_products`. Google Play answers that API, and others of the legacy publishing API, with HTTP 403 "Please migrate to the new publishing API." for an app whose catalog has moved: the error now says so and where the products are read, instead of asking to invite the service account. `get_store_listing` answers `available: false` with a note for an app with no public store page in the country (HTTP 404), instead of an error.
+
 ## 0.2.1 (2026-11-25)
 
 - The package names its entry in the official MCP Registry, `ai.wiro/agent-connectors`, in `mcpName`, and `server.json` describes it there: the connector is the first argument, with every connector's name as a choice, and `CONNECTOR_ACCOUNTS` is the optional account lock.

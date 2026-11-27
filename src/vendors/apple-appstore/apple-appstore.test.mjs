@@ -329,7 +329,12 @@ test('a refused event keeps the status, and an unclear create is unknown with on
   const conflict = setup(() => jsonResponse(409, fixture(import.meta.url, 'error-409.json')));
   const refused = await callTool(conflict.module, 'create_app_event', NEW_EVENT, conflict.ctx);
   assert.equal(refused.payload.status, 409);
-  assert.match(refused.payload.error, /^App Store Connect refused the event: a value is invalid, the reference name is already used, or the event can no longer be changed in its state \(HTTP 409\)\. Nothing was changed\./);
+  assert.equal(
+    refused.payload.error,
+    'App Store Connect refused the event: a value is invalid, the reference name is already used, or the event can no longer be changed in its state (HTTP 409). '
+      + 'App Store Connect said: "The referenceName \'spring-challenge-2027\' is already used by another event.". Nothing was changed.',
+    'Apple\'s own detail says which value',
+  );
 
   const broken = setup(() => { throw Object.assign(new Error('socket hang up'), { code: 'NETWORK' }); });
   const unknown = await callTool(broken.module, 'create_app_event', NEW_EVENT, broken.ctx);
@@ -463,6 +468,67 @@ test('get_app_metadata says when the app is not on the App Store in the country,
   const skipped = await callTool(skip.module, 'get_app_metadata', { app_id: APP, include_store_listing: false }, skip.ctx);
   assert.equal(skipped.payload.storeListing, undefined);
   assert.equal(skip.fetch.calls.length, 3);
+});
+
+test('get_app_metadata leaves out what the key\'s role cannot read, says which, and returns the rest', async () => {
+  // App Store Connect's answer to a Customer Support key, recorded: it reads the app, its versions and reviews only.
+  const forbidden = () => jsonResponse(403, fixture(import.meta.url, 'error-403.json'));
+  const table = {
+    [`GET /v1/apps/${APP}`]: () => jsonResponse(200, fixture(import.meta.url, 'app.json')),
+    [`GET /v1/apps/${APP}/appInfos`]: forbidden,
+    [`GET /v1/apps/${APP}/appStoreVersions`]: () => jsonResponse(200, fixture(import.meta.url, 'versions.json')),
+    'GET /v1/appStoreVersions/ver-4-2/appStoreVersionLocalizations': () => jsonResponse(200, fixture(import.meta.url, 'version-localizations.json')),
+    'GET /lookup': () => jsonResponse(200, fixture(import.meta.url, 'lookup.json')),
+  };
+  const roleNote = (part) => `${part} left out: reading it needs an App Store Connect key with the Admin or App Manager role, and the connected key's role does not allow it (HTTP 403).`;
+  const partial = setup(routes(table));
+  const { payload, isError } = await callTool(partial.module, 'get_app_metadata', { app_id: APP }, partial.ctx);
+  assert.equal(isError, false);
+  assert.equal(partial.fetch.calls.length, 5);
+  assert.equal(payload.app.name, 'Acme Photo');
+  assert.equal(payload.appInfos, undefined);
+  assert.equal(payload.versions.length, 2);
+  assert.equal(payload.versionLocalization.versionString, '4.2');
+  assert.equal(payload.storeListing.formattedPrice, 'Free');
+  assert.deepEqual(payload.notes, [roleNote('The app info (subtitle, categories, age rating, privacy policy URL)')]);
+
+  // No versions either: their texts are not asked for, and each part has its note.
+  const less = setup(routes({ ...table, [`GET /v1/apps/${APP}/appStoreVersions`]: forbidden }));
+  const fewer = await callTool(less.module, 'get_app_metadata', { app_id: APP, include_store_listing: false }, less.ctx);
+  assert.equal(fewer.isError, false);
+  assert.equal(less.fetch.calls.length, 3);
+  assert.equal(fewer.payload.versions, undefined);
+  assert.equal(fewer.payload.versionLocalization, undefined);
+  assert.deepEqual(fewer.payload.notes, [
+    roleNote('The app info (subtitle, categories, age rating, privacy policy URL)'),
+    roleNote('The versions and their texts'),
+  ]);
+
+  // The app's own record is the tool's answer: a key that cannot read it fails the call, with Apple's words.
+  const none = setup(routes({ ...table, [`GET /v1/apps/${APP}`]: forbidden }));
+  const refused = await callTool(none.module, 'get_app_metadata', { app_id: APP }, none.ctx);
+  assert.equal(refused.isError, true);
+  assert.equal(refused.payload.error, 'App Store Connect refused the request (HTTP 403): The API key in use does not allow this request.');
+  assert.equal(none.fetch.calls.length, 1);
+});
+
+test('list_subscriptions and list_in_app_purchases say what key reads them when the key\'s role cannot, with one request', async () => {
+  const forbidden = () => jsonResponse(403, fixture(import.meta.url, 'error-403.json'));
+  const refusal = (what) => `Reading ${what} needs an App Store Connect key with the Admin or App Manager role, and the connected key's role does not allow it (HTTP 403). `
+    + 'App Store Connect said: "The API key in use does not allow this request".';
+  const subs = setup(routes({ [`GET /v1/apps/${APP}/subscriptionGroups`]: forbidden }));
+  const subscriptions = await callTool(subs.module, 'list_subscriptions', { app_id: APP }, subs.ctx);
+  assert.equal(subscriptions.isError, true);
+  assert.equal(subscriptions.payload.status, 403);
+  assert.equal(subscriptions.payload.error, refusal("the app's subscriptions"));
+  assert.equal(subs.fetch.calls.length, 1);
+
+  const iap = setup(routes({ [`GET /v1/apps/${APP}/inAppPurchasesV2`]: forbidden }));
+  const purchases = await callTool(iap.module, 'list_in_app_purchases', { app_id: APP, limit: 20 }, iap.ctx);
+  assert.equal(purchases.isError, true);
+  assert.equal(purchases.payload.status, 403);
+  assert.equal(purchases.payload.error, refusal("the app's in-app purchases"));
+  assert.equal(iap.fetch.calls.length, 1);
 });
 
 test('list_subscriptions lists each subscription with its group, introductory offers and current price, and says whether there is a free trial', async () => {

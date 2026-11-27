@@ -274,7 +274,7 @@ Every tool carries honest MCP annotations, derived from what it does: a read too
 | Tool | Kind | What it does |
 | --- | --- | --- |
 | `list_apps` | read | The apps the key can see: Apple ID, name, bundle ID, SKU, primary locale, with `selected: true` on the apps chosen for the connection. Lists the candidates of the `apps` account picker. |
-| `get_app_metadata` | read | What an app is: its record, app info for one locale (subtitle, categories, age rating, privacy URL), latest versions, the live version's description, keywords, promotional text and what's new, and the public App Store listing of one country (price, genre, rating, rating count, live description). |
+| `get_app_metadata` | read | What an app is: its record, app info for one locale (subtitle, categories, age rating, privacy URL), latest versions, the live version's description, keywords, promotional text and what's new, and the public App Store listing of one country (price, genre, rating, rating count, live description). A part the key's role cannot read is left out, and `notes` says which. |
 | `list_subscriptions` | read | Auto-renewable subscriptions, group by group (or one group), with their current price in one territory (default USA), their introductory offers (free trial, pay as you go, pay up front) and whether one on the page has a free trial; pages with a cursor. |
 | `list_in_app_purchases` | read | Consumable, non-consumable and non-renewing purchases: name, product ID, type, state, and the current price in one territory (manual, or the automatic equalized one); up to 20 a page with prices. |
 | `list_reviews` | read | Customer reviews with rating, title, text, nickname, territory, date and the developer response; filters for rating, territory and answered or not. |
@@ -600,10 +600,10 @@ Every tool carries honest MCP annotations, derived from what it does: a read too
 | `list_reviews` | read | Reviews with text from the last week, newest first, with stars, language, app version, device and the developer reply; only unanswered ones on request; translated on request. |
 | `get_review` | read | One review with its reply. |
 | `reply_to_review` | update | Posts the reply to a review, or replaces the earlier one: up to 350 characters of plain text. |
-| `get_store_listing` | read | The live store listing as people see it, from the app's public store page in one language and country: title, short and full description, category, developer, content rating, star rating, price and icon. It opens no edit and needs no Play Console permission. |
+| `get_store_listing` | read | The live store listing as people see it, from the app's public store page in one language and country: title, short and full description, category, developer, content rating, star rating, price and icon. It opens no edit and needs no Play Console permission. An app with no public store page in that country gives `available: false`. |
 | `update_store_listing` | update | Changes the listing in one language (title, short or full description, video) in an edit and commits it; Google Play reviews the change before it shows on the store page. |
 | `list_subscriptions` | read | Subscriptions with listings, base plans (state, billing period, price in one country) and offers with their phases, and whether an active offer starts with a free trial. |
-| `list_in_app_products` | read | In-app products (sku, status, name, default and regional price), or the newer one-time products with their purchase options. |
+| `list_in_app_products` | read | One-time products with their purchase options and regional price (the default), or the legacy in-app products (sku, status, name, default and regional price), which Google Play no longer serves for an app whose catalog has moved to one-time products. |
 | `api_get` | read | Any other GET of the Android Developer API under `/androidpublisher/v3/applications/{packageName}/` for a chosen app, such as tracks in an edit or a purchase. |
 | `api_request` | write | A POST, PUT, PATCH or DELETE under the same paths, for a chosen app. User and permission management (`/androidpublisher/v3/developers/`) is left out. Sent once, never retried. |
 

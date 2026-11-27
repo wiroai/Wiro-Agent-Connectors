@@ -23,7 +23,7 @@ Quick start table:
 | Tool | Kind | What it does |
 | --- | --- | --- |
 | `list_apps` | read | The apps the key can see: Apple ID, name, bundle ID, SKU, primary locale, with `selected: true` on the apps chosen for the connection. Lists the candidates of the `apps` account picker. |
-| `get_app_metadata` | read | What an app is: its record, app info for one locale (subtitle, categories, age rating, privacy URL), latest versions, the live version's description, keywords, promotional text and what's new, and the public App Store listing of one country (price, genre, rating, rating count, live description). |
+| `get_app_metadata` | read | What an app is: its record, app info for one locale (subtitle, categories, age rating, privacy URL), latest versions, the live version's description, keywords, promotional text and what's new, and the public App Store listing of one country (price, genre, rating, rating count, live description). A part the key's role cannot read is left out, and `notes` says which. |
 | `list_subscriptions` | read | Auto-renewable subscriptions, group by group (or one group), with their current price in one territory (default USA), their introductory offers (free trial, pay as you go, pay up front) and whether one on the page has a free trial; pages with a cursor. |
 | `list_in_app_purchases` | read | Consumable, non-consumable and non-renewing purchases: name, product ID, type, state, and the current price in one territory (manual, or the automatic equalized one); up to 20 a page with prices. |
 | `list_reviews` | read | Customer reviews with rating, title, text, nickname, territory, date and the developer response; filters for rating, territory and answered or not. |
