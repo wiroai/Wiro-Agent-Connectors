@@ -365,6 +365,20 @@ test('a binary request returns the reply\'s bytes unparsed, and an error reply i
   assert.equal(big.payload.error, 'Acme answered HTTP 200, but the reply could not be read (the reply is larger than 64 bytes).');
 });
 
+test('a JSON:API error reply gives its detail (else its title) as the vendor\'s words, and a message still comes first', async () => {
+  const read = connector((args, h) => h.api({ path: '/things/1' }));
+  const reply = (body) => makeContext({ credentials: { api_key: 'k' }, fetch: fakeFetch(() => jsonResponse(403, body)) }).ctx;
+  const jsonApi = { errors: [{ status: '403', code: 'FORBIDDEN_ERROR', title: 'This request is forbidden for security reasons', detail: 'The API key in use does not allow this request' }] };
+  const detailed = await callTool(read, 'read_x', {}, reply(jsonApi));
+  assert.equal(detailed.payload.error, 'Acme refused the request (HTTP 403): The API key in use does not allow this request.');
+  const titled = await callTool(read, 'read_x', {}, reply({ errors: [{ status: '403', title: 'Forbidden here' }] }));
+  assert.equal(titled.payload.error, 'Acme refused the request (HTTP 403): Forbidden here.');
+  const both = await callTool(read, 'read_x', {}, reply({ errors: [{ message: 'Use this', detail: 'Not this' }] }));
+  assert.equal(both.payload.error, 'Acme refused the request (HTTP 403): Use this.');
+  const none = await callTool(read, 'read_x', {}, reply({ errors: [{ status: '403', code: 'FORBIDDEN_ERROR' }] }));
+  assert.equal(none.payload.error, 'Acme refused the request (HTTP 403).');
+});
+
 test('a reply the host refuses as too large is its size limit, not an outage: no "try again later"', async () => {
   const tooLarge = () => fakeFetch(() => { throw Object.assign(new Error('the reply is larger than 5242880 bytes'), { code: 'TOO_LARGE' }); });
   const read = connector((args, h) => h.api({ path: '/files/1', binary: true }));

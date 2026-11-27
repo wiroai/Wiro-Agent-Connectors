@@ -8,6 +8,36 @@ import { compact, includedMap, LOOKUP_ORIGIN, nextAppleCursor, text, type Asc } 
 /** Version states that mean the version is the one on the App Store. */
 const LIVE_STATES = new Set(['READY_FOR_SALE', 'READY_FOR_DISTRIBUTION']);
 
+/**
+ * The key that reads what the connected key's role does not. App Store Connect
+ * answers such a read with HTTP 403 ("The API key in use does not allow this
+ * request"): a Customer Support key, say, reads the app, its versions and its
+ * reviews, but not its app info, subscriptions or in-app purchases.
+ */
+const ROLE_NEEDED = 'an App Store Connect key with the Admin or App Manager role';
+
+/** The refusal of a read the key's role does not allow (the HTTP status and Apple's words follow it). */
+export function roleRefusal(what: string): string {
+  return `Reading ${what} needs ${ROLE_NEEDED}, and the connected key's role does not allow it`;
+}
+
+/**
+ * One optional part of the app's details: a read the key's role does not
+ * allow (HTTP 403) leaves the part out with a note, and the tool still returns
+ * the rest. Any other failure fails the tool.
+ */
+async function optionalPart<T>(notes: string[], what: string, read: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await read();
+  } catch (error) {
+    if (error instanceof ToolFailure && error.details.status === 403) {
+      notes.push(`${what[0]?.toUpperCase()}${what.slice(1)} left out: reading it needs ${ROLE_NEEDED}, and the connected key's role does not allow it (HTTP 403).`);
+      return undefined;
+    }
+    throw error;
+  }
+}
+
 function trimAppInfo(item: any, localizations: Map<string, any>, locale: string): Record<string, unknown> {
   const a = item?.attributes ?? {};
   const refs: any[] = Array.isArray(item?.relationships?.appInfoLocalizations?.data) ? item.relationships.appInfoLocalizations.data : [];
@@ -90,46 +120,55 @@ export async function appMetadata(
   }, { 404: `App Store Connect has no app ${appId} that this key can see` });
   const a = app?.data?.attributes ?? {};
   const locale = args.locale ?? (typeof a.primaryLocale === 'string' ? a.primaryLocale : 'en-US');
+  // The parts after the app's own record are each left out, with a note, when the key's role cannot read them.
+  const notes: string[] = [];
 
-  const infos = await api.get(`/v1/apps/${appId}/appInfos`, {
+  const infos = await optionalPart(notes, 'the app info (subtitle, categories, age rating, privacy policy URL)', () => api.get(`/v1/apps/${appId}/appInfos`, {
     include: 'appInfoLocalizations,primaryCategory,secondaryCategory',
     'fields[appInfos]': 'appStoreState,state,appStoreAgeRating,appInfoLocalizations,primaryCategory,secondaryCategory',
     'fields[appInfoLocalizations]': 'locale,name,subtitle,privacyPolicyUrl',
     'limit[appInfoLocalizations]': 50,
     limit: 5,
-  });
+  }));
   const infoLocalizations = includedMap(infos, 'appInfoLocalizations');
-  const appInfos = (Array.isArray(infos?.data) ? infos.data : []).map((item: any) => trimAppInfo(item, infoLocalizations, locale));
+  const appInfos = infos === undefined
+    ? undefined
+    : (Array.isArray(infos?.data) ? infos.data : []).map((item: any) => trimAppInfo(item, infoLocalizations, locale));
 
-  const versionsReply = await api.get(`/v1/apps/${appId}/appStoreVersions`, {
+  const versionsReply = await optionalPart(notes, 'the versions and their texts', () => api.get(`/v1/apps/${appId}/appStoreVersions`, {
     'fields[appStoreVersions]': 'platform,versionString,appStoreState,appVersionState,releaseType,createdDate',
     limit: 5,
-  });
+  }));
   const versionItems: any[] = Array.isArray(versionsReply?.data) ? versionsReply.data : [];
-  const versions = versionItems.map(trimVersion);
+  const versions = versionsReply === undefined ? undefined : versionItems.map(trimVersion);
   const shown = versionItems.find((item) => LIVE_STATES.has(item?.attributes?.appVersionState) || LIVE_STATES.has(item?.attributes?.appStoreState))
     ?? versionItems[0];
   let versionLocalization: Record<string, unknown> | undefined;
   if (shown?.id) {
-    const localizations = await api.get(`/v1/appStoreVersions/${encodeURIComponent(shown.id)}/appStoreVersionLocalizations`, {
-      'filter[locale]': locale,
-      'fields[appStoreVersionLocalizations]': 'locale,description,keywords,promotionalText,whatsNew,marketingUrl,supportUrl',
-      limit: 1,
-    });
+    const localizations = await optionalPart(notes, 'the version texts (description, keywords, promotional text, what\'s new)', () => api.get(
+      `/v1/appStoreVersions/${encodeURIComponent(shown.id)}/appStoreVersionLocalizations`,
+      {
+        'filter[locale]': locale,
+        'fields[appStoreVersionLocalizations]': 'locale,description,keywords,promotionalText,whatsNew,marketingUrl,supportUrl',
+        limit: 1,
+      },
+    ));
     const l = (Array.isArray(localizations?.data) ? localizations.data[0] : undefined)?.attributes;
-    versionLocalization = l
-      ? compact({
-        versionId: shown.id,
-        versionString: shown.attributes?.versionString,
-        locale: l.locale,
-        description: text(l.description, 4000),
-        keywords: l.keywords,
-        promotionalText: l.promotionalText,
-        whatsNew: text(l.whatsNew, 4000),
-        marketingUrl: l.marketingUrl,
-        supportUrl: l.supportUrl,
-      })
-      : { versionId: shown.id, locale, note: `The version has no ${locale} localization.` };
+    if (localizations !== undefined) {
+      versionLocalization = l
+        ? compact({
+          versionId: shown.id,
+          versionString: shown.attributes?.versionString,
+          locale: l.locale,
+          description: text(l.description, 4000),
+          keywords: l.keywords,
+          promotionalText: l.promotionalText,
+          whatsNew: text(l.whatsNew, 4000),
+          marketingUrl: l.marketingUrl,
+          supportUrl: l.supportUrl,
+        })
+        : { versionId: shown.id, locale, note: `The version has no ${locale} localization.` };
+    }
   }
 
   return compact({
@@ -146,6 +185,7 @@ export async function appMetadata(
     versions,
     versionLocalization,
     storeListing: args.include_store_listing ? await storeListing(h, appId, args.country) : undefined,
+    notes: notes.length ? notes : undefined,
   });
 }
 
@@ -291,7 +331,11 @@ export interface SubscriptionArgs {
 export async function subscriptions(h: ToolHelpers, api: Asc, args: SubscriptionArgs): Promise<Record<string, unknown>> {
   const appId = args.app_id;
   const territory = args.include_prices ? args.price_territory : undefined;
-  const groupsReply = await api.get(`/v1/apps/${appId}/subscriptionGroups`, { 'fields[subscriptionGroups]': 'referenceName', limit: 200 });
+  const groupsReply = await api.get(
+    `/v1/apps/${appId}/subscriptionGroups`,
+    { 'fields[subscriptionGroups]': 'referenceName', limit: 200 },
+    { 403: roleRefusal("the app's subscriptions") },
+  );
   const allGroups: Array<{ id: string; referenceName?: string }> = (Array.isArray(groupsReply?.data) ? groupsReply.data : [])
     .filter((group: any) => typeof group?.id === 'string')
     .map((group: any) => ({ id: group.id, referenceName: group?.attributes?.referenceName }));

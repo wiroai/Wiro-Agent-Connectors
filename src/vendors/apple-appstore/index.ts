@@ -42,7 +42,7 @@ import {
   trimReview,
 } from './client.js';
 import { checkEventImage, EVENT_ASSET_TYPES, imageInfo, MAX_IMAGE_BYTES, UPLOAD_HOSTS, uploadEventImage, type EventAssetType } from './media.js';
-import { appMetadata, purchasePrice, subscriptions } from './metadata.js';
+import { appMetadata, purchasePrice, roleRefusal, subscriptions } from './metadata.js';
 import { PLATFORMS, submitEventForReview } from './review.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -284,7 +284,8 @@ const connector = defineConnector({
       description:
         "What an app is: its App Store Connect record (name, bundle ID, primary locale), app info (subtitle, categories, age rating, privacy URL) for one locale, "
         + 'its latest versions, the description, keywords, promotional text and what\'s new of the live version (or the newest), and, from the public App Store '
-        + 'listing of one country, its price, genre, rating, rating count and live description. Up to five requests.',
+        + 'listing of one country, its price, genre, rating, rating count and live description. Up to five requests. A part the key\'s role '
+        + 'cannot read (App Store Connect answers HTTP 403) is left out, and notes says which and what key reads it.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -357,6 +358,7 @@ const connector = defineConnector({
         return applePage(h, api, {
           key: 'inAppPurchases',
           path: `/v1/apps/${args.app_id}/inAppPurchasesV2`,
+          errors: { 403: roleRefusal("the app's in-app purchases") },
           query: {
             'fields[inAppPurchases]': 'name,productId,inAppPurchaseType,state,familySharable',
             'filter[inAppPurchaseType]': args.type,

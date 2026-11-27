@@ -67,17 +67,36 @@ const REVIEW_ID: JsonSchema = { type: 'string', pattern: '^(?!\\.{1,2}$)[A-Za-z0
 const LANGUAGE: JsonSchema = { type: 'string', pattern: '^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$', maxLength: 20, description: 'A language code as Play uses it, e.g. en-US, tr-TR or es-419.' };
 const REGION: JsonSchema = { type: 'string', pattern: '^[A-Z]{2}$', default: 'US', description: 'The country whose prices to show, e.g. US (default) or TR.' };
 
-function play(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
+// Google Play's answer to a call of its legacy publishing API (the in-app
+// products of inappproducts, for one) for an app whose catalog has moved on.
+const LEGACY_API_REFUSAL = /migrate to the new publishing API/i;
+
+async function play(h: ToolHelpers, request: ApiRequest): Promise<ApiResponse> {
   const who = serviceAccountWords(h);
-  return googleApi(h, SCOPES, {
-    ...request,
-    errors: {
-      401: `Google Play did not accept ${who}: check that it is invited in Play Console -> Users and permissions`,
-      403: `Google Play refused the request: invite ${who} in Play Console -> Users and permissions with access to this app and the permission the action needs (View app information to read, Reply to reviews to reply, Manage store presence for listings and products), and check that the Google Play Android Developer API is enabled for the key's project`,
-      404: 'Google Play found no such app or item: check the package name, and that the app is published on Google Play',
-      ...request.errors,
-    },
-  });
+  try {
+    return await googleApi(h, SCOPES, {
+      ...request,
+      errors: {
+        401: `Google Play did not accept ${who}: check that it is invited in Play Console -> Users and permissions`,
+        403: `Google Play refused the request: invite ${who} in Play Console -> Users and permissions with access to this app and the permission the action needs (View app information to read, Reply to reviews to reply, Manage store presence for listings and products), and check that the Google Play Android Developer API is enabled for the key's project`,
+        404: 'Google Play found no such app or item: check the package name, and that the app is published on Google Play',
+        ...request.errors,
+      },
+    });
+  } catch (error) {
+    // Not a permission to grant: inviting the service account again changes nothing.
+    if (error instanceof ToolFailure && error.details.status === 403 && LEGACY_API_REFUSAL.test(error.message)) {
+      const products = /\/inappproducts(?:\/|$)/.test(request.path ?? '')
+        ? ' The app\'s one-time products are read with list_in_app_products (catalog one_time_products), which calls .../oneTimeProducts.'
+        : '';
+      throw new ToolFailure(
+        `Google Play no longer answers this legacy publishing API call for the app (HTTP 403): it said "Please migrate to the new publishing API."${products}`
+          + (/ Nothing was changed\.$/.test(error.message) ? ' Nothing was changed.' : ''),
+        error.details,
+      );
+    }
+    throw error;
+  }
 }
 
 /** The package a call works on: given and among the chosen apps, or the only chosen app. */
@@ -122,7 +141,11 @@ function trimApp(app: any): Record<string, unknown> {
   return compact({ packageName: app?.packageName ?? fromName, displayName: app?.displayName ?? app?.packageName ?? fromName });
 }
 
-/** The app's public store page in one language and country, as people see it. */
+/**
+ * The app's public store page in one language and country, as people see it,
+ * or available: false when Google Play has none there (HTTP 404): that is the
+ * answer for an app not published, or not offered in that country, not a failure.
+ */
 async function storePage(h: ToolHelpers, packageName: string, language: string, region: string): Promise<Record<string, unknown>> {
   const url = `${STORE_PAGE}?id=${encodeURIComponent(packageName)}&hl=${encodeURIComponent(language)}&gl=${encodeURIComponent(region)}`;
   let html: string;
@@ -131,7 +154,10 @@ async function storePage(h: ToolHelpers, packageName: string, language: string, 
     html = utf8Decode(bytes);
   } catch (error) {
     if (error instanceof ToolFailure && /HTTP 404/.test(error.message)) {
-      throw new ToolFailure(`Google Play has no public store page for ${packageName} (HTTP 404): the app is not published yet, or not in the country ${region}.`);
+      return {
+        available: false,
+        note: `Google Play has no public store page for ${packageName} in the country ${region} (HTTP 404): the app is not published yet, or not offered there.`,
+      };
     }
     throw error;
   }
@@ -303,7 +329,7 @@ const connector = defineConnector({
         'Returns an app\'s live store listing as Google Play shows it to people, from its public store page: title, short and full '
         + 'description, category, developer, content rating, star rating, price and icon, in one language (an app without that '
         + 'translation shows its default language). A change made with update_store_listing shows here once Google Play\'s review has '
-        + 'passed. An app that is not published has no store page.',
+        + 'passed. An app that is not published, or not offered in that country, has no store page: then available is false.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -317,6 +343,7 @@ const connector = defineConnector({
         const packageName = packageFor(h, args.package_name);
         const language = args.language ?? DEFAULT_LANGUAGE;
         const details = await storePage(h, packageName, language, args.region);
+        if (details['available'] === false) return { packageName, language, region: args.region, ...details };
         return { packageName, language, region: args.region, url: `${STORE_PAGE}?id=${encodeURIComponent(packageName)}`, ...details };
       },
     },
@@ -427,13 +454,19 @@ const connector = defineConnector({
       kind: 'read',
       title: 'List Google Play in-app products',
       description:
-        'Lists an app\'s one-time in-app products: sku, status, name and description, default price and the price in one country. '
-        + 'catalog one_time_products reads the newer one-time products API instead (purchase options). Pass nextCursor back as cursor for more.',
+        'Lists an app\'s one-time products (in-app products): product id, name and description, and each purchase option with its state '
+        + 'and price in one country. catalog in_app_products reads the legacy in-app products API instead (sku, status, default price), '
+        + 'which Google Play no longer answers for an app whose catalog has moved to one-time products. Pass nextCursor back as cursor for more.',
       inputSchema: {
         type: 'object',
         properties: {
           package_name: PACKAGE,
-          catalog: { type: 'string', enum: ['in_app_products', 'one_time_products'], default: 'in_app_products', description: 'in_app_products (default) or one_time_products.' },
+          catalog: {
+            type: 'string',
+            enum: ['one_time_products', 'in_app_products'],
+            default: 'one_time_products',
+            description: 'one_time_products (default) or in_app_products (the legacy API).',
+          },
           region: REGION,
           cursor: { type: 'string', description: 'nextCursor from the previous result.' },
         },

@@ -49,10 +49,10 @@ With a choice made, every tool keeps to those apps, and `package_name` may be le
 | `list_reviews` | read | Reviews with text from the last week, newest first, with stars, language, app version, device and the developer reply; only unanswered ones on request; translated on request. |
 | `get_review` | read | One review with its reply. |
 | `reply_to_review` | update | Posts the reply to a review, or replaces the earlier one: up to 350 characters of plain text. |
-| `get_store_listing` | read | The live store listing as people see it, from the app's public store page in one language and country: title, short and full description, category, developer, content rating, star rating, price and icon. It opens no edit and needs no Play Console permission. |
+| `get_store_listing` | read | The live store listing as people see it, from the app's public store page in one language and country: title, short and full description, category, developer, content rating, star rating, price and icon. It opens no edit and needs no Play Console permission. An app with no public store page in that country gives `available: false`. |
 | `update_store_listing` | update | Changes the listing in one language (title, short or full description, video) in an edit and commits it; Google Play reviews the change before it shows on the store page. |
 | `list_subscriptions` | read | Subscriptions with listings, base plans (state, billing period, price in one country) and offers with their phases, and whether an active offer starts with a free trial. |
-| `list_in_app_products` | read | In-app products (sku, status, name, default and regional price), or the newer one-time products with their purchase options. |
+| `list_in_app_products` | read | One-time products with their purchase options and regional price (the default), or the legacy in-app products (sku, status, name, default and regional price), which Google Play no longer serves for an app whose catalog has moved to one-time products. |
 | `api_get` | read | Any other GET of the Android Developer API under `/androidpublisher/v3/applications/{packageName}/` for a chosen app, such as tracks in an edit or a purchase. |
 | `api_request` | write | A POST, PUT, PATCH or DELETE under the same paths, for a chosen app. User and permission management (`/androidpublisher/v3/developers/`) is left out. Sent once, never retried. |
 
