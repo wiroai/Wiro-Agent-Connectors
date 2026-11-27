@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.2 (2026-11-27)
 
 - A JSON:API error reply (App Store Connect's, for one) now gives its `detail`, or else its `title`, as the vendor's words in the error, as a `message` already did: "App Store Connect refused the request (HTTP 403): The API key in use does not allow this request."
 - `apple-appstore`: `get_app_metadata` returns what the key's role can read and leaves out, with a line in `notes`, a part App Store Connect refuses with HTTP 403 (app info, versions, version texts); only the app's own record still fails the call. `list_subscriptions` and `list_in_app_purchases` say on a 403 that reading them needs a key with the Admin or App Manager role, instead of a bare refusal.

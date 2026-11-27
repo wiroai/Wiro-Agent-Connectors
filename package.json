@@ -1,6 +1,6 @@
 {
   "name": "@wiro-ai/wiro-agent-connectors",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "mcpName": "ai.wiro/agent-connectors",
   "description": "Dependency-free MCP connectors for services without an official MCP server. One small module per service, runnable over stdio with npx or loadable into your own MCP host.",
   "keywords": [
