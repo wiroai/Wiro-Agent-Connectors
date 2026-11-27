@@ -7,6 +7,7 @@ name: Publish to npm
 #
 # npm gets only commits that are on main: a release whose tag points anywhere
 # else publishes nothing. A prerelease goes to the dist-tag next, never latest.
+# CONTRIBUTING.md (Releases) has the steps.
 #
 # Wiro-MCP's workflow also publishes to the MCP Registry and Docker Hub. Those
 # steps are left out here for now.

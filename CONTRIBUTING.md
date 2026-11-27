@@ -110,3 +110,13 @@ Keep pull requests focused, add or update tests with every behavior change, and 
 - [ ] Tests use recorded responses and a fake `ctx.fetch`: request shape, trimming, errors including 429, unknown outcome for writes.
 - [ ] `smoke.json` has a read step (and a write step with a note on how to undo it).
 - [ ] The README lists the connector, its environment variables, its tools and its account keys.
+
+## Releases
+
+Maintainers release from `main` with a GitHub Release. `.github/workflows/publish.yml` then builds, tests and publishes the package to npm with provenance, signed in through npm's trusted publishing with no token, and the Docker workflow publishes the image of the same release.
+
+1. **Bump the version in a pull request to `main`**: `package.json`, `package-lock.json` (`version` and `packages[""].version`) and both `version` fields of `server.json`, and the CHANGELOG's `## Unreleased` heading becomes `## <version> (YYYY-MM-DD)`. The connector modules do not carry the version, so a bump alone leaves every `dist/vendors/<vendor>.js` byte for byte the same.
+2. **Release a commit of `main`**: once the pull request is merged, create a GitHub Release with the tag `v<version>`, such as `v0.2.2`, on that commit. Before it installs anything, the workflow checks that the tag's commit is on `main` and that the tag is `v` followed by the version in `package.json`; a release that fails either check publishes nothing.
+3. **Prereleases go to `next`**: a release marked as a pre-release on GitHub, or a version with a `-` such as `0.3.0-rc.1`, is published with the npm dist-tag `next`, and every other release with `latest`, which is what `npm install` and `npx` get. Try a prerelease with `npx @wiro-ai/wiro-agent-connectors@next --version`. Mark a prerelease as a pre-release on GitHub as well, so the Docker image's `latest` stays where it is too.
+
+Only admins can create, move or delete `v*` tags. npm never takes the same version twice, so a release that went wrong is fixed with a new version.
