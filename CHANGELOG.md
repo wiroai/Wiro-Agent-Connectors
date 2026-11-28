@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.3-rc.1 (2026-11-27)
+## 0.2.3 (2026-11-28)
 
 - `serper`: `web_search` has a shorter, clearer description (295 characters, was 397). It says that the answer box, knowledge graph, related questions and related searches come on the first page only, and a host that shows the first 300 characters of a tool description now shows all of it.
 
